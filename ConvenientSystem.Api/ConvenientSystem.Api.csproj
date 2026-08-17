@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!-- 纯接口服务：只提供 REST 接口与 Hangfire 面板，不承载静态前端（前端由桌面客户端 wwwroot 提供） -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ConvenientSystem.Api</RootNamespace>
+    <AssemblyName>ConvenientSystem</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 控制器只注入 Service 层接口；Shared 提供 Entity / Model / Common / Jobs -->
+    <ProjectReference Include="..\ConvenientSystem.Service\ConvenientSystem.Service.csproj" />
+    <ProjectReference Include="..\ConvenientSystem.Shared\ConvenientSystem.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 权限模块：JWT Bearer 认证中间件 -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

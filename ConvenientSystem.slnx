@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/db/">
+    <File Path="db/init.sql" />
+  </Folder>
+  <Project Path="ConvenientSystem.Api/ConvenientSystem.Api.csproj" />
+  <Project Path="ConvenientSystem.Desktop/ConvenientSystem.Desktop.csproj" />
+  <Project Path="ConvenientSystem.Service/ConvenientSystem.Service.csproj" />
+  <Project Path="ConvenientSystem.Shared/ConvenientSystem.Shared.csproj" />
+</Solution>

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "ConvenientSystem.Shared": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:62035;http://localhost:62036"
+    }
+  }
+}

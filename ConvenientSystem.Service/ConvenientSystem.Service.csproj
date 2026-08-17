@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 业务服务层：接口定义在 Interface\ 下（与实现同命名空间），实现按模块分目录。
+         被 ConvenientSystem.Api 引用，控制器只注入接口。 -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ConvenientSystem.Service</RootNamespace>
+    <AssemblyName>ConvenientSystem.Service</AssemblyName>
+    <!-- 禁用 CS8618：Dto/Entity 字段由 ORM 与模型绑定在运行时填充 -->
+    <NoWarn>$(NoWarn);CS8618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 服务层依赖 ASP.NET Core 共享框架（IConfiguration / ILogger / DI 抽象） -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 本项目使用普通 SDK（服务层不是 Web 项目），故手动补齐 Web SDK 默认的隐式 using，
+         使服务实现无需逐文件 using Microsoft.Extensions.* 等常用命名空间。 -->
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Entity / Model / Common / Jobs 全部来自共享库 -->
+    <ProjectReference Include="..\ConvenientSystem.Shared\ConvenientSystem.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

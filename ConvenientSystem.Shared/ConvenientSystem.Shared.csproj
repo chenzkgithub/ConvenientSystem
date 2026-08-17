@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!-- 共享基础库：实体、DTO、公共组件（短信/邮件/SQL 工具）、定时任务，被 Service / Api / Desktop 引用 -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Library</OutputType>
+    <RootNamespace>ConvenientSystem.Shared</RootNamespace>
+    <AssemblyName>ConvenientSystem.Shared</AssemblyName>
+    <!-- 禁用 CS8618：Entity 类字段由 ORM (FreeSql) 在运行时填充，无需构造函数初始化 -->
+    <!-- 禁用 CA1416：系统仅 Windows 部署，System.Drawing.Common 仅 Windows 可用属预期 -->
+    <NoWarn>$(NoWarn);CS8618;CA1416</NoWarn>
+    <!-- 开奖通告 PDF 渲染成图片需要 System.Drawing.Common（仅 Windows 可用） -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aneiang.Pa.Lottery" Version="2.1.7" />
+    <PackageReference Include="ClickHouse.Client" Version="7.14.0" />
+    <PackageReference Include="FreeSql" Version="3.5.310" />
+    <PackageReference Include="FreeSql.Provider.SqlServer" Version="3.5.310" />
+    <!-- SQL 查询工具动态数据源所需的 FreeSql 各库 Provider（统一走 FreeSql，不再直接使用原生 ADO） -->
+    <PackageReference Include="FreeSql.Provider.MySqlConnector" Version="3.5.310" />
+    <PackageReference Include="FreeSql.Provider.PostgreSQL" Version="3.5.310" />
+    <PackageReference Include="FreeSql.Provider.Oracle" Version="3.5.310" />
+    <PackageReference Include="FreeSql.Provider.SqliteCore" Version="3.5.310" />
+    <PackageReference Include="FreeSql.Provider.ClickHouse" Version="3.5.310" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.7" />
+    <PackageReference Include="MySqlConnector" Version="2.5.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Npgsql" Version="9.0.3" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.7.0" />
+    <!-- 开奖结果邮件内嵌官网通告 PDF 图片：PdfiumViewer 逐页渲染 + native 引擎（x64\pdfium.dll 随发布输出） -->
+    <PackageReference Include="PdfiumViewer.Standard" Version="1.0.0" />
+    <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
+    <!-- 短信/邮件管理模块：Hangfire 定时任务调度（SqlServer 持久化存储） -->
+    <PackageReference Include="Hangfire.Core" Version="1.8.24" />
+    <PackageReference Include="Hangfire.SqlServer" Version="1.8.24" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.24" />
+    <PackageReference Include="aliyun-net-sdk-core" Version="1.6.2" />
+    <!-- 权限模块：JWT 签发与校验 -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
+  </ItemGroup>
+
+</Project>
