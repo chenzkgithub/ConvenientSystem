@@ -208,7 +208,7 @@ onMounted(loadData)
         <span class="hint">用户通过所属角色获得可见菜单与接口权限；内置管理员 admin 不可停用或删除。</span>
       </template>
       <template #toolbar>
-        <el-button type="primary" @click="openCreate">新增用户</el-button>
+        <el-button v-if="$has('user-manage:add')" type="primary" @click="openCreate">新增用户</el-button>
       </template>
       <template #cell-avatar="{ row }">
         <div class="cell-avatar">
@@ -224,12 +224,12 @@ onMounted(loadData)
         <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
       </template>
       <template #actions="{ row }">
-        <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-        <el-button link type="primary" size="small" @click="onResetPassword(row)">重置密码</el-button>
+        <el-button v-if="$has('user-manage:edit')" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+        <el-button v-if="$has('user-manage:reset-pwd')" link type="primary" size="small" @click="onResetPassword(row)">重置密码</el-button>
         <el-button link type="warning" size="small" :disabled="isBuiltInAdmin(row)" @click="onToggleEnabled(row)">
           {{ row.enabled ? '停用' : '启用' }}
         </el-button>
-        <el-button link type="danger" size="small" :disabled="isBuiltInAdmin(row)" @click="onDelete(row)">删除</el-button>
+        <el-button v-if="$has('user-manage:delete')" link type="danger" size="small" :disabled="isBuiltInAdmin(row)" @click="onDelete(row)">删除</el-button>
       </template>
     </CommonDataTable>
 

@@ -30,16 +30,19 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>批量保存选号记录（彩种代码在请求体 Type 字段）</summary>
         [HttpPost]
+        [PermissionAuthorize("lottery:save-bets", "lottery-ssq:save-bets", "lottery-pl5:save-bets", "lottery-fc3d:save-bets")]
         public ActionResult<List<LotteryBetDto>> Save([FromBody] LotterySaveRequest request)
             => Ok(_lotteryService.SaveBets(request.Type, request.Bets));
 
         /// <summary>删除单条记录</summary>
         [HttpDelete]
+        [PermissionAuthorize("lottery:delete-record", "lottery-ssq:delete-record", "lottery-pl5:delete-record", "lottery-fc3d:delete-record")]
         public ActionResult<bool> Delete([FromQuery] int id)
             => Ok(_lotteryService.DeleteRecord(id));
 
         /// <summary>删除指定彩种、指定日期的全部记录（格式 yyyy-MM-dd）</summary>
         [HttpDelete]
+        [PermissionAuthorize("lottery:clear-history", "lottery-ssq:clear-history", "lottery-pl5:clear-history", "lottery-fc3d:clear-history")]
         public ActionResult<int> DeleteByDate([FromQuery] string type = LotteryTypes.DLT, [FromQuery] string date = "")
             => Ok(_lotteryService.DeleteByDate(type, date));
 

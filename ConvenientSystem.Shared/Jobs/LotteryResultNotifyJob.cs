@@ -9,6 +9,7 @@ using Hangfire;
 using System.Diagnostics;
 using System.Text;
 
+
 namespace ConvenientSystem.Shared.Jobs
 {
     /// <summary>
@@ -20,9 +21,8 @@ namespace ConvenientSystem.Shared.Jobs
     /// 数据权限：选号记录按 UserId 归属，邮件中仅包含该用户本人的选号与中奖信息
     /// 幂等：按当天日期查重 EmailLog，重复触发不重复发送
     /// </summary>
-    public class LotteryResultNotifyJob
+    public class LotteryResultNotifyJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly IEmailService _emailService;
         private readonly LotteryDrawCrawlJob _crawlJob;
         private readonly WebhookNotifier _webhookNotifier;
@@ -36,12 +36,12 @@ namespace ConvenientSystem.Shared.Jobs
 
         public LotteryResultNotifyJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
+            IJobExecutionLogService jobLog,
             IEmailService emailService,
             LotteryDrawCrawlJob crawlJob,
             WebhookNotifier webhookNotifier,
-            ILogger<LotteryResultNotifyJob> logger)
+            ILogger<LotteryResultNotifyJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _emailService = emailService;
             _crawlJob = crawlJob;
             _webhookNotifier = webhookNotifier;
@@ -53,7 +53,8 @@ namespace ConvenientSystem.Shared.Jobs
         /// 当天无彩种开奖或某彩种开奖数据缺失时，改用该彩种最新一期开奖结果。
         /// </summary>
         [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 300, 900 })]
-        public async Task DailyNotifyAsync(CancellationToken ct = default)
+        public Task DailyNotifyAsync(CancellationToken ct = default)
+            => ExecuteWithLog("当天开奖结果邮件汇总", nameof(DailyNotifyAsync), null, async () =>
         {
             var today = DateTime.Today;
             var tomorrow = today.AddDays(1);
@@ -124,7 +125,7 @@ namespace ConvenientSystem.Shared.Jobs
             var permByUser = LoadMenuPermissions(draws);
 
             // 全部启用的、有邮箱的用户
-            var users = _fsql.Select<SysUserEntity>()
+            var users = Fsql.Select<SysUserEntity>()
                 .Where(u => u.Enabled && u.Email != null && u.Email != "")
                 .ToList();
             if (users.Count == 0)
@@ -139,7 +140,7 @@ namespace ConvenientSystem.Shared.Jobs
             var typeList = draws.Select(d => d.LotteryType).ToList();
             var minDrawDate = draws.Min(d => d.DrawDate);
             var maxDrawDateExclusive = draws.Max(d => d.DrawDate).AddDays(1);
-            var records = _fsql.Select<LotteryRecordEntity>()
+            var records = Fsql.Select<LotteryRecordEntity>()
                 .Where(r => typeList.Contains(r.LotteryType)
                     && ((r.DrawDate >= minDrawDate && r.DrawDate < maxDrawDateExclusive)
                         || (r.DrawDate == null && r.CreatedAt >= today && r.CreatedAt < tomorrow)))
@@ -179,7 +180,7 @@ namespace ConvenientSystem.Shared.Jobs
             var skipCount = 0;
             // 各彩种判奖规则（库内生效版本，无则内置兜底）：一次取齐，全部用户邮件共用同一份
             var rulesByType = typeList.Distinct()
-                .ToDictionary(t => t, t => LotteryRuleCache.Get(_fsql, t));
+                .ToDictionary(t => t, t => LotteryRuleCache.Get(Fsql, t));
             foreach (var user in users)
             {
                 ct.ThrowIfCancellationRequested();
@@ -205,7 +206,7 @@ namespace ConvenientSystem.Shared.Jobs
                 var result = await _emailService.SendAsync(user.Email!, subject, body, inlineImages);
                 sw.Stop();
 
-                _fsql.Insert(new EmailLogEntity
+                Fsql.Insert(new EmailLogEntity
                 {
                     TaskId = 0,
                     TaskName = TaskName,
@@ -235,14 +236,14 @@ namespace ConvenientSystem.Shared.Jobs
                 : $"{today:yyyy-MM-dd} · 当天开奖彩种全国开奖结果";
             var webhookTitle = $"开奖结果汇总 {today:yyyy-MM-dd}";
             // 查询全部启用用户用于机器人消息中展示选号归属
-            var webhookUserNames = _fsql.Select<SysUserEntity>()
+            var webhookUserNames = Fsql.Select<SysUserEntity>()
                 .Where(u => u.Enabled)
                 .ToList()
                 .ToDictionary(u => u.Id, u => u.DisplayName ?? u.Account);
             var webhookContent = BuildWebhookContent(draws, isLatestFallback, webhookSubtitle, records, webhookUserNames, rulesByType);
             await _webhookNotifier.SendToDefaultAsync(webhookTitle, webhookContent);
             _logger.LogInformation("开奖结果汇总已推送到默认机器人");
-        }
+        });
 
         /// <summary>
         /// 构建机器人推送内容（markdown 富文本，兼容企业微信 / 钉钉 markdown 语法）。
@@ -404,7 +405,7 @@ namespace ConvenientSystem.Shared.Jobs
             var menuNames = draws.Select(d => MenuNameOf(d.LotteryType)).Distinct().ToList();
 
             // 彩种菜单 Id→Name（菜单停用后不再授予权限）
-            var menus = _fsql.Select<SysMenuEntity>()
+            var menus = Fsql.Select<SysMenuEntity>()
                 .Where(m => m.Enabled && menuNames.Contains(m.Name!))
                 .ToList(m => new { m.Id, m.Name })
                 .ToDictionary(m => m.Id, m => m.Name!);
@@ -413,10 +414,10 @@ namespace ConvenientSystem.Shared.Jobs
 
             // 角色→彩种菜单 Name 集合（仅启用角色）
             var menuIds = menus.Keys.ToList();
-            var roleMenus = _fsql.Select<SysRoleMenuEntity>()
+            var roleMenus = Fsql.Select<SysRoleMenuEntity>()
                 .Where(rm => menuIds.Contains(rm.MenuId))
                 .ToList(rm => new { rm.RoleId, rm.MenuId });
-            var enabledRoleIds = _fsql.Select<SysRoleEntity>()
+            var enabledRoleIds = Fsql.Select<SysRoleEntity>()
                 .Where(r => r.Enabled)
                 .ToList(r => r.Id)
                 .ToHashSet();
@@ -428,7 +429,7 @@ namespace ConvenientSystem.Shared.Jobs
 
             // 用户→多角色权限并集
             var roleIds = permByRole.Keys.ToList();
-            var userRoles = _fsql.Select<SysUserRoleEntity>()
+            var userRoles = Fsql.Select<SysUserRoleEntity>()
                 .Where(ur => roleIds.Contains(ur.RoleId))
                 .ToList(ur => new { ur.UserId, ur.RoleId });
             foreach (var ur in userRoles)
@@ -442,14 +443,14 @@ namespace ConvenientSystem.Shared.Jobs
 
         /// <summary>查询指定彩种当天的开奖记录（同一天多期时取期号最大的一期）</summary>
         private LotteryDrawEntity? GetTodayDraw(string type, DateTime today)
-            => _fsql.Select<LotteryDrawEntity>()
+            => Fsql.Select<LotteryDrawEntity>()
                 .Where(d => d.LotteryType == type && d.DrawDate >= today && d.DrawDate < today.AddDays(1))
                 .OrderByDescending(d => d.IssueNumber)
                 .First();
 
         /// <summary>查询指定彩种最新一期开奖记录（不限日期，取开奖日期+期号最大的一期）</summary>
         private LotteryDrawEntity? GetLatestDraw(string type)
-            => _fsql.Select<LotteryDrawEntity>()
+            => Fsql.Select<LotteryDrawEntity>()
                 .Where(d => d.LotteryType == type)
                 .OrderByDescending(d => d.DrawDate)
                 .OrderByDescending(d => d.IssueNumber)

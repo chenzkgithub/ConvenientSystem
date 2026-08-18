@@ -25,6 +25,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>新增或更新角色。</summary>
         [HttpPost]
+        [PermissionAuthorize("role-manage:add", "role-manage:edit")]
         public IActionResult Save([FromBody] RoleSaveDto dto)
         {
             _service.SaveRole(dto);
@@ -33,6 +34,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>删除角色。</summary>
         [HttpPost]
+        [PermissionAuthorize("role-manage:delete")]
         public IActionResult Delete([FromBody] int id)
         {
             _service.Delete(id);

@@ -5,6 +5,7 @@ using FreeSql;
 using Hangfire;
 using System.Text.Json;
 
+
 namespace ConvenientSystem.Shared.Jobs
 {
     /// <summary>
@@ -14,9 +15,8 @@ namespace ConvenientSystem.Shared.Jobs
     /// - 大乐透/排列五：体彩官网 webapi.sporttery.cn（单页上限 100 条，接口限制）
     /// 每次运行全量分页拉取，按期号去重入库
     /// </summary>
-    public class LotteryDrawCrawlJob
+    public class LotteryDrawCrawlJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly ILogger<LotteryDrawCrawlJob> _logger;
 
         /// <summary>共享 HttpClient（官方接口直连用）</summary>
@@ -24,9 +24,9 @@ namespace ConvenientSystem.Shared.Jobs
 
         public LotteryDrawCrawlJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
-            ILogger<LotteryDrawCrawlJob> logger)
+            IJobExecutionLogService jobLog,
+            ILogger<LotteryDrawCrawlJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _logger = logger;
         }
 
@@ -53,17 +53,20 @@ namespace ConvenientSystem.Shared.Jobs
         /// since 非空时翻到早于该日期的期即提前结束（回填只需覆盖到最早选号记录）
         /// </summary>
         [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 })]
-        public async Task<int> CrawlAsync(string type = LotteryTypes.DLT, int pageSize = 900,
+        public Task<int> CrawlAsync(string type = LotteryTypes.DLT, int pageSize = 900,
             bool updateExisting = false, DateTime? since = null, CancellationToken ct = default)
         {
             var t = LotteryTypes.Normalize(type);
+            var jobName = $"{LotteryTypes.GetName(t)}开奖数据爬取";
+            return ExecuteWithLog<int>(jobName, nameof(CrawlAsync), new { type, pageSize, updateExisting }, async () =>
+            {
             var rule = GetRule(t);
             var typeName = LotteryTypes.GetName(t);
 
             // 实际单页条数受接口上限约束（体彩官网单页最多 100 条）
             var fetchSize = Math.Min(pageSize, rule.MaxPageSize);
 
-            var existingCount = _fsql.Select<LotteryDrawEntity>().Where(d => d.LotteryType == t).Count();
+            var existingCount = Fsql.Select<LotteryDrawEntity>().Where(d => d.LotteryType == t).Count();
             _logger.LogInformation("开始全量爬取{Type}（每页 {Size} 条），当前已有 {Count} 条记录", typeName, fetchSize, existingCount);
 
             try
@@ -109,7 +112,7 @@ namespace ConvenientSystem.Shared.Jobs
                 }
 
                 // 去重：排除同彩种已存在的期号
-                var existingIssues = _fsql.Select<LotteryDrawEntity>()
+                var existingIssues = Fsql.Select<LotteryDrawEntity>()
                     .Where(d => d.LotteryType == t)
                     .ToList(d => d.IssueNumber)
                     .ToHashSet();
@@ -120,7 +123,7 @@ namespace ConvenientSystem.Shared.Jobs
 
                 if (newDraws.Count > 0)
                 {
-                    _fsql.Insert(newDraws).ExecuteAffrows();
+                    Fsql.Insert(newDraws).ExecuteAffrows();
                     _logger.LogInformation("成功导入 {Count} 条{Type}开奖记录", newDraws.Count, typeName);
 
                     // 开奖结果邮件已改为每日 22:10 独立定时任务（LotteryResultNotifyJob.DailyNotifyAsync），此处不再触发
@@ -141,6 +144,7 @@ namespace ConvenientSystem.Shared.Jobs
                 _logger.LogError(ex, "爬取{Type}开奖数据失败", typeName);
                 throw;
             }
+            });
         }
 
         /// <summary>
@@ -336,19 +340,19 @@ namespace ConvenientSystem.Shared.Jobs
             var missing = type switch
             {
                 // 体彩（大乐透/排列五）：中奖明细或通告 PDF 链接缺失
-                LotteryTypes.DLT or LotteryTypes.PL5 => _fsql.Select<LotteryDrawEntity>()
+                LotteryTypes.DLT or LotteryTypes.PL5 => Fsql.Select<LotteryDrawEntity>()
                     .Where(d => d.LotteryType == type && issues.Contains(d.IssueNumber)
                         && (d.PrizeDetail == null || d.PrizeDetail == ""
                             || d.NoticeUrl == null || d.NoticeUrl == ""))
                     .ToList(),
                 // 双色球：中奖明细或中奖地区缺失
-                LotteryTypes.SSQ => _fsql.Select<LotteryDrawEntity>()
+                LotteryTypes.SSQ => Fsql.Select<LotteryDrawEntity>()
                     .Where(d => d.LotteryType == type && issues.Contains(d.IssueNumber)
                         && (d.PrizeDetail == null || d.PrizeDetail == ""
                             || d.PrizeArea == null || d.PrizeArea == ""))
                     .ToList(),
                 // 福彩3D：官网不提供地区/PDF，仅查中奖明细
-                _ => _fsql.Select<LotteryDrawEntity>()
+                _ => Fsql.Select<LotteryDrawEntity>()
                     .Where(d => d.LotteryType == type && issues.Contains(d.IssueNumber)
                         && (d.PrizeDetail == null || d.PrizeDetail == ""))
                     .ToList(),
@@ -365,7 +369,7 @@ namespace ConvenientSystem.Shared.Jobs
                 row.PrizeArea = src.PrizeArea ?? row.PrizeArea;
                 row.NoticeUrl = src.NoticeUrl ?? row.NoticeUrl;
             }
-            _fsql.Update<LotteryDrawEntity>().SetSource(missing)
+            Fsql.Update<LotteryDrawEntity>().SetSource(missing)
                 .UpdateColumns(d => new { d.PrizeDetail, d.SalesAmount, d.PoolBalance, d.PrizeArea, d.NoticeUrl })
                 .ExecuteAffrows();
             _logger.LogInformation("回填 {Count} 条{Type}历史开奖官网通告数据", missing.Count, typeName);

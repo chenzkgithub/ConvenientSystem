@@ -25,6 +25,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>新增或更新用户。</summary>
         [HttpPost]
+        [PermissionAuthorize("user-manage:add", "user-manage:edit")]
         public IActionResult Save([FromBody] UserSaveDto dto)
         {
             _service.SaveUser(dto);
@@ -41,6 +42,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>重置密码。</summary>
         [HttpPost]
+        [PermissionAuthorize("user-manage:reset-pwd")]
         public IActionResult ResetPassword([FromBody] ResetPasswordDto dto)
         {
             _service.ResetPassword(dto);
@@ -49,6 +51,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>删除用户。</summary>
         [HttpPost]
+        [PermissionAuthorize("user-manage:delete")]
         public IActionResult Delete([FromBody] Guid id)
         {
             _service.Delete(id);

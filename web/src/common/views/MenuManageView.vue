@@ -3,6 +3,7 @@ import { onMounted, ref, computed, nextTick, reactive, provide } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Menu, Plus, Refresh } from '@element-plus/icons-vue'
 import { getMenus, saveMenus } from '@/common/api/menu'
+import { getViews, type ViewDto } from '@/common/api/view'
 import { viewComponentOptions } from '@/common/viewComponents'
 import { useMenuStore } from '@/common/stores/menu'
 import type { MenuNode } from '@/common/types'
@@ -10,7 +11,10 @@ import CommonTooltip from '@/common/components/CommonTooltip.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 import MenuTreeRow from '@/common/components/MenuTreeRow.vue'
 
-// 原始菜单树（含"系统管理"节点，保存时完整提交）
+// 视图列表（供编辑弹窗下拉选择）
+const viewOptions = ref<ViewDto[]>([])
+
+// 原始菜单树（含“系统管理”节点，保存时完整提交）
 const rawMenus = ref<MenuNode[]>([])
 const loading = ref(false)
 const dirty = ref(false)
@@ -88,7 +92,11 @@ async function loadMenus() {
   }
 }
 
-onMounted(loadMenus)
+async function loadViewOptions() {
+  try { viewOptions.value = await getViews() } catch { viewOptions.value = [] }
+}
+
+onMounted(async () => { await loadMenus(); await loadViewOptions() })
 
 const menuStore = useMenuStore()
 
@@ -129,6 +137,24 @@ async function addChildMenu(parentPath: number[]) {
 
 function resetEditForm() {
   editForm.value = { title: '', page: '', name: '', component: '', external: false, float: false, visible: true, editable: true, enabled: true }
+}
+
+/** 编辑表单当前匹配的视图 Name（自动高亮下拉选项） */
+const selectedViewName = computed(() => {
+  const name = editForm.value.name
+  if (!name) return ''
+  return viewOptions.value.find((v) => v.name === name)?.name ?? ''
+})
+
+/** 选择视图后自动填充表单字段 */
+function onViewSelect(viewName: string) {
+  if (!viewName) return
+  const v = viewOptions.value.find((x) => x.name === viewName)
+  if (!v) return
+  editForm.value.name = v.name
+  editForm.value.title = editForm.value.title || v.title
+  if (v.routePath) editForm.value.page = v.routePath
+  if (v.component) editForm.value.component = v.component
 }
 
 // 编辑菜单
@@ -575,6 +601,24 @@ provide('menuActions', {
           </el-form-item>
         </template>
         <template v-else>
+          <el-form-item label="关联视图">
+            <el-select
+              :model-value="selectedViewName"
+              filterable
+              clearable
+              placeholder="从视图注册表选择（可选，自动填充路由和组件）"
+              style="width: 100%"
+              @change="onViewSelect"
+            >
+              <el-option
+                v-for="v in viewOptions"
+                :key="v.id"
+                :label="`${v.title}（${v.name}）`"
+                :value="v.name"
+              />
+            </el-select>
+            <div class="form-hint">选择视图后自动填充路由名称/地址/组件，权限点由视图管理维护</div>
+          </el-form-item>
           <el-form-item label="路由名称">
             <el-input v-model="editForm.name" placeholder="如 attendance（可选，用于标识内部路由）" />
           </el-form-item>
@@ -619,7 +663,7 @@ provide('menuActions', {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmEdit">确定</el-button>
+        <el-button v-if="$has('menu-manage:save')" type="primary" @click="confirmEdit">确定</el-button>
       </template>
     </CommonDialog>
 

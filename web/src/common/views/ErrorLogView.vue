@@ -145,7 +145,7 @@ async function handleClear() {
       </template>
 
       <template #toolbar>
-        <el-button type="danger" plain @click="handleClear">清空</el-button>
+        <el-button v-if="$has('error-log:clear')" type="danger" plain @click="handleClear">清空</el-button>
       </template>
 
       <template #actions="{ row }">

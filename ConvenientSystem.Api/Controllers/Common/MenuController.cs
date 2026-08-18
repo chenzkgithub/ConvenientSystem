@@ -37,7 +37,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         /// 保存菜单树到 SysMenu 表（前端调用）：事务内全删全插，SortOrder 按数组顺序。
         /// </summary>
         [HttpPost]
-        [PermissionAuthorize("menu-manage")]
+        [PermissionAuthorize("menu-manage:save")]
         public ActionResult<MenuSaveResultDto> SaveMenus([FromBody] List<MenuNode> menus)
             => Ok(_menuService.SaveMenus(menus));
 

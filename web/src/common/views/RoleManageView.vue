@@ -177,7 +177,7 @@ onMounted(loadData)
         <span class="hint">角色决定用户可见的菜单与可访问的接口；管理员标记仅影响数据范围，菜单权限统一按配置。</span>
       </template>
       <template #toolbar>
-        <el-button type="primary" @click="openCreate">新增角色</el-button>
+        <el-button v-if="$has('role-manage:add')" type="primary" @click="openCreate">新增角色</el-button>
       </template>
       <template #cell-enabled="{ row }">
         <el-switch
@@ -197,8 +197,8 @@ onMounted(loadData)
         <el-tag v-else type="info" size="small">本人</el-tag>
       </template>
       <template #actions="{ row }">
-        <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-        <el-button link type="danger" size="small" @click="onDelete(row)">删除</el-button>
+        <el-button v-if="$has('role-manage:edit')" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+        <el-button v-if="$has('role-manage:delete')" link type="danger" size="small" @click="onDelete(row)">删除</el-button>
       </template>
     </CommonDataTable>
 

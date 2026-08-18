@@ -45,6 +45,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>添加数据源</summary>
         [HttpPost]
+        [PermissionAuthorize("sql-query:save-datasource")]
         public IActionResult AddDataSource([FromBody] DataSourceDto dto)
         {
             _dataSourceService.Add(dto);
@@ -53,6 +54,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>修改数据源</summary>
         [HttpPost]
+        [PermissionAuthorize("sql-query:save-datasource")]
         public IActionResult UpdateDataSource([FromBody] DataSourceDto dto)
         {
             _dataSourceService.Update(dto);
@@ -61,6 +63,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>删除数据源</summary>
         [HttpPost]
+        [PermissionAuthorize("sql-query:delete-datasource")]
         public IActionResult RemoveDataSource([FromBody] DataSourceDto dto)
         {
             _dataSourceService.Remove(dto);
@@ -69,6 +72,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>测试数据源连接</summary>
         [HttpPost]
+        [PermissionAuthorize("sql-query:test-connection")]
         public async Task<IActionResult> TestDataSource([FromBody] DataSourceDto dto)
             => Ok(new { message = await _dataSourceService.TestAsync(dto) });
 
@@ -76,11 +80,13 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>执行 SQL 语句（支持多结果集与服务端分页）</summary>
         [HttpPost]
+        [PermissionAuthorize("sql-query:execute")]
         public async Task<IActionResult> Execute([FromBody] SqlQueryRequest request, CancellationToken cancellationToken)
             => Ok(await _sqlExecuteService.ExecuteAsync(request, cancellationToken));
 
         /// <summary>导出查询结果全量数据（上限 10 万行）</summary>
         [HttpPost]
+        [PermissionAuthorize("sql-query:execute")]
         public async Task<IActionResult> ExportData([FromBody] SqlQueryRequest request, CancellationToken cancellationToken)
             => Ok(await _sqlExecuteService.ExportAsync(request, cancellationToken));
 

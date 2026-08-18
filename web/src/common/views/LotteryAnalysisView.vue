@@ -180,7 +180,7 @@ const positionalRecommend = computed(() => {
           <el-radio-button :value="200">200 期</el-radio-button>
           <el-radio-button :value="500">500 期</el-radio-button>
         </el-radio-group>
-        <el-button type="primary" :loading="loading" @click="runAnalysis" style="margin-left: 8px;">
+        <el-button v-if="$has('lottery-analysis:run')" type="primary" :loading="loading" @click="runAnalysis" style="margin-left: 8px;">
           {{ loading ? '分析中…' : '重新分析' }}
         </el-button>
       </div>
@@ -315,7 +315,7 @@ const positionalRecommend = computed(() => {
         <div class="card" v-if="analysis.generatedBets.length > 0">
           <div class="card-title">
             AI 组合
-            <el-button v-if="!publicMode" size="small" type="primary" plain @click="saveBets" style="margin-left: auto;">
+            <el-button v-if="!publicMode && $has('lottery-analysis:save-bets')" size="small" type="primary" plain @click="saveBets" style="margin-left: auto;">
               一键保存全部
             </el-button>
           </div>

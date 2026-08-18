@@ -165,7 +165,7 @@ onMounted(loadData)
         @load="loadData"
       >
         <template #toolbar>
-          <el-button type="success" @click="openCreate">+ 发布通知</el-button>
+          <el-button v-if="$has('notice:publish')" type="success" @click="openCreate">+ 发布通知</el-button>
           <el-button @click="loadData">刷新</el-button>
         </template>
         <template #cell-level="{ row }">
@@ -206,7 +206,7 @@ onMounted(loadData)
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click="openEdit(row as NoticeDto)">编辑</el-button>
-          <el-button link type="danger" @click="handleDelete(row as NoticeDto)">删除</el-button>
+          <el-button v-if="$has('notice:delete')" link type="danger" @click="handleDelete(row as NoticeDto)">删除</el-button>
         </template>
       </CommonDataTable>
     </div>

@@ -26,6 +26,7 @@ namespace ConvenientSystem.Api.Controllers.Email
 
         /// <summary>新增或更新邮件配置</summary>
         [HttpPost]
+        [PermissionAuthorize("email-config:create", "email-config:edit")]
         public IActionResult Save([FromBody] EmailConfigDto dto)
         {
             _configService.Save(dto);
@@ -34,6 +35,7 @@ namespace ConvenientSystem.Api.Controllers.Email
 
         /// <summary>删除邮件配置</summary>
         [HttpPost]
+        [PermissionAuthorize("email-config:delete")]
         public IActionResult Delete([FromBody] int id)
         {
             _configService.Delete(id);
@@ -42,6 +44,7 @@ namespace ConvenientSystem.Api.Controllers.Email
 
         /// <summary>测试发送</summary>
         [HttpPost]
+        [PermissionAuthorize("email-config:test-send")]
         public async Task<ActionResult<EmailTestSendResultDto>> TestSend([FromBody] EmailTestSendRequest req)
             => Ok(await _configService.TestSendAsync(req));
     }

@@ -31,6 +31,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>清空全部错误日志</summary>
         [HttpDelete]
+        [PermissionAuthorize("error-log:clear")]
         public ActionResult<int> Clear()
             => Ok(_errorLogService.Clear());
     }

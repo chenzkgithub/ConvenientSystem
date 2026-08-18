@@ -89,13 +89,17 @@ namespace ConvenientSystem.Shared.Model.Common
         public int Id { get; set; }
         public int? ParentId { get; set; }
         public string Title { get; set; } = string.Empty;
+        /// <summary>节点类型：0=Group，1=Page，2=Button</summary>
+        public byte Type { get; set; }
     }
 
-    /// <summary>权限设置：单独更新角色可见菜单，不修改角色基本信息。</summary>
+    /// <summary>权限设置：单独更新角色可见菜单与视图权限点，不修改角色基本信息。</summary>
     public class RolePermissionsDto
     {
         public int RoleId { get; set; }
         public List<int> MenuIds { get; set; } = new();
+        /// <summary>角色被授权的视图权限点 Id 列表（独立于菜单授权）</summary>
+        public List<int> ViewPermIds { get; set; } = new();
     }
 
     /// <summary>角色 + 该角色下的用户列表（供权限设置左侧树）。</summary>
@@ -108,6 +112,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public bool Enabled { get; set; }
         public bool IsAdmin { get; set; }
         public List<int> MenuIds { get; set; } = new();
+        /// <summary>角色已授权的视图权限点 Id 列表</summary>
+        public List<int> ViewPermIds { get; set; } = new();
         public List<UserBriefDto> Users { get; set; } = new();
     }
 
@@ -126,6 +132,8 @@ namespace ConvenientSystem.Shared.Model.Common
     {
         public Guid UserId { get; set; }
         public List<int> MenuIds { get; set; } = new();
+        /// <summary>用户被授权的视图权限点 Id 列表（独立于菜单授权）</summary>
+        public List<int> ViewPermIds { get; set; } = new();
     }
 
     /// <summary>在线用户列表项。</summary>

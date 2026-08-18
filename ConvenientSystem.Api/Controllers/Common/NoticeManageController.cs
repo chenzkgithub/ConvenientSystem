@@ -27,6 +27,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>发布新通知（按勾选开关联动推送）或编辑已有通知。</summary>
         [HttpPost]
+        [PermissionAuthorize("notice:publish")]
         public IActionResult Save([FromBody] NoticeDto dto)
         {
             _service.Save(dto);
@@ -35,6 +36,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>删除通知（连同已读记录）。</summary>
         [HttpPost]
+        [PermissionAuthorize("notice:delete")]
         public IActionResult Delete([FromBody] int id)
         {
             _service.Delete(id);

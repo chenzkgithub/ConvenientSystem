@@ -231,11 +231,13 @@ namespace ConvenientSystem.Api
             // Common 模块
             services.AddSingleton<ILoginService, LoginService>();
             services.AddSingleton<IMenuService, MenuService>();
+            services.AddSingleton<IViewService, ViewService>();
             services.AddSingleton<ILockService, LockService>();
             services.AddSingleton<IAuditLogService, AuditLogService>();
             services.AddSingleton<IErrorLogService, ErrorLogService>();
             services.AddSingleton<ISystemDashboardService, SystemDashboardService>();
             services.AddSingleton<IHangfireService, HangfireService>();
+            services.AddSingleton<IJobExecutionLogService, JobExecutionLogService>();
             services.AddSingleton<INotifyService, NotifyService>();
             services.AddSingleton<IWebhookLogService, WebhookLogService>();
             services.AddSingleton<IUserManageService, UserManageService>();

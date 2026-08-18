@@ -43,6 +43,12 @@ interface LotteryRecord {
 
 const positional = computed(() => isPositional(props.type))
 
+/** 权限码前缀：根据彩种 type 生成对应的权限前缀 */
+const permCode = (action: string): string => {
+  const prefix = props.type === 'SSQ' ? 'lottery-ssq' : props.type === 'PL5' ? 'lottery-pl5' : props.type === 'FC3D' ? 'lottery-fc3d' : 'lottery'
+  return prefix + ':' + action
+}
+
 // ── 彩种配置 ──
 const config = ref<LotteryConfig | null>(null)
 const pickZones = computed<LotteryZone[]>(() => config.value?.pickZones ?? [])
@@ -483,7 +489,7 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
             </template>
 
             <template #actions="{ row }">
-              <el-button link type="danger" size="small" @click="removeSaved((row as LotteryRecord).id)">删除</el-button>
+              <el-button v-if="$has(permCode('delete-record'))" link type="danger" size="small" @click="removeSaved((row as LotteryRecord).id)">删除</el-button>
             </template>
 
             <template #empty>暂无保存记录</template>
@@ -498,8 +504,8 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
           <div class="history-actions">
             <el-button size="small" @click="randomMulti(5)">机选 5 注</el-button>
             <el-button size="small" @click="randomMulti(10)">机选 10 注</el-button>
-            <el-button size="small" type="warning" plain :disabled="betHistory.length === 0" @click="saveToDb">保存</el-button>
-            <el-button size="small" type="danger" plain :disabled="betHistory.length === 0" @click="clearHistory">清空</el-button>
+            <el-button v-if="$has(permCode('save-bets'))" size="small" type="warning" plain :disabled="betHistory.length === 0" @click="saveToDb">保存</el-button>
+            <el-button v-if="$has(permCode('clear-history'))" size="small" type="danger" plain :disabled="betHistory.length === 0" @click="clearHistory">清空</el-button>
           </div>
         </div>
 

@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Email;
 using ConvenientSystem.Shared.Common.Webhook;
 using ConvenientSystem.Shared.Entity.Email;
@@ -12,20 +13,19 @@ namespace ConvenientSystem.Shared.Jobs
     /// - 读取任务配置，替换变量后调用 EmailService 发送
     /// - 发送结果写入 EmailLog
     /// </summary>
-    public class EmailSendJob
+    public class EmailSendJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly IEmailService _emailService;
         private readonly WebhookNotifier _notifier;
         private readonly ILogger<EmailSendJob> _logger;
 
         public EmailSendJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
+            IJobExecutionLogService jobLog,
             IEmailService emailService,
             WebhookNotifier notifier,
-            ILogger<EmailSendJob> logger)
+            ILogger<EmailSendJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _emailService = emailService;
             _notifier = notifier;
             _logger = logger;
@@ -35,9 +35,10 @@ namespace ConvenientSystem.Shared.Jobs
         /// 执行邮件发送任务
         /// </summary>
         [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 60, 300 })]
-        public async Task SendAsync(int taskId, CancellationToken ct = default)
+        public Task SendAsync(int taskId, CancellationToken ct = default)
+            => ExecuteWithLog($"邮件定时发送", nameof(SendAsync), taskId, async () =>
         {
-            var task = _fsql.Select<EmailTaskEntity>()
+            var task = Fsql.Select<EmailTaskEntity>()
                 .Where(t => t.Id == taskId)
                 .First();
 
@@ -75,10 +76,10 @@ namespace ConvenientSystem.Shared.Jobs
                 CreatedById = task.CreatedById,
                 CreateTime = DateTime.Now
             };
-            _fsql.Insert(log).ExecuteAffrows();
+            Fsql.Insert(log).ExecuteAffrows();
 
             // 更新任务上次发送时间
-            _fsql.Update<EmailTaskEntity>()
+            Fsql.Update<EmailTaskEntity>()
                 .Set(t => t.LastSendTime, now)
                 .Set(t => t.UpdateTime, now)
                 .Where(t => t.Id == taskId)
@@ -96,7 +97,7 @@ namespace ConvenientSystem.Shared.Jobs
                     $"任务ID：{taskId}\n任务名称：{task.Name}\n错误：{result.ErrorMessage}\n时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                 throw new Exception($"邮件发送失败：{result.ErrorMessage}");
             }
-        }
+        });
 
         /// <summary>
         /// 测试发送（不关联任务，不写日志）

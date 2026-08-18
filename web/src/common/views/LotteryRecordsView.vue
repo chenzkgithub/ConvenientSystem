@@ -198,7 +198,7 @@ function onPickClosed() {
         <template #toolbar>
           <el-button type="primary" size="small" @click="query">查询</el-button>
           <el-button type="primary" size="small" @click="openPick">选号</el-button>
-          <el-button type="danger" size="small" :loading="issueVerifying" @click="openIssueVerify">验证奖金</el-button>
+          <el-button v-if="$has('lottery-records:verify-issue')" type="danger" size="small" :loading="issueVerifying" @click="openIssueVerify">验证奖金</el-button>
           <el-button size="small" @click="load">刷新</el-button>
         </template>
 
@@ -215,7 +215,7 @@ function onPickClosed() {
         </template>
 
         <template #actions="{ row }">
-          <el-button link type="primary" size="small" @click="openVerify(row as LotteryRecordItem)">验证</el-button>
+          <el-button v-if="$has('lottery-records:verify')" link type="primary" size="small" @click="openVerify(row as LotteryRecordItem)">验证</el-button>
         </template>
 
         <template #empty>暂无选号记录</template>

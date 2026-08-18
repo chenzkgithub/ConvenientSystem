@@ -500,6 +500,11 @@ function formatRecentTime(ts: number): string {
           >
             <span class="recent-name">{{ item.title }}</span>
             <span class="recent-time">{{ formatRecentTime(item.timestamp) }}</span>
+            <button
+              class="recent-remove"
+              title="移除"
+              @click.stop="recentStore.remove(item.path)"
+            >✕</button>
           </div>
         </div>
       </div>

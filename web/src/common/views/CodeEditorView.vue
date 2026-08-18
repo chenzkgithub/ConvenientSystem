@@ -570,10 +570,10 @@ onActivated(() => {
 <template>
   <div class="code-editor-page" @dragover.capture="onDragOver" @drop.capture="onDrop">
     <div class="editor-toolbar">
-      <el-button size="small" @click="newFile">新建</el-button>
+      <el-button v-if="$has('code-editor:create')" size="small" @click="newFile">新建</el-button>
       <el-button size="small" type="primary" @click="openFile">打开文件</el-button>
-      <el-button size="small" type="success" :disabled="!activeTab?.dirty" @click="saveFile">保存</el-button>
-      <el-button size="small" @click="saveFileAs">另存为</el-button>
+      <el-button v-if="$has('code-editor:save')" size="small" type="success" :disabled="!activeTab?.dirty" @click="saveFile">保存</el-button>
+      <el-button v-if="$has('code-editor:save-as')" size="small" @click="saveFileAs">另存为</el-button>
       <el-select
         size="small"
         :model-value="activeTab?.language ?? 'plaintext'"

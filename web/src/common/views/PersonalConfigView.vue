@@ -123,6 +123,7 @@ loadMyConfig()
               {{ group.category }}
             </span>
             <el-button
+              v-if="$has('personal-config:save')"
               type="primary"
               size="small"
               :loading="mySavingGroup.has(group.category)"

@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Email;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Entity.Email;
@@ -21,9 +22,8 @@ namespace ConvenientSystem.Shared.Jobs
     /// - 每次探测写 HostMonitorLog（保留 30 天，每日凌晨清理），并回写目标最近状态/数值/时间
     /// - 状态变化（正常↔异常）且开启邮件告警时，给拥有 host-monitor 菜单权限的有邮箱用户发送告警/恢复邮件
     /// </summary>
-    public class HostMonitorCheckJob
+    public class HostMonitorCheckJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly IEmailService _emailService;
         private readonly ILogger<HostMonitorCheckJob> _logger;
 
@@ -40,31 +40,32 @@ namespace ConvenientSystem.Shared.Jobs
 
         public HostMonitorCheckJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
+            IJobExecutionLogService jobLog,
             IEmailService emailService,
-            ILogger<HostMonitorCheckJob> logger)
+            ILogger<HostMonitorCheckJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _emailService = emailService;
             _logger = logger;
         }
 
         /// <summary>每分钟巡检：探测所有到期的启用目标；每天凌晨 3 点档清理 30 天前的探测日志</summary>
         [AutomaticRetry(Attempts = 0)]
-        public async Task CheckDueAsync(CancellationToken ct = default)
+        public Task CheckDueAsync(CancellationToken ct = default)
+            => ExecuteWithLog("主机监控定时巡检", nameof(CheckDueAsync), null, async () =>
         {
             var now = DateTime.Now;
 
             // 每天凌晨 3:00 档清理过期日志（保留 30 天）
             if (now.Hour == 3 && now.Minute == 0)
             {
-                var removed = _fsql.Delete<HostMonitorLogEntity>()
+                var removed = Fsql.Delete<HostMonitorLogEntity>()
                     .Where(l => l.CheckAt < now.AddDays(-30))
                     .ExecuteAffrows();
                 if (removed > 0)
                     _logger.LogInformation("主机监控：已清理 30 天前的探测日志 {Count} 条", removed);
             }
 
-            var targets = _fsql.Select<HostMonitorTargetEntity>()
+            var targets = Fsql.Select<HostMonitorTargetEntity>()
                 .Where(t => t.Enabled)
                 .ToList();
             // 按各自探测间隔判定到期（未探测过的立即探测）
@@ -85,7 +86,7 @@ namespace ConvenientSystem.Shared.Jobs
                     _logger.LogWarning(ex, "主机监控：{Name} 探测过程发生未预期异常", target.Name);
                 }
             }
-        }
+        });
 
         /// <summary>
         /// 对单个目标执行一次探测：写探测日志、回写最近状态；状态变化时可选邮件告警。
@@ -122,10 +123,10 @@ namespace ConvenientSystem.Shared.Jobs
                 MetricsJson = target.MetricType == HostMonitorMetrics.Host ? target.MetricsJson : null,
                 CheckAt = now
             };
-            log.Id = _fsql.Insert(log).ExecuteIdentity();
+            log.Id = Fsql.Insert(log).ExecuteIdentity();
 
             // 回写目标最近状态（SnapshotJson 供 CPU 增量计算使用，MetricsJson 供整机概览快照使用）
-            _fsql.Update<HostMonitorTargetEntity>()
+            Fsql.Update<HostMonitorTargetEntity>()
                 .Set(t => t.LastStatus, newStatus)
                 .Set(t => t.LastValue, value)
                 .Set(t => t.LastErrorMsg, error)
@@ -1300,7 +1301,7 @@ Write-Output 'NETEND'";
             var result = await _emailService.SendAsync(string.Join(";", recipients), subject, sb.ToString());
             sw.Stop();
 
-            _fsql.Insert(new EmailLogEntity
+            Fsql.Insert(new EmailLogEntity
             {
                 TaskId = 0,
                 TaskName = TaskName,
@@ -1321,31 +1322,31 @@ Write-Output 'NETEND'";
         /// <summary>告警收件人：启用且有邮箱、且通过启用角色拥有 host-monitor 菜单权限的用户邮箱</summary>
         private List<string> GetAlertRecipients()
         {
-            var menuId = _fsql.Select<SysMenuEntity>()
+            var menuId = Fsql.Select<SysMenuEntity>()
                 .Where(m => m.Name == "host-monitor")
                 .First(m => m.Id);
             if (menuId == 0) return new List<string>();
 
-            var roleIds = _fsql.Select<SysRoleMenuEntity>()
+            var roleIds = Fsql.Select<SysRoleMenuEntity>()
                 .Where(rm => rm.MenuId == menuId)
                 .ToList(rm => rm.RoleId);
             if (roleIds.Count == 0) return new List<string>();
 
-            var enabledRoleIds = _fsql.Select<SysRoleEntity>()
+            var enabledRoleIds = Fsql.Select<SysRoleEntity>()
                 .Where(r => r.Enabled)
                 .ToList(r => r.Id)
                 .Where(id => roleIds.Contains(id))
                 .ToHashSet();
             if (enabledRoleIds.Count == 0) return new List<string>();
 
-            var userIds = _fsql.Select<SysUserRoleEntity>()
+            var userIds = Fsql.Select<SysUserRoleEntity>()
                 .Where(ur => enabledRoleIds.Contains(ur.RoleId))
                 .ToList(ur => ur.UserId)
                 .Distinct()
                 .ToList();
             if (userIds.Count == 0) return new List<string>();
 
-            return _fsql.Select<SysUserEntity>()
+            return Fsql.Select<SysUserEntity>()
                 .Where(u => u.Enabled && u.Email != null && u.Email != "" && userIds.Contains(u.Id))
                 .ToList(u => u.Email!);
         }

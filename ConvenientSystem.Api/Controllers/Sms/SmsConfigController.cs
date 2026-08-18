@@ -26,6 +26,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>新增或更新短信配置</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-config:create", "sms-config:edit")]
         public IActionResult Save([FromBody] SmsProviderConfigDto dto)
         {
             _configService.Save(dto);
@@ -34,6 +35,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>删除短信配置</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-config:delete")]
         public IActionResult Delete([FromBody] int id)
         {
             _configService.Delete(id);
@@ -60,6 +62,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>测试发送</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-config:test-send")]
         public async Task<ActionResult<SmsTestSendResultDto>> TestSend([FromBody] SmsTestSendRequest req)
             => Ok(await _configService.TestSendAsync(req));
     }

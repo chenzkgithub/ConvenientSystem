@@ -26,11 +26,13 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>新增或编辑监控目标（Id 为空表示新增）</summary>
         [HttpPost]
+        [PermissionAuthorize("web-monitor:create", "web-monitor:edit")]
         public ActionResult<int> Save([FromBody] WebMonitorTargetSaveDto dto)
             => Ok(_webMonitorService.Save(dto));
 
         /// <summary>删除监控目标及其探测日志</summary>
         [HttpDelete]
+        [PermissionAuthorize("web-monitor:delete")]
         public ActionResult Delete([FromQuery] int id)
         {
             _webMonitorService.Delete(id);
@@ -47,6 +49,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>立即对指定目标执行一次探测，返回本次探测结果</summary>
         [HttpPost]
+        [PermissionAuthorize("web-monitor:check")]
         public async Task<ActionResult<WebMonitorLogDto>> Check([FromQuery] int id)
             => Ok(await _webMonitorService.CheckNow(id));
 

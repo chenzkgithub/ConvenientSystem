@@ -487,6 +487,21 @@ body {
   flex-shrink: 0;
   margin-left: 8px;
 }
+.recent-remove {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: var(--text-sub);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  flex-shrink: 0;
+  margin-left: 4px;
+  transition: opacity 0.15s, background 0.15s;
+}
+.recent-item:hover .recent-remove { opacity: 1; }
+.recent-remove:hover { background: var(--sidebar-hover-bg); color: var(--el-color-danger); }
 
 /* 菜单区：min-height: 0 是 flex 子项能正常收缩并内部滚动的前提 */
 .aside-menu {

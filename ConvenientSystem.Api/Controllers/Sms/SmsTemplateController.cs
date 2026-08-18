@@ -31,11 +31,13 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>新建模板</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-template:create")]
         public ActionResult<SmsTemplateDto> Create([FromBody] SmsTemplateDto dto)
             => Ok(_templateService.Create(dto));
 
         /// <summary>更新模板</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-template:edit")]
         public IActionResult Update([FromBody] SmsTemplateDto dto)
         {
             _templateService.Update(dto);
@@ -44,6 +46,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>删除模板</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-template:delete")]
         public IActionResult Delete([FromBody] int id)
         {
             _templateService.Delete(id);
@@ -52,6 +55,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>切换启用状态</summary>
         [HttpPost]
+        [PermissionAuthorize("sms-template:toggle")]
         public ActionResult<ToggleEnabledDto> ToggleEnabled([FromBody] int id)
             => Ok(_templateService.ToggleEnabled(id));
 

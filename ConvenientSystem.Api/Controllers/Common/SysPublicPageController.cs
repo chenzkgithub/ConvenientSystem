@@ -34,7 +34,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>新增公开页面</summary>
         [HttpPost]
-        [PermissionAuthorize("sys-public-page")]
+        [PermissionAuthorize("sys-public-page:create")]
         public IActionResult Create([FromBody] SysPublicPageCreateDto dto)
         {
             try
@@ -50,7 +50,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>编辑公开页面</summary>
         [HttpPut]
-        [PermissionAuthorize("sys-public-page")]
+        [PermissionAuthorize("sys-public-page:edit")]
         public IActionResult Update([FromBody] SysPublicPageUpdateDto dto)
         {
             try
@@ -66,7 +66,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>删除公开页面</summary>
         [HttpDelete]
-        [PermissionAuthorize("sys-public-page")]
+        [PermissionAuthorize("sys-public-page:delete")]
         public IActionResult Delete(int id)
         {
             _pageService.Delete(id);

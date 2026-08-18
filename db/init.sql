@@ -161,7 +161,8 @@ BEGIN
         Enabled    BIT               NOT NULL DEFAULT 1,
         Name       NVARCHAR(100)     NULL,
         Component  NVARCHAR(200)     NULL,
-        SortOrder  INT               NOT NULL DEFAULT 0
+        SortOrder  INT               NOT NULL DEFAULT 0,
+        Type       TINYINT           NOT NULL DEFAULT 1
     );
 END
 GO
@@ -179,6 +180,7 @@ EXEC dbo.usp_AddColumnComment N'SysMenu', N'Enabled',    N'是否启用（停用
 EXEC dbo.usp_AddColumnComment N'SysMenu', N'Name',       N'内部路由名称';
 EXEC dbo.usp_AddColumnComment N'SysMenu', N'Component',  N'内部路由 Vue 组件路径';
 EXEC dbo.usp_AddColumnComment N'SysMenu', N'SortOrder',  N'同级排序号';
+EXEC dbo.usp_AddColumnComment N'SysMenu', N'Type',       N'节点类型：0=Group 1=Page 2=Button';
 GO
 
 -- 初始菜单（迁移自 menus.xml，同名顶层分组"昀晗"已按读取逻辑合并）
@@ -1075,11 +1077,20 @@ BEGIN
     (50, 34, N'个人配置', N'/personal-config', 0, 1, 0, 0, N'personal-config', N'/src/common/views/PersonalConfigView.vue', 8),
     (51, 34, N'系统大盘', N'/system-dashboard', 0, 1, 0, 0, N'system-dashboard', N'/src/common/views/SystemDashboardView.vue', 9),
     (52, 34, N'定时任务', N'/hangfire-jobs',    0, 1, 0, 0, N'hangfire-jobs',    N'/src/common/views/HangfireJobsView.vue',    10),
-    -- 日志分组（子菜单）
-    (54, 34, N'日志',     NULL,               0, 1, 0, 0, N'log-group',      NULL,                                        11),
+    (55, 34, N'视图管理', N'/view-manage',      0, 1, 0, 0, N'view-manage',      N'/src/common/views/ViewManageView.vue',      0),
     (37, 54, N'审计日志', N'/audit-log',      0, 1, 0, 0, N'audit-log',      N'/src/common/views/AuditLogView.vue',      1),
     (41, 54, N'错误日志', N'/error-log',      0, 1, 0, 0, N'error-log',      N'/src/common/views/ErrorLogView.vue',      2),
     (53, 54, N'实时日志', N'/log-viewer',     0, 1, 0, 0, N'log-viewer',     N'/src/common/views/LogViewerView.vue',      3);
+    SET IDENTITY_INSERT dbo.SysMenu OFF;
+END
+GO
+
+-- 日志分组（一级菜单，与系统管理同级，排在其后）
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Title = N'系统管理')
+BEGIN
+    SET IDENTITY_INSERT dbo.SysMenu ON;
+    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder) VALUES
+    (54, NULL, N'日志',     NULL,               0, 1, 0, 0, N'log-group',      NULL,                                        11);
     SET IDENTITY_INSERT dbo.SysMenu OFF;
 END
 GO
@@ -1111,6 +1122,16 @@ BEGIN
     IF @PersonalConfigMenuParentId IS NOT NULL
         INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
         VALUES (@PersonalConfigMenuParentId, N'个人配置', N'/personal-config', 0, 1, 0, 0, N'personal-config', N'/src/common/views/PersonalConfigView.vue', 10);
+END
+GO
+
+-- 视图管理菜单幂等补齐（已有库补充菜单用）
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'view-manage')
+BEGIN
+    DECLARE @ViewManageParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理');
+    IF @ViewManageParentId IS NOT NULL
+        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
+        VALUES (@ViewManageParentId, N'视图管理', N'/view-manage', 0, 1, 0, 0, N'view-manage', N'/src/common/views/ViewManageView.vue', 0);
 END
 GO
 
@@ -1223,6 +1244,225 @@ SELECT r.Id, m.Id
 FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
 WHERE r.Code = N'admin'
   AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
+GO
+
+-- 修正分组菜单 Type：Name 和 Page 均为空的顶层/分组节点设为 Type=0（Group）
+UPDATE dbo.SysMenu SET Type = 0 WHERE Name IS NULL AND Page IS NULL AND Type = 1;
+GO
+
+-- ========== 视图注册表与权限点（替代旧 Type=2 SysMenu 方案） ==========
+
+IF OBJECT_ID(N'dbo.SysView') IS NULL
+BEGIN
+    CREATE TABLE dbo.SysView (
+        Id          INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        Name        NVARCHAR(100)     NOT NULL UNIQUE,
+        Title       NVARCHAR(100)     NOT NULL,
+        Component   NVARCHAR(200)     NULL,
+        RoutePath   NVARCHAR(200)     NULL,
+        Description NVARCHAR(500)     NULL,
+        Enabled     BIT               NOT NULL DEFAULT 1,
+        SortOrder   INT               NOT NULL DEFAULT 0
+    );
+END
+GO
+
+IF OBJECT_ID(N'dbo.SysViewPermission') IS NULL
+BEGIN
+    CREATE TABLE dbo.SysViewPermission (
+        Id        INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        ViewId    INT               NOT NULL,
+        Name      NVARCHAR(100)     NOT NULL,
+        Title     NVARCHAR(100)     NOT NULL,
+        SortOrder INT               NOT NULL DEFAULT 0,
+        Enabled   BIT               NOT NULL DEFAULT 1,
+        CONSTRAINT FK_SysViewPerm_View FOREIGN KEY (ViewId) REFERENCES dbo.SysView(Id)
+    );
+END
+GO
+
+IF OBJECT_ID(N'dbo.SysRoleViewPerm') IS NULL
+BEGIN
+    CREATE TABLE dbo.SysRoleViewPerm (
+        Id         INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        RoleId     INT NOT NULL,
+        ViewPermId INT NOT NULL
+    );
+END
+GO
+
+IF OBJECT_ID(N'dbo.SysUserViewPerm') IS NULL
+BEGIN
+    CREATE TABLE dbo.SysUserViewPerm (
+        Id         INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UserId     UNIQUEIDENTIFIER NOT NULL,
+        ViewPermId INT NOT NULL
+    );
+END
+GO
+
+-- 视图种子数据：全部系统页面
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView)
+BEGIN
+    SET IDENTITY_INSERT dbo.SysView ON;
+    INSERT INTO dbo.SysView (Id, Name, Title, Component, RoutePath, SortOrder) VALUES
+    -- 系统管理类
+    (1,  N'user-manage',      N'用户管理',   N'/src/common/views/UserManageView.vue',        N'/user-manage',       1),
+    (2,  N'role-manage',      N'角色管理',   N'/src/common/views/RoleManageView.vue',        N'/role-manage',       2),
+    (3,  N'menu-manage',      N'菜单管理',   N'/src/common/views/MenuManageView.vue',        N'/menu-manage',       3),
+    (4,  N'view-manage',      N'视图管理',   N'/src/common/views/ViewManageView.vue',        N'/view-manage',       4),
+    (5,  N'notice',           N'通知管理',   N'/src/common/views/NoticeManageView.vue',      N'/notice',            5),
+    (6,  N'sys-config',       N'系统配置',   N'/src/common/views/SysConfigView.vue',         N'/sys-config',        6),
+    (7,  N'permission',       N'权限设置',   N'/src/common/views/PermissionView.vue',        N'/permission',        7),
+    (8,  N'sys-public-page',  N'外部页面',   N'/src/common/views/SysPublicPageView.vue',      N'/sys-public-page',   8),
+    (9,  N'personal-config',  N'个人配置',   N'/src/common/views/PersonalConfigView.vue',    N'/personal-config',   9),
+    (10, N'hangfire-jobs',    N'定时任务',   N'/src/common/views/HangfireJobsView.vue',      N'/hangfire-jobs',    10),
+    (11, N'error-log',        N'错误日志',   N'/src/common/views/ErrorLogView.vue',         N'/error-log',        11),
+    (12, N'log-viewer',       N'实时日志',   N'/src/common/views/LogViewerView.vue',        N'/log-viewer',       12),
+    (13, N'audit-log',        N'审计日志',   N'/src/common/views/AuditLogView.vue',         N'/audit-log',        13),
+    (14, N'online-users',     N'在线用户',   N'/src/common/views/UserOnlineView.vue',        N'/online-users',     14),
+    (15, N'system-dashboard', N'系统大盘',   N'/src/common/views/SystemDashboardView.vue',   N'/system-dashboard', 15),
+    -- 开发工具类
+    (16, N'code-editor',      N'代码编辑器', N'/src/common/views/CodeEditorView.vue',        N'/code-editor',      16),
+    (17, N'dev-tools',        N'开发工具集', N'/src/common/views/DevToolsView.vue',          N'/dev-tools',        17),
+    (18, N'sql-query',        N'SQL查询',    N'/src/common/views/SqlQueryView.vue',         N'/sql-query',        18),
+    (19, N'code-naming',     N'命名转换',    N'/src/common/views/CodeNamingView.vue',       N'/code-naming',      19),
+    -- 彩票类
+    (20, N'lottery',          N'大乐透',     N'/src/common/views/LotteryView.vue',          N'/lottery',          20),
+    (21, N'lottery-ssq',      N'双色球',     N'/src/common/views/LotteryView.vue',          N'/lottery?type=SSQ', 21),
+    (22, N'lottery-pl5',      N'排列五',     N'/src/common/views/LotteryView.vue',          N'/lottery?type=PL5', 22),
+    (23, N'lottery-fc3d',     N'福彩3D',     N'/src/common/views/LotteryView.vue',          N'/lottery?type=FC3D',23),
+    (24, N'lottery-records',  N'选号记录',   N'/src/common/views/LotteryRecordsView.vue',   N'/lottery-records',  24),
+    (25, N'lottery-analysis', N'智能分析',   N'/src/common/views/LotteryAnalysisView.vue',  N'/lottery-analysis', 25),
+    -- 短信类
+    (26, N'sms-template',     N'短信模板',   N'/src/sms/views/SmsTemplateView.vue',         N'/sms-template',     26),
+    (27, N'sms-log',          N'短信日志',   N'/src/sms/views/SmsLogView.vue',              N'/sms-log',          27),
+    (28, N'sms-config',       N'短信配置',   N'/src/sms/views/SmsConfigView.vue',           N'/sms-config',       28),
+    -- 邮件类
+    (29, N'email-config',     N'邮件配置',   N'/src/email/views/EmailConfigView.vue',       N'/email-config',     29),
+    (30, N'email-log',        N'邮件日志',   N'/src/email/views/EmailLogView.vue',          N'/email-log',        30),
+    -- 通知类
+    (31, N'webhook-config',   N'群机器人',   N'/src/notify/views/WebhookConfigView.vue',    N'/webhook-config',   31),
+    (32, N'webhook-log',      N'Webhook日志',N'/src/notify/views/WebhookLogView.vue',        N'/webhook-log',      32),
+    -- 监控类
+    (33, N'web-monitor',      N'网站监控',   N'/src/common/views/WebMonitorView.vue',       N'/web-monitor',      33),
+    (34, N'host-monitor',     N'主机监控',   N'/src/common/views/HostMonitorView.vue',      N'/host-monitor',     34),
+    -- 其他
+    (35, N'attendance',       N'考勤查询',   N'/src/yunhan/views/AttendanceView.vue',       N'/attendance',       35),
+    (36, N'python-knowledge', N'Python知识库',N'/src/common/views/PythonKnowledgeView.vue',  N'/python-knowledge', 36),
+    (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37);
+    SET IDENTITY_INSERT dbo.SysView OFF;
+END
+GO
+
+-- 视图权限点种子数据
+IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission)
+BEGIN
+    SET IDENTITY_INSERT dbo.SysViewPermission ON;
+    INSERT INTO dbo.SysViewPermission (Id, ViewId, Name, Title, SortOrder) VALUES
+    -- 用户管理
+    (1,  1, N'user-manage:add',       N'新增用户',   1),
+    (2,  1, N'user-manage:edit',      N'编辑用户',   2),
+    (3,  1, N'user-manage:delete',    N'删除用户',   3),
+    (4,  1, N'user-manage:reset-pwd', N'重置密码',   4),
+    -- 角色管理
+    (5,  2, N'role-manage:add',    N'新增角色',   1),
+    (6,  2, N'role-manage:edit',   N'编辑角色',   2),
+    (7,  2, N'role-manage:delete', N'删除角色',   3),
+    -- 菜单管理
+    (8,  3, N'menu-manage:save',   N'保存菜单',   1),
+    -- 视图管理
+    (9,  4, N'view-manage',        N'视图管理操作', 1),
+    -- 通知管理
+    (10, 5, N'notice:publish',  N'发布通知',   1),
+    (11, 5, N'notice:delete',   N'删除通知',   2),
+    -- 系统配置
+    (12, 6, N'sys-config:save',   N'保存配置', 1),
+    (13, 6, N'sys-config:reveal', N'查看明文', 2),
+    -- 外部页面
+    (14, 8,  N'sys-public-page:create', N'新增', 1),
+    (15, 8,  N'sys-public-page:edit',   N'编辑', 2),
+    (16, 8,  N'sys-public-page:delete', N'删除', 3),
+    -- 个人配置
+    (17, 9,  N'personal-config:save', N'保存', 1),
+    -- 定时任务
+    (18, 10, N'hangfire-jobs:trigger', N'触发任务', 1),
+    -- 错误日志
+    (19, 11, N'error-log:clear', N'清空日志', 1),
+    -- 实时日志
+    (20, 12, N'log-viewer:clear', N'清空日志', 1),
+    -- SQL查询
+    (21, 18, N'sql-query:execute',            N'执行SQL',    1),
+    (22, 18, N'sql-query:save-datasource',    N'保存数据源', 2),
+    (23, 18, N'sql-query:delete-datasource', N'删除数据源', 3),
+    (24, 18, N'sql-query:test-connection',    N'测试连接',   4),
+    -- 大乐透
+    (25, 20, N'lottery:save-bets',      N'保存选号', 1),
+    (26, 20, N'lottery:clear-history',   N'清空记录', 2),
+    (27, 20, N'lottery:delete-record',   N'删除记录', 3),
+    -- 双色球
+    (28, 21, N'lottery-ssq:save-bets',      N'保存选号', 1),
+    (29, 21, N'lottery-ssq:clear-history',   N'清空记录', 2),
+    (30, 21, N'lottery-ssq:delete-record',   N'删除记录', 3),
+    -- 排列五
+    (31, 22, N'lottery-pl5:save-bets',      N'保存选号', 1),
+    (32, 22, N'lottery-pl5:clear-history',   N'清空记录', 2),
+    (33, 22, N'lottery-pl5:delete-record',   N'删除记录', 3),
+    -- 福彩3D
+    (34, 23, N'lottery-fc3d:save-bets',      N'保存选号', 1),
+    (35, 23, N'lottery-fc3d:clear-history',   N'清空记录', 2),
+    (36, 23, N'lottery-fc3d:delete-record',   N'删除记录', 3),
+    -- 选号记录
+    (37, 24, N'lottery-records:verify-issue', N'整期验奖', 1),
+    (38, 24, N'lottery-records:verify',        N'单条验奖', 2),
+    -- 智能分析
+    (39, 25, N'lottery-analysis:run',       N'重新分析', 1),
+    (40, 25, N'lottery-analysis:save-bets', N'保存推荐', 2),
+    -- 短信模板
+    (41, 26, N'sms-template:create', N'新建模板', 1),
+    (42, 26, N'sms-template:edit',   N'编辑模板', 2),
+    (43, 26, N'sms-template:delete', N'删除模板', 3),
+    (44, 26, N'sms-template:toggle', N'启用/禁用', 4),
+    -- 短信配置
+    (45, 28, N'sms-config:create',    N'新增配置', 1),
+    (46, 28, N'sms-config:edit',     N'编辑配置', 2),
+    (47, 28, N'sms-config:delete',   N'删除配置', 3),
+    (48, 28, N'sms-config:test-send',N'测试发送', 4),
+    -- 邮件配置
+    (49, 29, N'email-config:create',    N'新增配置', 1),
+    (50, 29, N'email-config:edit',     N'编辑配置', 2),
+    (51, 29, N'email-config:delete',   N'删除配置', 3),
+    (52, 29, N'email-config:test-send',N'测试发送', 4),
+    -- 群机器人
+    (53, 31, N'webhook-config:create',    N'新增机器人', 1),
+    (54, 31, N'webhook-config:edit',     N'编辑机器人', 2),
+    (55, 31, N'webhook-config:delete',   N'删除机器人', 3),
+    (56, 31, N'webhook-config:test-send', N'测试发送',  4),
+    -- 网站监控
+    (57, 33, N'web-monitor:create', N'新增监控', 1),
+    (58, 33, N'web-monitor:edit',   N'编辑监控', 2),
+    (59, 33, N'web-monitor:delete', N'删除监控', 3),
+    (60, 33, N'web-monitor:check',  N'立即检测', 4),
+    -- 主机监控
+    (61, 34, N'host-monitor:create',    N'新增监控', 1),
+    (62, 34, N'host-monitor:edit',     N'编辑监控', 2),
+    (63, 34, N'host-monitor:delete',   N'删除监控', 3),
+    (64, 34, N'host-monitor:check',    N'立即检测', 4),
+    (65, 34, N'host-monitor:clean-disk',N'清理磁盘', 5),
+    -- 代码编辑器
+    (66, 16, N'code-editor:create',  N'新建文件', 1),
+    (67, 16, N'code-editor:save',   N'保存文件', 2),
+    (68, 16, N'code-editor:save-as',N'另存为',   3);
+    SET IDENTITY_INSERT dbo.SysViewPermission OFF;
+END
+GO
+
+-- admin 角色自动拥有所有视图权限点
+INSERT INTO dbo.SysRoleViewPerm (RoleId, ViewPermId)
+SELECT r.Id, vp.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysViewPermission vp
+WHERE r.Code = N'admin'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleViewPerm rvp WHERE rvp.RoleId = r.Id AND rvp.ViewPermId = vp.Id);
 GO
 
 -- 种子角色：普通用户（新注册用户自动赋予此角色）
@@ -1631,6 +1871,40 @@ EXEC dbo.usp_AddColumnComment N'UserConfig', N'ConfigKey', N'配置键，如 App
 EXEC dbo.usp_AddColumnComment N'UserConfig', N'ConfigValue', N'配置值';
 EXEC dbo.usp_AddColumnComment N'UserConfig', N'CreatedAt', N'创建时间';
 EXEC dbo.usp_AddColumnComment N'UserConfig', N'UpdatedAt', N'更新时间';
+GO
+
+-- ============================================================
+-- 定时任务执行日志（由各 Job 基类 ExecuteWithLog 在执行前后自动写入/更新）
+-- ============================================================
+IF OBJECT_ID('dbo.JobExecutionLog', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.JobExecutionLog (
+        Id              BIGINT IDENTITY(1,1) PRIMARY KEY,
+        JobName         NVARCHAR(200) NOT NULL,   -- 对应 RecurringJobId（如"网站监控定时巡检"）
+        State           NVARCHAR(50)  NOT NULL,   -- Succeeded / Failed
+        MethodName      NVARCHAR(200) NULL,       -- 方法名
+        Arguments       NVARCHAR(MAX) NULL,       -- 参数 JSON
+        StartedAt       DATETIME2     NOT NULL,   -- 开始时间
+        FinishedAt      DATETIME2     NULL,       -- 结束时间
+        DurationMs      BIGINT        NULL,       -- 耗时毫秒
+        Error           NVARCHAR(MAX) NULL,       -- 异常信息
+        CreatedAt       DATETIME2     NOT NULL DEFAULT(GETDATE())
+    );
+    CREATE INDEX IX_JobExecLog_Name ON dbo.JobExecutionLog(JobName, Id DESC);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'JobExecutionLog', N'定时任务执行日志（Job 基类自动记录）';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'Id', N'主键';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'JobName', N'对应 RecurringJobId';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'State', N'执行状态：Succeeded/Failed';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'MethodName', N'方法名';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'Arguments', N'参数 JSON';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'StartedAt', N'开始时间';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'FinishedAt', N'结束时间';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'DurationMs', N'耗时毫秒';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'Error', N'异常信息';
+EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'CreatedAt', N'创建时间';
 GO
 
 PRINT N'ConvenientSystem 数据库初始化完成';

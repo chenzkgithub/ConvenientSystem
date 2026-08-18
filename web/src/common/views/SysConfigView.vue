@@ -199,6 +199,7 @@ loadConfigs()
                   {{ group.category }}
                 </span>
                 <el-button
+                  v-if="$has('sys-config:save')"
                   type="primary"
                   size="small"
                   :loading="savingGroup.has(group.category)"
@@ -239,6 +240,7 @@ loadConfigs()
                         class="config-input masked-input"
                       />
                       <el-button
+                        v-if="$has('sys-config:reveal')"
                         type="warning"
                         plain
                         size="small"
@@ -304,6 +306,7 @@ loadConfigs()
                   {{ group.category }}
                 </span>
                 <el-button
+                  v-if="$has('sys-config:save')"
                   type="primary"
                   size="small"
                   :loading="savingGroup.has(group.category)"
@@ -344,6 +347,7 @@ loadConfigs()
                         class="config-input masked-input"
                       />
                       <el-button
+                        v-if="$has('sys-config:reveal')"
                         type="warning"
                         plain
                         size="small"

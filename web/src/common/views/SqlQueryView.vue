@@ -2053,7 +2053,7 @@ function clearEditor() {
 
     <!-- 工具栏 -->
     <div class="toolbar">
-      <el-button type="primary" size="small" @click="executeQuery" :disabled="executing" :loading="executing">
+      <el-button v-if="$has('sql-query:execute')" type="primary" size="small" @click="executeQuery" :disabled="executing" :loading="executing">
         {{ executing ? '执行中...' : '▶ 执行' }}
       </el-button>
       <el-button v-show="executing" size="small" type="danger" @click="cancelQuery">■ 取消执行</el-button>
@@ -2382,11 +2382,11 @@ function clearEditor() {
         <el-table-column label="操作" width="190" align="center" :show-overflow-tooltip="false">
           <template #default="{ row }">
             <div class="ds-op-btns">
-              <el-button size="small" text @click="testDataSourceRow(row as DataSourceItem)" :loading="testingRowName === row.name">测试连接</el-button>
+              <el-button v-if="$has('sql-query:test-connection')" size="small" text @click="testDataSourceRow(row as DataSourceItem)" :loading="testingRowName === row.name">测试连接</el-button>
               <!-- 内置数据源（ConvenientSystemDb）不允许修改删除，不显示按钮 -->
               <template v-if="!row.isBuiltIn">
                 <el-button size="small" text type="primary" @click="startEditDs(row as DataSourceItem)">修改</el-button>
-                <el-button size="small" text type="danger" @click="removeDataSource(row as DataSourceItem)">删除</el-button>
+                <el-button v-if="$has('sql-query:delete-datasource')" size="small" text type="danger" @click="removeDataSource(row as DataSourceItem)">删除</el-button>
               </template>
             </div>
           </template>
@@ -2400,8 +2400,8 @@ function clearEditor() {
           <el-select v-model="newDsDbType" size="small" style="width: 130px;" placeholder="数据库类型" @change="onDbTypeChange">
             <el-option v-for="opt in dbTypeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
-          <el-button size="small" @click="testDataSource" :loading="testingDs">测试连接</el-button>
-          <el-button size="small" type="primary" @click="addDataSource">{{ isEditingDs ? '保存' : '添加' }}</el-button>
+          <el-button v-if="$has('sql-query:test-connection')" size="small" @click="testDataSource" :loading="testingDs">测试连接</el-button>
+          <el-button v-if="$has('sql-query:save-datasource')" size="small" type="primary" @click="addDataSource">{{ isEditingDs ? '保存' : '添加' }}</el-button>
           <el-button v-if="isEditingDs" size="small" @click="resetDsForm">取消</el-button>
         </div>
         <el-input

@@ -54,4 +54,25 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? Queue { get; set; }
         public string? Description { get; set; }
     }
+
+    /// <summary>Hangfire 单次执行日志（从 Hangfire 存储查询）</summary>
+    public class HangfireExecutionLogDto
+    {
+        /// <summary>Hangfire Job Id</summary>
+        public string JobId { get; set; } = "";
+        /// <summary>执行状态：Succeeded / Failed / Processing / Enqueued</summary>
+        public string State { get; set; } = "";
+        /// <summary>Job 类型名（如 LotteryDrawCrawlJob）</summary>
+        public string? JobType { get; set; }
+        /// <summary>调用方法名（如 CrawlAsync）</summary>
+        public string? MethodName { get; set; }
+        /// <summary>方法参数（JSON 序列化）</summary>
+        public string? Arguments { get; set; }
+        /// <summary>执行开始时间</summary>
+        public string? StartedAt { get; set; }
+        /// <summary>失败时的异常信息</summary>
+        public string? Error { get; set; }
+        /// <summary>执行耗时（毫秒）</summary>
+        public long? DurationMs { get; set; }
+    }
 }

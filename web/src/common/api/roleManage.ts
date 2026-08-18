@@ -32,6 +32,8 @@ export interface MenuFlatDto {
   id: number
   parentId?: number | null
   title: string
+  /** 节点类型：0=Group，1=Page，2=Button */
+  type?: number
 }
 
 /** 角色列表（对应后端 RoleManageController） */

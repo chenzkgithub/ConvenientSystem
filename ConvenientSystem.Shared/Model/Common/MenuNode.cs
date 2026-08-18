@@ -37,6 +37,9 @@ namespace ConvenientSystem.Shared.Model.Common
 
         /// <summary>是否启用（停用后不在侧栏/首页显示，也不可在权限管理中分配），默认 true</summary>
         public bool enabled { get; set; } = true;
+
+        /// <summary>节点类型：0=Group，1=Page，2=Button（按钮权限点）。默认 1</summary>
+        public byte type { get; set; } = 1;
     }
 
     /// <summary>

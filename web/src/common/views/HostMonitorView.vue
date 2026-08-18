@@ -11,6 +11,9 @@ import CommonTooltip from '@/common/components/CommonTooltip.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 import { isHostAvailable, hostOpenLocation, hostOpenRecycleBin } from '@/common/hostFileBridge'
 import type { EChartsCoreOption } from 'echarts/core'
+import { usePermission } from '@/common/composables/usePermission'
+
+const { has } = usePermission()
 
 // ── 类型定义（与后端 HostMonitorModels.cs 对应） ──
 interface MonitorTarget {
@@ -1213,7 +1216,7 @@ async function loadLogs() {
           </el-radio-group>
           <el-button size="small" :loading="dashLoading" @click="loadDashboard()">刷新</el-button>
           <el-button
-            v-if="dashTarget"
+            v-if="dashTarget && $has('host-monitor:check')"
             size="small"
             type="primary"
             :loading="checkingId === dashTarget.id"
@@ -1264,7 +1267,7 @@ async function loadLogs() {
         <div class="host-disk-panel">
           <div class="host-disk-header">
             <div class="host-chart-title">各分区可用空间</div>
-            <el-button size="small" :loading="cleaning" @click="openCleanDisk">清理磁盘</el-button>
+            <el-button v-if="$has('host-monitor:clean-disk')" size="small" :loading="cleaning" @click="openCleanDisk">清理磁盘</el-button>
           </div>
           <el-table :data="dash.latest?.disks ?? []" size="small" border>
             <el-table-column prop="drive" label="分区" width="90" />
@@ -1380,7 +1383,7 @@ async function loadLogs() {
       @load="load"
     >
       <template #toolbar>
-        <el-button type="primary" size="small" @click="openAdd">新增监控</el-button>
+        <el-button v-if="$has('host-monitor:create')" type="primary" size="small" @click="openAdd">新增监控</el-button>
         <el-button size="small" @click="load">刷新</el-button>
       </template>
 
@@ -1405,13 +1408,14 @@ async function loadLogs() {
 
       <template #actions="{ row }">
         <el-button
+          v-if="$has('host-monitor:check')"
           link type="primary" size="small"
           :loading="checkingId === (row as MonitorTarget).id"
           @click="checkNow(row as MonitorTarget)"
         >检测</el-button>
         <el-button link type="primary" size="small" @click="openLogs(row as MonitorTarget)">日志</el-button>
-        <el-button link type="primary" size="small" @click="openEdit(row as MonitorTarget)">编辑</el-button>
-        <el-button link type="danger" size="small" @click="remove(row as MonitorTarget)">删除</el-button>
+        <el-button v-if="$has('host-monitor:edit')" link type="primary" size="small" @click="openEdit(row as MonitorTarget)">编辑</el-button>
+        <el-button v-if="$has('host-monitor:delete')" link type="danger" size="small" @click="remove(row as MonitorTarget)">删除</el-button>
       </template>
 
       <template #empty>暂无监控目标，点击"新增监控"添加</template>

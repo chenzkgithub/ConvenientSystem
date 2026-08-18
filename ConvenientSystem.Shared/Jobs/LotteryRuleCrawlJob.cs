@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
+
 namespace ConvenientSystem.Shared.Jobs
 {
     /// <summary>
@@ -16,9 +17,8 @@ namespace ConvenientSystem.Shared.Jobs
     /// 库内尚无生效版本时（首次部署），仅当解析结果与内置兜底规则判奖完全等价才自动生效，
     /// 避免第一次运行就必须手工点四遍，同时保证自动生效的版本判奖行为可信。
     /// </summary>
-    public class LotteryRuleCrawlJob
+    public class LotteryRuleCrawlJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly ILogger<LotteryRuleCrawlJob> _logger;
 
         /// <summary>共享 HttpClient（官网条文页直连用）</summary>
@@ -55,9 +55,9 @@ namespace ConvenientSystem.Shared.Jobs
 
         public LotteryRuleCrawlJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
-            ILogger<LotteryRuleCrawlJob> logger)
+            IJobExecutionLogService jobLog,
+            ILogger<LotteryRuleCrawlJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _logger = logger;
         }
 
@@ -91,9 +91,12 @@ namespace ConvenientSystem.Shared.Jobs
         /// 有变化入库新版本（首次且判奖等价时自动生效，否则待审核）。返回入库的新版本数（0 或 1）
         /// </summary>
         [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 })]
-        public async Task<int> CrawlAsync(string type = LotteryTypes.DLT, CancellationToken ct = default)
+        public Task<int> CrawlAsync(string type = LotteryTypes.DLT, CancellationToken ct = default)
         {
             var t = LotteryTypes.Normalize(type);
+            var jobName = $"{LotteryTypes.GetName(t)}玩法规则抓取";
+            return ExecuteWithLog<int>(jobName, nameof(CrawlAsync), new { type }, async () =>
+            {
             var typeName = LotteryTypes.GetName(t);
 
             var url = await ResolveArticleUrlAsync(t, ct) ?? FallbackUrl(t);
@@ -117,14 +120,14 @@ namespace ConvenientSystem.Shared.Jobs
             var hash = Sha256(text + "\n" + gradeJson);
             var now = DateTime.Now;
 
-            var active = _fsql.Select<LotteryRuleEntity>()
+            var active = Fsql.Select<LotteryRuleEntity>()
                 .Where(r => r.LotteryType == t && r.Status == LotteryRuleStatus.Active)
                 .OrderByDescending(r => r.Version)
                 .First();
 
             if (active != null && active.ContentHash == hash)
             {
-                _fsql.Update<LotteryRuleEntity>()
+                Fsql.Update<LotteryRuleEntity>()
                     .Set(r => r.CrawledAt, now)
                     .Set(r => r.SourceUrl, url)
                     .Where(r => r.Id == active.Id)
@@ -134,7 +137,7 @@ namespace ConvenientSystem.Shared.Jobs
             }
 
             // 同一份差异条文可能连续多天抓到，已在待审队列里的不重复堆版本
-            var samePending = _fsql.Select<LotteryRuleEntity>()
+            var samePending = Fsql.Select<LotteryRuleEntity>()
                 .Where(r => r.LotteryType == t && r.Status == LotteryRuleStatus.Pending && r.ContentHash == hash)
                 .Any();
             if (samePending)
@@ -143,7 +146,7 @@ namespace ConvenientSystem.Shared.Jobs
                 return 0;
             }
 
-            var maxVersion = _fsql.Select<LotteryRuleEntity>()
+            var maxVersion = Fsql.Select<LotteryRuleEntity>()
                 .Where(r => r.LotteryType == t)
                 .Max(r => (int?)r.Version) ?? 0;
 
@@ -180,10 +183,10 @@ namespace ConvenientSystem.Shared.Jobs
                     : "判奖差异：" + string.Join("；", diff), 500);
             }
 
-            row.Id = (int)_fsql.Insert(row).ExecuteIdentity();
+            row.Id = (int)Fsql.Insert(row).ExecuteIdentity();
 
             // 旧的待审核版本已被本次更新取代，避免审核页出现多份过期待审
-            _fsql.Update<LotteryRuleEntity>()
+            Fsql.Update<LotteryRuleEntity>()
                 .Set(r => r.Status, LotteryRuleStatus.Replaced)
                 .Where(r => r.LotteryType == t && r.Status == LotteryRuleStatus.Pending && r.Id != row.Id)
                 .ExecuteAffrows();
@@ -200,6 +203,7 @@ namespace ConvenientSystem.Shared.Jobs
                     typeName, row.Version, row.Remark);
             }
             return 1;
+            });
         }
 
         /// <summary>生效版本的规则（JSON 不可用时退回内置规则，只用于差异比对）</summary>

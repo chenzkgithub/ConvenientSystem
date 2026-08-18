@@ -8,7 +8,7 @@ namespace ConvenientSystem.Api.Controllers.Common
     /// Hangfire 定时任务管理接口
     /// </summary>
     [Area("Common")]
-    [PermissionAuthorize("system-dashboard")]
+    [PermissionAuthorize("hangfire-jobs")]
     public class HangfireJobController : BaseController
     {
         private readonly IHangfireService _hangfireService;
@@ -24,11 +24,17 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>手动触发周期任务</summary>
         [HttpPost]
+        [PermissionAuthorize("hangfire-jobs:trigger")]
         public IActionResult TriggerJob([FromBody] HangfireJobRequest request)
         {
             _hangfireService.TriggerJob(request.JobId);
             return Ok(new { message = "已触发" });
         }
+
+        /// <summary>查询周期任务的执行历史（最近 50 次）</summary>
+        [HttpGet]
+        public IActionResult GetExecutionHistory([FromQuery] string recurringJobId)
+            => Ok(_hangfireService.GetExecutionHistory(recurringJobId));
     }
 
     public class HangfireJobRequest

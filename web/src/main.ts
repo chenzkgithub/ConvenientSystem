@@ -10,6 +10,7 @@ import 'element-plus/es/components/message-box/style/css'
 import { ElLoading, ElMessage } from 'element-plus'
 import 'element-plus/es/components/loading/style/css'
 import { ApiError } from '@/api/request'
+import { useAuthStore } from '@/common/stores/auth'
 import { installDialogFlex } from '@/common/dialogFlex'
 import { installTipCopy } from '@/common/tipCopy'
 
@@ -18,6 +19,10 @@ import { installTipCopy } from '@/common/tipCopy'
 const app = createApp(App)
 app.directive('loading', ElLoading.directive)
 app.use(createPinia())
+
+// 全局权限检查：模板中可直接用 v-if="$has('permission-code')"，无需在各页面 import
+app.config.globalProperties.$has = (code: string): boolean =>
+  useAuthStore().menuCodes.includes(code)
 app.use(router)
 
 // 全局错误统一弹提示（不再跳错误页）：grouping 合并相同内容提示，避免连环错误刷屏

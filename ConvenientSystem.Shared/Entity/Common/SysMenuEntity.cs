@@ -43,5 +43,9 @@ namespace ConvenientSystem.Shared.Entity.Common
 
         /// <summary>同级排序号</summary>
         public int SortOrder { get; set; }
+
+        /// <summary>节点类型：0=Group（分组），1=Page（页面），2=Button（按钮权限点）。
+        /// Type=2 不在侧栏/路由中显示，仅在权限树中作为叶子节点供精细授权。</summary>
+        public byte Type { get; set; }
     }
 }

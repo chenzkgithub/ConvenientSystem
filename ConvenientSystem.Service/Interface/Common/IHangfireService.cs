@@ -15,5 +15,8 @@ namespace ConvenientSystem.Service.Common
 
         /// <summary>暂停/恢复周期任务</summary>
         void SetJobState(string jobId, bool paused);
+
+        /// <summary>查询指定周期任务的执行历史（最近 50 次）</summary>
+        List<HangfireExecutionLogDto> GetExecutionHistory(string recurringJobId);
     }
 }

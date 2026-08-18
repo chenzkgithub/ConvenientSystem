@@ -31,6 +31,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>新增或更新配置</summary>
         [HttpPost]
+        [PermissionAuthorize("webhook-config:create", "webhook-config:edit")]
         public IActionResult Save([FromBody] WebhookConfigDto dto)
         {
             _notifyService.Save(dto);
@@ -39,6 +40,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>删除配置</summary>
         [HttpPost]
+        [PermissionAuthorize("webhook-config:delete")]
         public IActionResult Delete([FromBody] int id)
         {
             _notifyService.Delete(id);
@@ -47,6 +49,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>测试发送</summary>
         [HttpPost]
+        [PermissionAuthorize("webhook-config:test-send")]
         public async Task<ActionResult<WebhookSendResultDto>> Test([FromBody] WebhookTestDto req)
             => Ok(await _notifyService.TestAsync(req.Id));
     }

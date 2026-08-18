@@ -22,6 +22,8 @@ export interface MenuNode {
   editable?: boolean
   /** 是否启用（停用后不在侧栏/首页显示，也不可在权限管理中分配），默认 true */
   enabled?: boolean
+  /** 节点类型：0=Group，1=Page，2=Button（按钮权限点）。默认 1 */
+  type?: number
 }
 
 /** 按日发送趋势数据点（对应后端 DailyTrendPointDto） */

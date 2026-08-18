@@ -1,4 +1,5 @@
 using ConvenientSystem.Shared.Common.Exceptions;
+using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
 using Hangfire;
 using Hangfire.Storage;
@@ -6,10 +7,18 @@ using Hangfire.Storage;
 namespace ConvenientSystem.Service.Common
 {
     /// <summary>
-    /// Hangfire 定时任务管理服务：查询周期任务、手动触发、暂停/恢复。
+    /// Hangfire 定时任务管理服务：查询周期任务、手动触发、暂停/恢复、执行历史。
     /// </summary>
     public class HangfireService : IHangfireService
     {
+        // 本地配置库 FreeSql（与 Hangfire 存储同库，可直接查 Hangfire Schema）
+        private readonly IFreeSql _configDb;
+
+        public HangfireService(
+            [FromKeyedServices("ConvenientSystemDb")] IFreeSql configDb)
+        {
+            _configDb = configDb;
+        }
         public List<HangfireJobDto> GetRecurringJobs()
         {
             try
@@ -74,6 +83,44 @@ namespace ConvenientSystem.Service.Common
             catch (Exception ex)
             {
                 throw new BizException($"设置任务状态失败：{ex.Message}", StatusCodes.Status500InternalServerError);
+            }
+        }
+
+        /// <summary>
+        /// 查询指定周期任务的执行历史（最近 50 次）：从 JobExecutionLog 自维护表查询，
+        /// 按 JobName 筛选，CreatedAt DESC 取最近 50 条。
+        /// </summary>
+        public List<HangfireExecutionLogDto> GetExecutionHistory(string recurringJobId)
+        {
+            if (string.IsNullOrWhiteSpace(recurringJobId))
+                throw new BadRequestException("任务标识不能为空");
+
+            try
+            {
+                var logs = _configDb.Select<JobExecutionLogEntity>()
+                    .Where(l => l.JobName == recurringJobId)
+                    .OrderByDescending(l => l.CreatedAt)
+                    .Take(50)
+                    .ToList();
+
+                return logs.Select(l => new HangfireExecutionLogDto
+                {
+                    JobId = l.Id.ToString(),
+                    State = l.State,
+                    MethodName = l.MethodName,
+                    Arguments = l.Arguments,
+                    StartedAt = l.StartedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                    DurationMs = l.DurationMs,
+                    Error = l.Error,
+                }).ToList();
+            }
+            catch (BizException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new BizException($"获取执行历史失败：{ex.Message}", StatusCodes.Status500InternalServerError);
             }
         }
     }

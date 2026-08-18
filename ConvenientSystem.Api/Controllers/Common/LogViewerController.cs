@@ -8,7 +8,7 @@ namespace ConvenientSystem.Api.Controllers.Common
     /// 实时日志查看器接口
     /// </summary>
     [Area("Common")]
-    [PermissionAuthorize("system-dashboard")]
+    [PermissionAuthorize("log-viewer")]
     public class LogViewerController : BaseController
     {
         private readonly MemoryLogBuffer _logBuffer;
@@ -25,6 +25,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>清空日志缓冲</summary>
         [HttpPost]
+        [PermissionAuthorize("log-viewer:clear")]
         public IActionResult ClearLogs()
         {
             _logBuffer.Clear();

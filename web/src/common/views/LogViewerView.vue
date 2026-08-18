@@ -104,7 +104,7 @@ onBeforeUnmount(stopTimer)
         </el-select>
         <el-switch v-model="autoRefresh" active-text="自动刷新" inactive-text="" size="small" />
         <el-button :icon="Refresh" size="small" @click="load" :loading="loading">刷新</el-button>
-        <el-button :icon="Delete" size="small" type="danger" @click="clearLogs">清空</el-button>
+        <el-button v-if="$has('log-viewer:clear')" :icon="Delete" size="small" type="danger" @click="clearLogs">清空</el-button>
       </div>
     </div>
 

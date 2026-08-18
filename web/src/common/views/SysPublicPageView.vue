@@ -188,7 +188,7 @@ onMounted(loadData)
     >
       <!-- 工具栏按钮 -->
       <template #toolbar>
-        <el-button type="primary" @click="openCreate">新增公开页面</el-button>
+        <el-button v-if="$has('sys-public-page:create')" type="primary" @click="openCreate">新增公开页面</el-button>
         <el-button @click="loadData">刷新</el-button>
       </template>
       <!-- 启用状态 -->
@@ -223,8 +223,8 @@ onMounted(loadData)
 
       <!-- 操作列 -->
       <template #cell-actions="{ row }">
-        <el-button link type="primary" size="small" @click="openEdit(row as SysPublicPageItem)">编辑</el-button>
-        <el-button link type="danger" size="small" @click="handleDelete(row as SysPublicPageItem)">删除</el-button>
+        <el-button v-if="$has('sys-public-page:edit')" link type="primary" size="small" @click="openEdit(row as SysPublicPageItem)">编辑</el-button>
+        <el-button v-if="$has('sys-public-page:delete')" link type="danger" size="small" @click="handleDelete(row as SysPublicPageItem)">删除</el-button>
       </template>
     </CommonDataTable>
 

@@ -183,8 +183,8 @@ onMounted(loadData)
         <span class="hint">配置邮件 SMTP 凭证，标记为默认的配置用于系统通知联动推送。</span>
       </template>
       <template #toolbar>
-        <el-button @click="openTest">测试发送</el-button>
-        <el-button type="primary" @click="openCreate">新增配置</el-button>
+        <el-button v-if="$has('email-config:test-send')" @click="openTest">测试发送</el-button>
+        <el-button v-if="$has('email-config:create')" type="primary" @click="openCreate">新增配置</el-button>
       </template>
 
       <template #cell-enableSsl="{ row }">
@@ -203,8 +203,8 @@ onMounted(loadData)
       </template>
 
       <template #actions="{ row }">
-        <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-        <el-button link type="danger" size="small" @click="onDelete(row)">删除</el-button>
+        <el-button v-if="$has('email-config:edit')" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+        <el-button v-if="$has('email-config:delete')" link type="danger" size="small" @click="onDelete(row)">删除</el-button>
       </template>
     </CommonDataTable>
 

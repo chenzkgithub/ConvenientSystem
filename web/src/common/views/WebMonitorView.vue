@@ -232,7 +232,7 @@ async function loadLogs() {
       @load="load"
     >
       <template #toolbar>
-        <el-button type="primary" size="small" @click="openAdd">新增监控</el-button>
+        <el-button v-if="$has('web-monitor:create')" type="primary" size="small" @click="openAdd">新增监控</el-button>
         <el-button size="small" @click="load">刷新</el-button>
       </template>
 
@@ -263,13 +263,14 @@ async function loadLogs() {
 
       <template #actions="{ row }">
         <el-button
+          v-if="$has('web-monitor:check')"
           link type="primary" size="small"
           :loading="checkingId === (row as MonitorTarget).id"
           @click="checkNow(row as MonitorTarget)"
         >检测</el-button>
         <el-button link type="primary" size="small" @click="openLogs(row as MonitorTarget)">日志</el-button>
-        <el-button link type="primary" size="small" @click="openEdit(row as MonitorTarget)">编辑</el-button>
-        <el-button link type="danger" size="small" @click="remove(row as MonitorTarget)">删除</el-button>
+        <el-button v-if="$has('web-monitor:edit')" link type="primary" size="small" @click="openEdit(row as MonitorTarget)">编辑</el-button>
+        <el-button v-if="$has('web-monitor:delete')" link type="danger" size="small" @click="remove(row as MonitorTarget)">删除</el-button>
       </template>
 
       <template #empty>暂无监控目标，点击"新增监控"添加</template>

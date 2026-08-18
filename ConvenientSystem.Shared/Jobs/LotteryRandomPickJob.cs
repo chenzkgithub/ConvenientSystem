@@ -5,6 +5,7 @@ using FreeSql;
 using Hangfire;
 using Microsoft.Extensions.Logging;
 
+
 namespace ConvenientSystem.Shared.Jobs
 {
     /// <summary>
@@ -12,16 +13,15 @@ namespace ConvenientSystem.Shared.Jobs
     /// 每个彩种为每个启用用户生成 10 注随机号码，保存到 LotteryRecordEntity 表，
     /// 归属到下一期（期号 = 最新开奖期号 + 1，开奖日 = 最近开奖日）。
     /// </summary>
-    public class LotteryRandomPickJob
+    public class LotteryRandomPickJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly ILogger<LotteryRandomPickJob> _logger;
 
         public LotteryRandomPickJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
-            ILogger<LotteryRandomPickJob> logger)
+            IJobExecutionLogService jobLog,
+            ILogger<LotteryRandomPickJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _logger = logger;
         }
 
@@ -29,7 +29,8 @@ namespace ConvenientSystem.Shared.Jobs
         /// 每天下午 1 点执行：为当天开奖的每个彩种、每个启用用户随机生成 10 注选号记录
         /// </summary>
         [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 300, 900 })]
-        public async Task DailyRandomPickAsync(CancellationToken ct = default)
+        public Task DailyRandomPickAsync(CancellationToken ct = default)
+            => ExecuteWithLog("随机生成彩种号码", nameof(DailyRandomPickAsync), null, async () =>
         {
             var today = DateTime.Today;
 
@@ -44,7 +45,7 @@ namespace ConvenientSystem.Shared.Jobs
             }
 
             // 全部启用的用户
-            var users = _fsql.Select<SysUserEntity>()
+            var users = Fsql.Select<SysUserEntity>()
                 .Where(u => u.Enabled)
                 .ToList();
             if (users.Count == 0)
@@ -86,7 +87,7 @@ namespace ConvenientSystem.Shared.Jobs
                             DrawDate = drawDate,
                         });
                     }
-                    var affrows = await _fsql.Insert(entities).ExecuteAffrowsAsync();
+                    var affrows = await Fsql.Insert(entities).ExecuteAffrowsAsync();
                     totalGenerated += affrows;
                 }
 
@@ -96,7 +97,7 @@ namespace ConvenientSystem.Shared.Jobs
 
             _logger.LogInformation("当天（{Date}）随机生成完成，共 {Count} 条选号记录",
                 today.ToString("yyyy-MM-dd"), totalGenerated);
-        }
+        });
 
         // ──────────────────── 号码生成 ────────────────────
 
@@ -144,7 +145,7 @@ namespace ConvenientSystem.Shared.Jobs
         /// <summary>下一期期号与开奖日（与 LotteryService.GetNextIssueAndDate 同口径）</summary>
         private (string? issue, DateTime? drawDate) GetNextIssueAndDate(string type)
         {
-            var latest = _fsql.Select<LotteryDrawEntity>()
+            var latest = Fsql.Select<LotteryDrawEntity>()
                 .Where(d => d.LotteryType == type)
                 .OrderByDescending(d => d.IssueNumber)
                 .First();

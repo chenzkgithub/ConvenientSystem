@@ -48,6 +48,7 @@ namespace ConvenientSystem.Service.Common
                 enabled = m.Enabled,
                 name = m.Name,
                 component = m.Component,
+                type = m.Type,
             })).ToList();
 
             var byId = rows.ToDictionary(r => r.Id, r => r.Node);
@@ -69,7 +70,7 @@ namespace ConvenientSystem.Service.Common
                 .OrderBy(m => m.SortOrder)
                 .OrderBy(m => m.Id)
                 .ToList()
-                .Select(m => new MenuFlatDto { Id = m.Id, ParentId = m.ParentId, Title = m.Title })
+                .Select(m => new MenuFlatDto { Id = m.Id, ParentId = m.ParentId, Title = m.Title, Type = m.Type })
                 .ToList();
         }
 
@@ -159,6 +160,7 @@ namespace ConvenientSystem.Service.Common
                 Name = string.IsNullOrWhiteSpace(node.name) ? null : node.name,
                 Component = string.IsNullOrWhiteSpace(node.component) ? null : node.component,
                 SortOrder = sortOrder,
+                Type = node.type,
             }).ExecuteIdentity();
 
             // 记录旧 Id → 新 Id 映射

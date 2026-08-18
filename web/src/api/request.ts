@@ -1,8 +1,9 @@
-// 轻量 fetch 封装：统一处理 JSON、非 2xx 抛错。
+// 基于 axios 的统一请求封装：拦截器处理鉴权、loading、错误提示。
 // 所有接口同源：WebView2 内为 Kestrel 根（本地模式或反向代理），
 // 独立浏览器部署时通过 VITE_API_BASE 指定远程接口基址。
 // 所有请求自动带全局 loading：引用计数，并发请求只显示一个遮罩；延迟展示避免快请求闪烁。
 // loading 就近遮罩：存在打开的弹窗/抽屉时始终遮罩最上层窗口，否则遮罩触发位置所在页面区域，不覆盖整个程序窗口。
+import axios, { AxiosError } from 'axios'
 import { ElLoading, ElMessage, useZIndex } from 'element-plus'
 import 'element-plus/es/components/loading/style/css'
 import 'element-plus/es/components/message/style/css'
@@ -17,8 +18,8 @@ export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.t
 // 延迟多久才显示 loading（ms）：快于此值完成的请求不弹遮罩，避免闪烁
 const LOADING_DELAY = 200
 
-// 请求超时（ms）：后端未启动时 fetch 默认 TCP 超时可能长达 30s，
-// 此处通过 AbortController 主动超时，快速展示错误页。
+// 请求超时（ms）：后端未启动时默认 TCP 超时可能长达 30s，
+// axios 内置 timeout 主动中断，快速展示错误提示。
 const REQUEST_TIMEOUT = 10_000
 
 // 登录态持久化键：与 common/stores/auth.ts 保持一致，token 从中读取。
@@ -49,14 +50,6 @@ function readToken(): string {
   }
 }
 
-/** 构建请求头：附带 Content-Type 与 Authorization Bearer 令牌（若存在）。 */
-function buildHeaders(base?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...(base ?? {}) }
-  const token = readToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  return headers
-}
-
 /** 处理 401：读取后端返回的原因（如挤号、账号停用），展示提示后清除登录态并重新加载。
  *  幂等保护：多个并发请求同时返回 401 时只展示一次提示、只刷新一次。
  *  公开上下文（public=1）静默忽略：外部页面与主窗口共享 localStorage，
@@ -85,6 +78,8 @@ function handleUnauthorized(message: string) {
   }, 2500)
 }
 
+// ==================== 全局 Loading 遮罩 ====================
+
 let pendingCount = 0
 let loadingInstance: ReturnType<typeof ElLoading.service> | null = null
 let showTimer: number | null = null
@@ -94,7 +89,7 @@ let loadingZ = -1
 let loadingMaskEl: HTMLElement | null = null
 const { nextZIndex } = useZIndex()
 
-// 最近一次用户点击的元素：用于判定请求触发位置，实现“在哪里触发就遮罩哪个窗口”
+// 最近一次用户点击的元素：用于判定请求触发位置，实现"在哪里触发就遮罩哪个窗口"
 let lastInteractEl: HTMLElement | null = null
 document.addEventListener('pointerdown', (e) => {
   if (e.target instanceof HTMLElement) lastInteractEl = e.target
@@ -204,116 +199,117 @@ function loadingEnd() {
   }
 }
 
-async function handle<T>(res: Response, url: string, silent = false): Promise<T> {
-  if (res.status === 401) {
-    if (!silent) {
-      // 读取后端返回的 401 原因（挤号、账号停用等），展示给用户
-      let message = '登录已过期或未登录，请重新登录'
-      try {
-        const body = await res.clone().json()
-        if (typeof body.message === 'string') message = body.message
-      } catch { /* 无法解析时使用默认提示 */ }
-      handleUnauthorized(message)
+// ==================== Axios 实例与拦截器 ====================
+
+// 拦截器已将 response.data 直接返回（而非 AxiosResponse），
+// 通过模块声明修正类型，避免调用方拿到 AxiosResponse<T> 而非 T。
+declare module 'axios' {
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-explicit-any
+  export interface AxiosResponse<T = any> extends Promise<T> {}
+}
+
+const api = axios.create({
+  baseURL: API_BASE,
+  timeout: REQUEST_TIMEOUT,
+  // 查询参数序列化：跳过 null / undefined / 空串，与原 buildQuery 行为一致
+  paramsSerializer: {
+    serialize: (params: Record<string, unknown>) => {
+      const parts: string[] = []
+      for (const [k, v] of Object.entries(params)) {
+        if (v == null || v === '') continue
+        parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      }
+      return parts.join('&')
+    },
+  },
+})
+
+// ── 请求拦截器：注入 JWT 令牌 ──
+api.interceptors.request.use((config) => {
+  const token = readToken()
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// ── 响应拦截器（成功）：直接返回 data ──
+api.interceptors.response.use(
+  (response) => response.data,
+)
+
+// ── 响应拦截器（失败）：统一错误处理 ──
+api.interceptors.response.use(undefined, (error: AxiosError) => {
+  const silent = (error.config as unknown as Record<string, unknown>)?.__silent === true
+  const url = (error.config?.baseURL ?? '') + (error.config?.url ?? '')
+
+  if (error.response) {
+    const { status, data, headers } = error.response
+    const body = (typeof data === 'object' && data !== null ? data : {}) as Record<string, unknown>
+
+    // 401：登录态失效（挤号、账号停用等）
+    if (status === 401) {
+      if (!silent) {
+        const message = typeof body.message === 'string' ? body.message : '登录已过期或未登录，请重新登录'
+        handleUnauthorized(message)
+      }
+      throw new Error(`登录已过期或未登录，接口地址：${url}`)
     }
-    throw new Error(`登录已过期或未登录，接口地址：${url}`)
-  }
-  // 404 且返回 HTML（如桌面壳本地模式、后端未启动时静态文件中间件返回的 404 页面）
-  // 统一视为后端服务不可用，弹提示；静默轮询不弹提示，仅抛错由调用方忽略
-  if (res.status === 404) {
-    const contentType404 = res.headers.get('content-type') || ''
-    if (contentType404.includes('text/html')) {
+
+    // 404 + HTML：后端未启动时静态文件中间件返回的 404 页面
+    const contentType = (headers?.['content-type'] as string) || ''
+    if (status === 404 && contentType.includes('text/html')) {
       if (!silent) {
         ElMessage.error({ message: '后端服务暂时不可用（HTTP 404），后端 API 可能未启动或路由不可达，请稍后重试', appendTo: fullscreenElement(), grouping: true })
       }
       throw new ApiError(`后端服务暂时不可用（HTTP 404 HTML）：${url}`, {})
     }
-  }
-  if (!res.ok) {
-    let body: Record<string, unknown> = {}
-    const contentType = res.headers.get('content-type') || ''
-    if (contentType.includes('application/json')) {
-      try { body = await res.json() } catch { /* 无法解析 JSON */ }
-    }
-    const detail = (body.message as string) || (body.title as string) || `HTTP ${res.status}`
-    // 后端统一返回的错误直接弹错误提示（全屏时挂到全屏元素内，避免被遮挡）；静默请求不弹提示
+
+    // 其它非 2xx：业务错误
+    const detail = (body.message as string) || (body.title as string) || `HTTP ${status}`
     if (!silent) ElMessage.error({ message: detail, appendTo: fullscreenElement() })
     throw new ApiError(`${detail}，接口地址：${url}`, body)
   }
-  // 空 body（如后端 Ok() 无参数）直接返回 undefined，避免 JSON.parse 报错
-  const text = await res.text()
-  if (!text) return undefined as T
-  return JSON.parse(text) as T
-}
 
-/** 创建带超时的 AbortSignal；调用方已提供 signal 时由调用方自行管理超时。 */
-function createTimeoutSignal(timeoutMs: number = REQUEST_TIMEOUT): { signal: AbortSignal; clear: () => void } {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new DOMException('请求超时，请检查后端服务是否启动', 'AbortError')), timeoutMs)
-  return {
-    signal: controller.signal,
-    clear: () => clearTimeout(timer),
-  }
-}
-
-/** 网络/连接异常统一弹提示（不再跳错误页），并继续抛出错误供调用方处理 */
-function handleNetworkError(err: unknown, url: string): never {
-  if (isNetworkError(err)) {
+  // 无 response：网络异常 / 超时 / 请求取消
+  if (!silent && isNetworkError(error)) {
     ElMessage.error({
-      message: `无法连接到后端服务：${(err as Error).message || '网络连接异常'}，请确认后端服务已启动或网络连接正常`,
+      message: `无法连接到后端服务：${error.message || '网络连接异常'}，请确认后端服务已启动或网络连接正常`,
       appendTo: fullscreenElement(),
       grouping: true,
     })
   }
-  throw err
-}
+  throw error
+})
 
-/** 将对象序列化为 URL 查询参数（跳过 null/undefined） */
-function buildQuery(params?: Record<string, unknown>): string {
-  if (!params) return ''
-  const parts: string[] = []
-  for (const [k, v] of Object.entries(params)) {
-    if (v == null || v === '') continue
-    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
-  }
-  return parts.length ? '?' + parts.join('&') : ''
-}
+// ==================== 导出方法（签名与原 fetch 版完全一致） ====================
 
 /** GET 请求；timeoutMs 可选，长耗时接口（如磁盘扫描）可传入更大值；
  *  opts.silent 用于后台静默轮询：不弹 loading 遮罩、不弹错误提示、不跳转错误页，失败仅抛错由调用方自行处理 */
 export async function httpGet<T>(url: string, params?: Record<string, unknown>, timeoutMs?: number, opts?: { silent?: boolean }): Promise<T> {
   const silent = opts?.silent === true
   if (!silent) loadingStart()
-  const { signal, clear } = createTimeoutSignal(timeoutMs)
   try {
-    const fullUrl = API_BASE + url + buildQuery(params)
-    const res = await fetch(fullUrl, { headers: buildHeaders(), signal })
-      .catch((err) => { if (silent) throw err; return handleNetworkError(err, fullUrl) })
-    return await handle<T>(res, fullUrl, silent)
+    return await api.get<T>(url, {
+      params,
+      timeout: timeoutMs,
+      __silent: silent,
+    } as Record<string, unknown>)
   } finally {
-    clear()
     if (!silent) loadingEnd()
   }
 }
 
 /** POST JSON 请求；signal 可选用于取消请求（如中止 SQL 执行），timeoutMs 可选用于长耗时接口 */
 export async function httpPost<T>(url: string, body: unknown, signal?: AbortSignal, timeoutMs?: number, opts?: { silent?: boolean }): Promise<T> {
-  // silent：后台任务类请求不弹全局 loading 遮罩、不弹错误提示/不跳错误页，由调用方自行处理
   const silent = opts?.silent === true
   if (!silent) loadingStart()
-  const timeout = signal ? null : createTimeoutSignal(timeoutMs)
-  const useSignal = signal ?? timeout!.signal
   try {
-    const fullUrl = API_BASE + url
-    const init: RequestInit = {
-      method: 'POST',
-      headers: buildHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-      signal: useSignal,
-    }
-    const res = await fetch(fullUrl, init).catch((err) => { if (silent) throw err; return handleNetworkError(err, fullUrl) })
-    return await handle<T>(res, fullUrl, silent)
+    return await api.post<T>(url, body, {
+      signal,
+      // 调用方已提供 signal 时由其自行管理超时，禁用 axios 内置超时
+      timeout: signal ? 0 : timeoutMs,
+      __silent: silent,
+    } as Record<string, unknown>)
   } finally {
-    timeout?.clear()
     if (!silent) loadingEnd()
   }
 }
@@ -321,18 +317,9 @@ export async function httpPost<T>(url: string, body: unknown, signal?: AbortSign
 /** PUT JSON 请求 */
 export async function httpPut<T>(url: string, body: unknown): Promise<T> {
   loadingStart()
-  const { signal, clear } = createTimeoutSignal()
   try {
-    const fullUrl = API_BASE + url
-    const res = await fetch(fullUrl, {
-      method: 'PUT',
-      headers: buildHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-      signal,
-    }).catch((err) => handleNetworkError(err, fullUrl))
-    return await handle<T>(res, fullUrl)
+    return await api.put<T>(url, body)
   } finally {
-    clear()
     loadingEnd()
   }
 }
@@ -340,17 +327,9 @@ export async function httpPut<T>(url: string, body: unknown): Promise<T> {
 /** DELETE 请求 */
 export async function httpDelete<T>(url: string): Promise<T> {
   loadingStart()
-  const { signal, clear } = createTimeoutSignal()
   try {
-    const fullUrl = API_BASE + url
-    const res = await fetch(fullUrl, {
-      method: 'DELETE',
-      headers: buildHeaders(),
-      signal,
-    }).catch((err) => handleNetworkError(err, fullUrl))
-    return await handle<T>(res, fullUrl)
+    return await api.delete<T>(url)
   } finally {
-    clear()
     loadingEnd()
   }
 }

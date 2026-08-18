@@ -17,15 +17,18 @@ namespace ConvenientSystem.Service.Common
         private readonly IFreeSql _configDb;
         // 系统配置服务（读取 Jwt.Key 等 SysConfig 表中的配置）
         private readonly ISysConfigService _sysConfig;
+        private readonly IViewService _viewService;
 
         public LoginService(
             ILogger<LoginService> logger,
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql configDb,
-            ISysConfigService sysConfig)
+            ISysConfigService sysConfig,
+            IViewService viewService)
         {
             _logger = logger;
             _configDb = configDb;
             _sysConfig = sysConfig;
+            _viewService = viewService;
         }
 
         public async Task<LoginDefaultDto> GetLoginDefaultAsync()
@@ -175,6 +178,10 @@ namespace ConvenientSystem.Service.Common
                 : await _configDb.Select<SysMenuEntity>()
                     .Where(m => menuIds.Contains(m.Id) && m.Name != null && m.Name != "")
                     .ToListAsync(m => m.Name!);
+
+            // 合并视图权限点码（角色+用户级授权并集）
+            var viewPermCodes = _viewService.GetViewPermCodes(userId, roleIds);
+            menuCodes.AddRange(viewPermCodes);
 
             return (roleCodes.Distinct().ToList(), menuCodes.Distinct().ToList(), isAdmin, dataScope);
         }

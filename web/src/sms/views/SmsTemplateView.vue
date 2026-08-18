@@ -140,7 +140,7 @@ async function openPreview(row: SmsTemplateDto) {
         </el-select>
       </template>
       <template #toolbar>
-        <el-button type="success" @click="openCreate">+ 新建模板</el-button>
+        <el-button v-if="$has('sms-template:create')" type="success" @click="openCreate">+ 新建模板</el-button>
       </template>
 
       <template #cell-enabled="{ row }">
@@ -148,12 +148,12 @@ async function openPreview(row: SmsTemplateDto) {
       </template>
 
       <template #actions="{ row }">
-        <el-button link type="primary" @click="openEdit(row as SmsTemplateDto)">编辑</el-button>
-        <el-button link type="primary" @click="openPreview(row as SmsTemplateDto)">预览</el-button>
-        <el-button link :type="row.enabled ? 'warning' : 'success'" @click="handleToggle(row as SmsTemplateDto)">
+        <el-button v-if="$has('sms-template:edit')" link type="primary" @click="openEdit(row)">编辑</el-button>
+        <el-button link type="primary" @click="openPreview(row)">预览</el-button>
+        <el-button v-if="$has('sms-template:toggle')" link :type="row.enabled ? 'warning' : 'success'" @click="handleToggle(row)">
           {{ row.enabled ? '禁用' : '启用' }}
         </el-button>
-        <el-button link type="danger" @click="handleDelete(row as SmsTemplateDto)">删除</el-button>
+        <el-button v-if="$has('sms-template:delete')" link type="danger" @click="handleDelete(row)">删除</el-button>
       </template>
     </CommonDataTable>
 

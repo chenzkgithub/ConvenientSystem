@@ -26,11 +26,13 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>新增或编辑监控目标（Id 为空表示新增）</summary>
         [HttpPost]
+        [PermissionAuthorize("host-monitor:create", "host-monitor:edit")]
         public ActionResult<int> Save([FromBody] HostMonitorTargetSaveDto dto)
             => Ok(_hostMonitorService.Save(dto));
 
         /// <summary>删除监控目标及其探测日志</summary>
         [HttpDelete]
+        [PermissionAuthorize("host-monitor:delete")]
         public ActionResult Delete([FromQuery] int id)
         {
             _hostMonitorService.Delete(id);
@@ -47,6 +49,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>立即对指定目标执行一次探测，返回本次探测结果</summary>
         [HttpPost]
+        [PermissionAuthorize("host-monitor:check")]
         public async Task<ActionResult<HostMonitorLogDto>> Check([FromQuery] int id)
             => Ok(await _hostMonitorService.CheckNow(id));
 
@@ -74,6 +77,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>启动指定整机概览目标的磁盘清理任务（后台异步，本机或远程），返回 jobId；前端轮询 CleanProgress 获取实时进度与结果</summary>
         [HttpPost]
+        [PermissionAuthorize("host-monitor:clean-disk")]
         public ActionResult<HostDiskCleanJobDto> CleanDiskStart([FromQuery] int id, [FromBody] HostDiskCleanRequestDto dto)
             => Ok(new HostDiskCleanJobDto { JobId = _hostMonitorService.StartClean(id, dto), TotalCount = (dto.Paths?.Count ?? 0) + (dto.RecyclePaths?.Count ?? 0) });
 

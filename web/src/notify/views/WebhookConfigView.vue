@@ -177,7 +177,7 @@ onMounted(loadData)
         <span class="hint">配置群机器人或私聊机器人，任务执行失败时自动推送通知。</span>
       </template>
       <template #toolbar>
-        <el-button type="primary" @click="openCreate">新增机器人</el-button>
+        <el-button v-if="$has('webhook-config:create')" type="primary" @click="openCreate">新增机器人</el-button>
       </template>
 
       <template #cell-providerType="{ row }">
@@ -207,6 +207,7 @@ onMounted(loadData)
 
       <template #actions="{ row }">
         <el-button
+          v-if="$has('webhook-config:test-send')"
           link
           type="primary"
           size="small"
@@ -215,8 +216,8 @@ onMounted(loadData)
         >
           测试
         </el-button>
-        <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-        <el-button link type="danger" size="small" @click="onDelete(row)">删除</el-button>
+        <el-button v-if="$has('webhook-config:edit')" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+        <el-button v-if="$has('webhook-config:delete')" link type="danger" size="small" @click="onDelete(row)">删除</el-button>
       </template>
     </CommonDataTable>
 

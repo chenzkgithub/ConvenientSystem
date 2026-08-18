@@ -27,7 +27,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>批量更新配置值</summary>
         [HttpPut]
-        [PermissionAuthorize("sys-config")]
+        [PermissionAuthorize("sys-config:save")]
         public IActionResult UpdateBatch([FromBody] List<SysConfigUpdateDto> items)
         {
             _configService.UpdateBatch(items);
@@ -36,7 +36,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>查看敏感配置明文（需验证用户登录密码）</summary>
         [HttpPost]
-        [PermissionAuthorize("sys-config")]
+        [PermissionAuthorize("sys-config:reveal")]
         public ActionResult<SysConfigRevealResult> RevealValue([FromBody] SysConfigRevealDto dto)
         {
             if (CurrentUserId is not Guid uid)

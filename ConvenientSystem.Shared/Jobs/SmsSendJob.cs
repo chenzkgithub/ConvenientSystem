@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Sms;
 using ConvenientSystem.Shared.Common.Webhook;
 using ConvenientSystem.Shared.Entity.Sms;
@@ -12,9 +13,8 @@ namespace ConvenientSystem.Shared.Jobs
     /// - 自动重试 3 次（1 分钟、5 分钟、15 分钟间隔）
     /// - 遍历任务下所有待发送收件人，逐条调用 ISmsProvider（通过 SmsProviderFactory 动态选择）
     /// </summary>
-    public class SmsSendJob
+    public class SmsSendJob : JobBase
     {
-        private readonly IFreeSql _fsql;
         private readonly ISmsProviderFactory _providerFactory;
         private readonly ISmsQuotaService _quotaService;
         private readonly WebhookNotifier _notifier;
@@ -22,12 +22,12 @@ namespace ConvenientSystem.Shared.Jobs
 
         public SmsSendJob(
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql fsql,
+            IJobExecutionLogService jobLog,
             ISmsProviderFactory providerFactory,
             ISmsQuotaService quotaService,
             WebhookNotifier notifier,
-            ILogger<SmsSendJob> logger)
+            ILogger<SmsSendJob> logger) : base(fsql, jobLog)
         {
-            _fsql = fsql;
             _providerFactory = providerFactory;
             _quotaService = quotaService;
             _notifier = notifier;
@@ -38,11 +38,12 @@ namespace ConvenientSystem.Shared.Jobs
         /// 执行短信发送任务
         /// </summary>
         [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 })]
-        public async Task SendAsync(int taskId, CancellationToken ct = default)
+        public Task SendAsync(int taskId, CancellationToken ct = default)
+            => ExecuteWithLog("短信发送", nameof(SendAsync), taskId, async () =>
         {
             _logger.LogInformation("开始执行短信任务 {TaskId}", taskId);
 
-            var task = _fsql.Select<Entity.Sms.SmsTaskEntity>()
+            var task = Fsql.Select<Entity.Sms.SmsTaskEntity>()
                 .Where(t => t.Id == taskId)
                 .First();
             if (task == null)
@@ -58,7 +59,7 @@ namespace ConvenientSystem.Shared.Jobs
                 return;
             }
 
-            var template = _fsql.Select<SmsTemplateEntity>()
+            var template = Fsql.Select<SmsTemplateEntity>()
                 .Where(t => t.Id == task.TemplateId)
                 .First();
             if (template == null)
@@ -69,13 +70,13 @@ namespace ConvenientSystem.Shared.Jobs
             }
 
             // 标记为执行中
-            _fsql.Update<Entity.Sms.SmsTaskEntity>()
+            Fsql.Update<Entity.Sms.SmsTaskEntity>()
                 .Set(t => t.Status, (byte)1)
                 .Set(t => t.UpdateTime, DateTime.Now)
                 .Where(t => t.Id == taskId)
                 .ExecuteAffrows();
 
-            var recipients = _fsql.Select<SmsRecipientEntity>()
+            var recipients = Fsql.Select<SmsRecipientEntity>()
                 .Where(r => r.TaskId == taskId && r.Status == 0)
                 .ToList();
 
@@ -118,12 +119,12 @@ namespace ConvenientSystem.Shared.Jobs
                     ErrorMessage = result.ErrorMessage,
                     CostMs = result.CostMs
                 };
-                _fsql.Insert(log).ExecuteAffrows();
+                Fsql.Insert(log).ExecuteAffrows();
 
                 // 更新收件人状态
                 if (result.Success)
                 {
-                    _fsql.Update<SmsRecipientEntity>()
+                    Fsql.Update<SmsRecipientEntity>()
                         .Set(r => r.Status, (byte)1)
                         .Set(r => r.SentTime, DateTime.Now)
                         .Where(r => r.Id == recipient.Id)
@@ -141,7 +142,7 @@ namespace ConvenientSystem.Shared.Jobs
             }
 
             // 更新任务统计
-            _fsql.Update<Entity.Sms.SmsTaskEntity>()
+            Fsql.Update<Entity.Sms.SmsTaskEntity>()
                 .Set(t => t.Status, failCount == 0 ? (byte)2 : (byte)4)
                 .Set(t => t.SuccessCount, successCount)
                 .Set(t => t.FailCount, failCount)
@@ -158,11 +159,11 @@ namespace ConvenientSystem.Shared.Jobs
                 await _notifier.SendToDefaultAsync("短信任务执行失败提醒",
                     $"任务ID：{taskId}\n任务名称：{task.Name}\n成功：{successCount}  失败：{failCount}\n时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             }
-        }
+        });
 
         private void MarkRecipientFail(int recipientId, string? errorMsg)
         {
-            _fsql.Update<SmsRecipientEntity>()
+            Fsql.Update<SmsRecipientEntity>()
                 .Set(r => r.Status, (byte)2)
                 .Set(r => r.ErrorMessage, errorMsg)
                 .Set(r => r.SentTime, DateTime.Now)
@@ -172,7 +173,7 @@ namespace ConvenientSystem.Shared.Jobs
 
         private void UpdateTaskStatus(int taskId, byte status, string? errorMsg = null)
         {
-            _fsql.Update<Entity.Sms.SmsTaskEntity>()
+            Fsql.Update<Entity.Sms.SmsTaskEntity>()
                 .Set(t => t.Status, status)
                 .Set(t => t.UpdateTime, DateTime.Now)
                 .Where(t => t.Id == taskId)
