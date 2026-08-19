@@ -56,7 +56,7 @@ namespace ConvenientSystem.Service.Common
                     _logger.LogInformation("{Type}库中无当天开奖，尝试拉取最新一期入库", LotteryTypes.GetName(t));
                     try
                     {
-                        await _crawlJob.CrawlAsync(t, 900, false, today, ct);
+                        await _crawlJob.CrawlAsync(t, 900, false, today, ct: ct);
                     }
                     catch (Exception ex)
                     {

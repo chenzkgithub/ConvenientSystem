@@ -54,21 +54,23 @@ load()
 
 const columns = computed<DataTableColumn<MonitorTarget>[]>(() => [
   { type: 'index', label: '#', width: 50, align: 'center' },
-  { prop: 'status', label: '状态', width: 90, align: 'center', custom: true },
-  { prop: 'name', label: '目标名称', width: 200 },
-  { prop: 'url', label: '监控地址', minWidth: 240, showOverflowTooltip: true, custom: true },
-  { prop: 'method', label: '方式', width: 70, align: 'center' },
-  { prop: 'expectStatus', label: '期望状态', width: 90, align: 'center' },
-  { prop: 'intervalMinutes', label: '间隔(分)', width: 90, align: 'center' },
+  { prop: 'status', label: '状态', width: 90, align: 'center', custom: true, sortable: true },
+  { prop: 'name', label: '目标名称', width: 200, sortable: true },
+  { prop: 'url', label: '监控地址', minWidth: 240, showOverflowTooltip: true, custom: true, sortable: true },
+  { prop: 'method', label: '方式', width: 70, align: 'center', sortable: true },
+  { prop: 'expectStatus', label: '期望状态', width: 90, align: 'center', sortable: true },
+  { prop: 'intervalMinutes', label: '间隔(分)', width: 90, align: 'center', sortable: true },
   {
     prop: 'lastLatencyMs', label: '耗时', width: 90, align: 'center',
     formatter: (row) => row.lastLatencyMs != null ? `${row.lastLatencyMs} ms` : '—',
+    sortable: true,
   },
   {
     prop: 'lastCheckAt', label: '最近探测', width: 170, className: 'cell-nowrap',
     formatter: (row) => row.lastCheckAt ? formatDate(row.lastCheckAt) : '未探测',
+    sortable: true,
   },
-  { prop: 'enabled', label: '启用', width: 70, align: 'center', custom: true },
+  { prop: 'enabled', label: '启用', width: 70, align: 'center', custom: true, sortable: true },
 ])
 
 /** 状态标签：未探测 / 正常 / 异常（异常悬浮显示原因） */
@@ -186,14 +188,16 @@ const logTotal = ref(0)
 const logPage = ref(1)
 const logSize = ref(20)
 const logLoading = ref(false)
+const logSortField = ref('')
+const logSortOrder = ref<'ascending' | 'descending' | null>(null)
 
 const logColumns = computed<DataTableColumn<MonitorLog>[]>(() => [
   { type: 'index', label: '#', width: 50, align: 'center' },
-  { prop: 'status', label: '结果', width: 80, align: 'center', custom: true },
-  { prop: 'httpStatusCode', label: '状态码', width: 90, align: 'center', formatter: (row) => row.httpStatusCode != null ? String(row.httpStatusCode) : '—' },
-  { prop: 'latencyMs', label: '耗时', width: 100, align: 'center', formatter: (row) => row.latencyMs != null ? `${row.latencyMs} ms` : '—' },
-  { prop: 'errorMsg', label: '异常原因', minWidth: 200, showOverflowTooltip: true, formatter: (row) => row.errorMsg ?? '—' },
-  { prop: 'checkAt', label: '探测时间', width: 170, className: 'cell-nowrap', formatter: (row) => formatDate(row.checkAt) },
+  { prop: 'status', label: '结果', width: 80, align: 'center', custom: true, sortable: 'custom' },
+  { prop: 'httpStatusCode', label: '状态码', width: 90, align: 'center', formatter: (row) => row.httpStatusCode != null ? String(row.httpStatusCode) : '—', sortable: 'custom' },
+  { prop: 'latencyMs', label: '耗时', width: 100, align: 'center', formatter: (row) => row.latencyMs != null ? `${row.latencyMs} ms` : '—', sortable: 'custom' },
+  { prop: 'errorMsg', label: '异常原因', minWidth: 200, showOverflowTooltip: true, formatter: (row) => row.errorMsg ?? '—', sortable: 'custom' },
+  { prop: 'checkAt', label: '探测时间', width: 170, className: 'cell-nowrap', formatter: (row) => formatDate(row.checkAt), sortable: 'custom' },
 ])
 
 function openLogs(row: MonitorTarget) {
@@ -209,6 +213,7 @@ async function loadLogs() {
   try {
     const res = await httpGet<{ total: number; list: MonitorLog[] }>('/api/Common/WebMonitor/Logs', {
       targetId: logTarget.value.id, page: logPage.value, size: logSize.value,
+      ...(logSortField.value ? { sortField: logSortField.value, sortOrder: logSortOrder.value === 'ascending' ? 'asc' : 'desc' } : {}),
     })
     logs.value = res.list
     logTotal.value = res.total
@@ -219,11 +224,21 @@ async function loadLogs() {
     logLoading.value = false
   }
 }
+
+function onLogSortChange(info: { prop: string | null; order: 'ascending' | 'descending' | null }) {
+  logSortField.value = info.prop ?? ''
+  logSortOrder.value = info.order
+  logPage.value = 1
+  loadLogs()
+}
 </script>
 
 <template>
   <div class="monitor-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="web-monitor"
       :columns="columns"
       :data="targets"
       :loading="loading"
@@ -233,7 +248,6 @@ async function loadLogs() {
     >
       <template #toolbar>
         <el-button v-if="$has('web-monitor:create')" type="primary" size="small" @click="openAdd">新增监控</el-button>
-        <el-button size="small" @click="load">刷新</el-button>
       </template>
 
       <template #cell-status="{ row }">
@@ -336,6 +350,11 @@ async function loadLogs() {
       destroy-on-close
     >
       <CommonDataTable
+        show-refresh
+        show-column-toggle
+        table-key="web-monitor-log"
+        @load="loadLogs"
+        @sort-change="onLogSortChange"
         v-model:page="logPage"
         v-model:pageSize="logSize"
         :columns="logColumns"
@@ -346,7 +365,6 @@ async function loadLogs() {
         max-height="52vh"
         compact
         pagination-layout="total, sizes, prev, pager, next"
-        @load="loadLogs"
       >
         <template #cell-status="{ row }">
           <el-tag v-if="(row as MonitorLog).status === 1" type="success" size="small" effect="dark">正常</el-tag>

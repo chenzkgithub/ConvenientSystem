@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Lock, Close, User, Delete, SwitchButton, ArrowDown, Search, Fold, Expand, Refresh, Operation, Sunny, Moon } from '@element-plus/icons-vue'
+import { Lock, Close, User, Delete, SwitchButton, ArrowDown, Search, Fold, Expand, Refresh, Operation, Sunny, Moon, Collection, Document } from '@element-plus/icons-vue'
 import MenuTree from '@/common/components/MenuTree.vue'
 import NoticeBell from '@/common/components/NoticeBell.vue'
 import NoticeAlert from '@/common/components/NoticeAlert.vue'
@@ -15,6 +15,7 @@ import { useAuthStore } from '@/common/stores/auth'
 import { useTabsStore } from '@/common/stores/tabs'
 import { useThemeStore } from '@/common/stores/theme'
 import { useRecentStore } from '@/common/stores/recent'
+import { useUserPrefs } from '@/common/composables/useUserPrefs'
 import {
   resolveMenuTarget,
   filterVisibleMenus,
@@ -35,27 +36,28 @@ const themeStore = useThemeStore()
 const recentStore = useRecentStore()
 
 // ===== 侧栏折叠状态 =====
-const SIDEBAR_COLLAPSE_KEY = 'cs_sidebar_collapsed'
-// 登录后左侧菜单默认折叠：localStorage 未设置时默认折叠，用户手动展开后才保持展开
-const isSidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) !== 'false')
+const SIDEBAR_COLLAPSE_KEY = 'UI.SidebarCollapsed'
+const { getPref, setPref } = useUserPrefs()
+// 登录后左侧菜单默认折叠：未设置时默认折叠，用户手动展开后才保持展开
+const isSidebarCollapsed = ref(getPref(SIDEBAR_COLLAPSE_KEY, 'true') !== 'false')
 const sidebarWidth = computed(() => (isSidebarCollapsed.value ? '0px' : '232px'))
 
 function toggleSidebar() {
   isSidebarCollapsed.value = !isSidebarCollapsed.value
-  localStorage.setItem(SIDEBAR_COLLAPSE_KEY, String(isSidebarCollapsed.value))
+  setPref(SIDEBAR_COLLAPSE_KEY, String(isSidebarCollapsed.value))
 }
 
 // ===== 导航模式：面包屑（默认）与多标签页可切换 =====
 // 年轻化改造：默认隐藏多标签栏、用面包屑导航；老用户可切回标签栏。
 // tabsStore 后台逻辑始终保留（keep-alive 缓存管理、刷新计数器仍需要）。
-const NAV_MODE_KEY = 'cs_nav_mode'
+const NAV_MODE_KEY = 'UI.NavMode'
 // 'breadcrumb' = 面包屑模式（默认）；'tabs' = 多标签模式
-const navMode = ref<'breadcrumb' | 'tabs'>(localStorage.getItem(NAV_MODE_KEY) === 'tabs' ? 'tabs' : 'breadcrumb')
+const navMode = ref<'breadcrumb' | 'tabs'>(getPref(NAV_MODE_KEY, 'breadcrumb') === 'tabs' ? 'tabs' : 'breadcrumb')
 const showTabsBar = computed(() => navMode.value === 'tabs')
 
 function toggleNavMode() {
   navMode.value = navMode.value === 'breadcrumb' ? 'tabs' : 'breadcrumb'
-  localStorage.setItem(NAV_MODE_KEY, navMode.value)
+  setPref(NAV_MODE_KEY, navMode.value)
 }
 
 // 面包屑：根据当前路由与菜单树生成路径（首页 / 分组 / 子分组 / 页面）
@@ -434,6 +436,7 @@ watch(
 watch(
   () => route.fullPath,
   (path) => {
+    if (!tabsStore.rememberTabs) return
     if (!path || path === '/') return
     const leaf = menuStore.collectLeaves().find((l) => (l.page || '') === path)
     if (leaf) {
@@ -442,8 +445,18 @@ watch(
   },
 )
 
-onMounted(() => {
+onMounted(async () => {
   if (!menuStore.loaded) menuStore.load()
+  // 登录后从数据库加载 UI 偏好并同步各 store
+  if (auth.loggedIn && Object.keys(auth.uiPrefs).length === 0) {
+    await auth.loadUIPrefs()
+    // 同步侧栏折叠和导航模式
+    isSidebarCollapsed.value = getPref(SIDEBAR_COLLAPSE_KEY, 'true') !== 'false'
+    navMode.value = getPref(NAV_MODE_KEY, 'breadcrumb') === 'tabs' ? 'tabs' : 'breadcrumb'
+    // 同步标签记忆和主题
+    tabsStore.applyServerPrefs()
+    themeStore.applyServerPrefs()
+  }
 })
 
 // 最近访问时间显示：刚刚/分钟前/小时前/昨天
@@ -485,8 +498,8 @@ function formatRecentTime(ts: number): string {
           @keyup.esc="menuKeyword = ''"
         />
       </div>
-      <!-- 最近访问：显示在搜索框下方，菜单区上方 -->
-      <div v-if="!menuKeyword.trim() && recentStore.items.length > 0" class="aside-recent">
+      <!-- 最近访问：显示在搜索框下方，菜单区上方（仅在记忆开启时显示） -->
+      <div v-if="tabsStore.rememberTabs && !menuKeyword.trim() && recentStore.items.length > 0" class="aside-recent">
         <div class="recent-header">
           <span class="recent-title">最近访问</span>
           <button class="recent-clear" title="清空记录" @click="recentStore.clear()">✕</button>
@@ -559,6 +572,12 @@ function formatRecentTime(ts: number): string {
           <el-button circle size="small" class="sidebar-toggle" :title="themeStore.isDark ? '切换亮色模式' : '切换暗黑模式'" @click="themeStore.toggle()">
             <el-icon :size="16">
               <component :is="themeStore.isDark ? Sunny : Moon" />
+            </el-icon>
+          </el-button>
+          <!-- 标签记忆开关 -->
+          <el-button circle size="small" class="sidebar-toggle" :title="tabsStore.rememberTabs ? '标签记忆（已开启）' : '标签记忆（已关闭）'" :style="!tabsStore.rememberTabs ? 'opacity:.5' : ''" @click="tabsStore.toggleRememberTabs()">
+            <el-icon :size="16">
+              <component :is="tabsStore.rememberTabs ? Collection : Document" />
             </el-icon>
           </el-button>
           <NoticeBell />
@@ -643,7 +662,12 @@ function formatRecentTime(ts: number): string {
       <el-main class="layout-main">
         <router-view v-slot="{ Component }">
           <!-- exclude 占位视图：避免把“开发中”页面缓存下来占用名额 -->
-          <transition name="route-fade" mode="out-in">
+          <!-- 不用 mode="out-in"：该模式要求旧组件完全离开后才挂载新组件，
+               但 keep-alive 缓存（deactivate）旧组件会导致 transitionend 不触发，
+               transition 卡在等待阶段、新组件永远不挂载——表现为刷新后页面空白。
+               改为默认模式（交叉淡入淡出）：新旧组件同时存在，新组件立即挂载，
+               旧组件用 position:absolute 脱离文档流避免布局抖动。 -->
+          <transition name="route-fade">
             <keep-alive :max="15" :exclude="['PlaceholderView']">
               <component :is="Component" :key="viewKey" />
             </keep-alive>

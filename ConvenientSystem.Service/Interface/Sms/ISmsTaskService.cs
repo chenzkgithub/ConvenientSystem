@@ -9,7 +9,7 @@ namespace ConvenientSystem.Service.Sms
     public interface ISmsTaskService
     {
         /// <summary>按状态分页查询任务列表</summary>
-        PagedResult<SmsTaskDto> GetList(byte? status, int page, int size);
+        PagedResult<SmsTaskDto> GetList(byte? status, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>查询任务详情（含收件人列表，手机号脱敏）；不存在时抛 NotFoundException</summary>
         SmsTaskDetailDto Get(int id);

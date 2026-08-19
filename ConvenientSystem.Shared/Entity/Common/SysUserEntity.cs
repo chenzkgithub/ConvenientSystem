@@ -37,6 +37,9 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>是否启用</summary>
         public bool Enabled { get; set; } = true;
 
+        /// <summary>是否软删除（删除后标记为 true，不再硬删）</summary>
+        public bool IsDeleted { get; set; } = false;
+
         /// <summary>创建时间（数据库默认 GETDATE()）</summary>
         [Column(CanInsert = false, CanUpdate = false)]
         public DateTime CreateTime { get; set; }

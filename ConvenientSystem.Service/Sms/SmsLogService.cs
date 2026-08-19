@@ -27,7 +27,7 @@ namespace ConvenientSystem.Service.Sms
         }
 
         public PagedResult<SmsLogDto> GetList(int? taskId, string? phone, byte? status,
-            DateTime? startTime, DateTime? endTime, int page, int size)
+            DateTime? startTime, DateTime? endTime, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             var query = _fsql.Select<SmsLogEntity>();
             if (_currentUser.DataScope != DataScope.All && _currentUser.UserId.HasValue)
@@ -44,7 +44,8 @@ namespace ConvenientSystem.Service.Sms
             if (endTime.HasValue) query = query.Where(l => l.CreateTime <= endTime.Value);
 
             var total = query.Count();
-            var list = query.OrderByDescending(l => l.CreateTime)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(l => l.CreateTime) : query.OrderByDynamic(sortField, sortOrder);
+            var list = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList()
                 .Select(l => new SmsLogDto

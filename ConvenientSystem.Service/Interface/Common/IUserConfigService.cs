@@ -14,5 +14,14 @@ namespace ConvenientSystem.Service.Common
 
         /// <summary>批量 upsert 当前用户配置</summary>
         void UpdateBatch(List<UserConfigSaveDto> items);
+
+        /// <summary>获取当前用户 UI 偏好的扁平键值字典（含默认值）</summary>
+        Dictionary<string, string> GetUIPrefs();
+
+        /// <summary>读取当前用户的原始配置值（绕过元数据校验，供启动器等扩展功能使用）</summary>
+        string? GetRawValue(string key);
+
+        /// <summary>保存当前用户的原始配置值（绕过元数据校验）</summary>
+        void SetRawValue(string key, string value);
     }
 }

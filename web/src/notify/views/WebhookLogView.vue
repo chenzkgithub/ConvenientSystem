@@ -11,19 +11,19 @@ const filters = reactive({
   success: undefined as boolean | undefined,
 })
 
-const { loading, list, total, page, size, load, search, reset } = useDataTable<WebhookLogDto, typeof filters>(
+const { loading, list, total, page, size, load, search, reset, onSortChange } = useDataTable<WebhookLogDto, typeof filters>(
   listWebhookLogs,
   { filters }
 )
 
 const columns: DataTableColumn<WebhookLogDto>[] = [
-  { prop: 'configName', label: '配置名称', minWidth: 140 },
-  { prop: 'providerType', label: '类型', width: 110, custom: true },
-  { prop: 'title', label: '标题', minWidth: 160 },
-  { prop: 'success', label: '状态', width: 90, align: 'center', custom: true },
-  { prop: 'errorMessage', label: '错误信息', minWidth: 180, custom: true },
-  { prop: 'costMs', label: '耗时', width: 90, align: 'center', custom: true },
-  { prop: 'createTime', label: '发送时间', width: 170, type: 'date' },
+  { prop: 'configName', label: '配置名称', minWidth: 140, sortable: 'custom' },
+  { prop: 'providerType', label: '类型', width: 110, custom: true, sortable: 'custom' },
+  { prop: 'title', label: '标题', minWidth: 160, sortable: 'custom' },
+  { prop: 'success', label: '状态', width: 90, align: 'center', custom: true, sortable: 'custom' },
+  { prop: 'errorMessage', label: '错误信息', minWidth: 180, custom: true, sortable: 'custom' },
+  { prop: 'costMs', label: '耗时', width: 90, align: 'center', custom: true, sortable: 'custom' },
+  { prop: 'createTime', label: '发送时间', width: 170, type: 'date', sortable: 'custom' },
 ]
 
 function providerLabel(t: string) {
@@ -34,6 +34,11 @@ function providerLabel(t: string) {
 <template>
   <div class="webhook-log-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="webhook-log"
+      @load="load"
+      @sort-change="onSortChange"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -42,7 +47,6 @@ function providerLabel(t: string) {
       v-model:pageSize="size"
       empty-text="暂无发送日志"
       searchable
-      @load="load"
       @search="search"
       @reset="reset"
     >
@@ -64,9 +68,6 @@ function providerLabel(t: string) {
           <el-option label="成功" :value="true" />
           <el-option label="失败" :value="false" />
         </el-select>
-      </template>
-      <template #toolbar>
-        <el-button @click="load">刷新</el-button>
       </template>
 
       <template #cell-providerType="{ row }">

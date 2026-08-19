@@ -8,7 +8,7 @@ namespace ConvenientSystem.Service.Common
     public interface ILotteryService
     {
         /// <summary>分页查询当前用户指定彩种的选号记录（可选按日期过滤），按时间倒序</summary>
-        PagedResult<LotteryBetDto> GetRecords(string type, string? date, int page, int size);
+        PagedResult<LotteryBetDto> GetRecords(string type, string? date, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>批量保存选号记录</summary>
         List<LotteryBetDto> SaveBets(string type, List<LotteryBetItem> bets);

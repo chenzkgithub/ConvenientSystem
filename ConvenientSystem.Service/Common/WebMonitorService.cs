@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Jobs;
@@ -94,14 +95,14 @@ namespace ConvenientSystem.Service.Common
             if (n == 0) throw new NotFoundException("监控目标不存在");
         }
 
-        public PagedResult<WebMonitorLogDto> GetLogs(int targetId, int page, int size)
+        public PagedResult<WebMonitorLogDto> GetLogs(int targetId, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             if (page < 1) page = 1;
             if (size is < 1 or > 200) size = 20;
 
             var query = _fsql.Select<WebMonitorLogEntity>()
-                .Where(l => l.TargetId == targetId)
-                .OrderByDescending(l => l.CheckAt);
+                .Where(l => l.TargetId == targetId);
+            query = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(l => l.CheckAt) : query.OrderByDynamic(sortField, sortOrder);
             return new PagedResult<WebMonitorLogDto>
             {
                 Total = query.Count(),

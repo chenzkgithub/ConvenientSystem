@@ -8,27 +8,31 @@ namespace ConvenientSystem.Service.Common
     /// 登录业务实现：账号密码存储在本地配置库 ConvenientSystem 的 SysUser 表中（见 db/init.sql）。
     /// 密码以 PBKDF2 哈希存储，兼容历史明文（首次登录成功后自动升级为哈希）。
     /// 登录成功签发 JWT，载荷含用户角色与可见菜单权限码，供接口鉴权与菜单过滤。
-    /// JWT 密钥从 SysConfig 表读取（ISysConfigService），DB 不可用时回退环境变量与内置缺省。
+    /// JWT 密钥由 JwtKeyHolder 单例提供（API 启动时一次性确定），签发方与验证方共用同一实例。
     /// </summary>
     public class LoginService : ILoginService
     {
         private readonly ILogger<LoginService> _logger;
         // 本地配置库 FreeSql（SysUser/SysMenu/SysRole 等所在库）
         private readonly IFreeSql _configDb;
-        // 系统配置服务（读取 Jwt.Key 等 SysConfig 表中的配置）
+        // 系统配置服务（读取 Security.SessionTimeoutMinutes 等 SysConfig 表中的配置）
         private readonly ISysConfigService _sysConfig;
         private readonly IViewService _viewService;
+        // JWT 密钥持有者（单例）：API 启动时确定，签发与验证共用，避免密钥不一致
+        private readonly JwtKeyHolder _jwtKey;
 
         public LoginService(
             ILogger<LoginService> logger,
             [FromKeyedServices("ConvenientSystemDb")] IFreeSql configDb,
             ISysConfigService sysConfig,
-            IViewService viewService)
+            IViewService viewService,
+            JwtKeyHolder jwtKey)
         {
             _logger = logger;
             _configDb = configDb;
             _sysConfig = sysConfig;
             _viewService = viewService;
+            _jwtKey = jwtKey;
         }
 
         public async Task<LoginDefaultDto> GetLoginDefaultAsync()
@@ -36,7 +40,7 @@ namespace ConvenientSystem.Service.Common
             try
             {
                 var user = await _configDb.Select<SysUserEntity>()
-                    .Where(u => u.Enabled)
+                    .Where(u => u.Enabled && !u.IsDeleted)
                     .OrderBy(u => u.Id)
                     .FirstAsync();
                 if (user != null)
@@ -71,9 +75,9 @@ namespace ConvenientSystem.Service.Common
                     return new LoginVerifyDto { Ok = false, Reason = "account_not_found" };
                 }
         
-                if (!user.Enabled)
+                if (!user.Enabled || user.IsDeleted)
                 {
-                    _logger.LogInformation("登录校验，账号：{Account}，结果：账号已停用", reqAccount);
+                    _logger.LogInformation("登录校验，账号：{Account}，结果：账号已停用/已删除", reqAccount);
                     return new LoginVerifyDto { Ok = false, Reason = "account_disabled" };
                 }
         
@@ -105,7 +109,7 @@ namespace ConvenientSystem.Service.Common
                 var sessionTimeoutMinutes = ReadSessionTimeoutMinutes();
                 // 0 表示会话永不过期（兼容历史行为），否则按配置时长签发 JWT
                 TimeSpan? tokenLifetime = sessionTimeoutMinutes > 0 ? TimeSpan.FromMinutes(sessionTimeoutMinutes) : null;
-                var token = JwtHelper.GenerateToken(ReadJwtKey(), user.Id, user.Account, user.DisplayName, roleCodes, menuCodes, lifetime: tokenLifetime, isAdmin: isAdmin, dataScope: dataScope);
+                var token = JwtHelper.GenerateToken(_jwtKey.Key, user.Id, user.Account, user.DisplayName, roleCodes, menuCodes, lifetime: tokenLifetime, isAdmin: isAdmin, dataScope: dataScope);
                 _logger.LogInformation("登录校验，账号：{Account}，结果：{Result}，会话超时：{Timeout}分钟", reqAccount, true, sessionTimeoutMinutes);
                 return new LoginVerifyDto
                 {
@@ -134,7 +138,7 @@ namespace ConvenientSystem.Service.Common
                 var user = await _configDb.Select<SysUserEntity>()
                     .Where(u => u.Id == userId)
                     .FirstAsync();
-                return new LoginStatusDto { Enabled = user != null && user.Enabled };
+                return new LoginStatusDto { Enabled = user != null && user.Enabled && !user.IsDeleted };
             }
             catch (Exception ex)
             {
@@ -185,12 +189,6 @@ namespace ConvenientSystem.Service.Common
 
             return (roleCodes.Distinct().ToList(), menuCodes.Distinct().ToList(), isAdmin, dataScope);
         }
-
-        /// <summary>读取 JWT 对称密钥：优先环境变量 JWT_KEY，其次 SysConfig 表，缺省内置值。</summary>
-        private string ReadJwtKey()
-            => Environment.GetEnvironmentVariable("JWT_KEY")
-               ?? _sysConfig.GetValue("Jwt.Key")
-               ?? "ConvenientSystem-Default-Jwt-Key-please-change-in-production";
 
         /// <summary>读取会话超时时间（分钟）：优先 SysConfig 表 Security.SessionTimeoutMinutes，缺省 30 分钟，0 表示不自动退出。</summary>
         private int ReadSessionTimeoutMinutes()

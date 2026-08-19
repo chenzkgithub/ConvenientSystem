@@ -54,10 +54,10 @@ namespace ConvenientSystem.Shared.Jobs
         /// </summary>
         [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 })]
         public Task<int> CrawlAsync(string type = LotteryTypes.DLT, int pageSize = 900,
-            bool updateExisting = false, DateTime? since = null, CancellationToken ct = default)
+            bool updateExisting = false, DateTime? since = null, string? logJobName = null, CancellationToken ct = default)
         {
             var t = LotteryTypes.Normalize(type);
-            var jobName = $"{LotteryTypes.GetName(t)}开奖数据爬取";
+            var jobName = logJobName ?? $"{LotteryTypes.GetName(t)}开奖数据爬取";
             return ExecuteWithLog<int>(jobName, nameof(CrawlAsync), new { type, pageSize, updateExisting }, async () =>
             {
             var rule = GetRule(t);
@@ -158,7 +158,10 @@ namespace ConvenientSystem.Shared.Jobs
         /// </summary>
         public Task<int> BackfillRecentAsync(string type = LotteryTypes.DLT, int days = 2,
             CancellationToken ct = default)
-            => CrawlAsync(type, 30, true, DateTime.Today.AddDays(-days), ct);
+        {
+            var t = LotteryTypes.Normalize(type);
+            return CrawlAsync(type, 30, true, DateTime.Today.AddDays(-days), $"{LotteryTypes.GetName(t)}奖级明细补拉", ct);
+        }
 
         /// <summary>爬取指定页的数据（按彩种规则分流到福彩/体彩官网接口）</summary>
         private async Task<List<LotteryDrawEntity>> CrawlPageAsync(string type, CrawlRule rule, int pageNo, int fetchSize, CancellationToken ct)

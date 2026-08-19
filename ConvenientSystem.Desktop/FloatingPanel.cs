@@ -57,6 +57,8 @@ internal sealed class FloatingPanel : Form
 
     // 鼠标离开检测：轮询方式比 OnMouseLeave 事件更可靠（子控件多时事件易丢失）
     private readonly System.Windows.Forms.Timer _hoverCheckTimer;
+    // 延迟关闭定时器：鼠标短暂离开（穿过面板与按钮之间的间隙）时不立即关闭
+    private readonly System.Windows.Forms.Timer _closeDelayTimer;
     private Form? _ownerButton;
 
     // 卡片悬停高亮动画：只做颜色过渡，不做缩放也不做位移。
@@ -78,6 +80,8 @@ internal sealed class FloatingPanel : Form
     private bool _closing;
     // 面板是否已就绪（OnShown 后才允许因失焦而关闭，避免刚显示就被误判关闭）
     private bool _ready;
+    // 关闭回调是否已调用（OnFormClosed 保底 + ClosePanel 异常保底，防止重复）
+    private bool _closeCallbackInvoked;
 
     /// <summary>把 96 DPI 基准值换算成当前 DPI 下的实际像素。</summary>
     private int S(int baseValue) => Math.Max(1, (int)Math.Round(baseValue * _dpiScale));
@@ -113,8 +117,10 @@ internal sealed class FloatingPanel : Form
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
-        BackColor = Color.FromArgb(1, 1, 1);
-        TransparencyKey = Color.FromArgb(1, 1, 1);
+        // 不用 TransparencyKey 抠色透明：抠色透明的像素是 click-through 的，
+        // 鼠标穿过透明区域会命中底层窗口导致面板误判失焦关闭再重开，表现为抖动。
+        // 改用 Region 圆角裁剪 + 不透明背景，圆角外区域不属于窗口，不会收到鼠标事件。
+        BackColor = PanelBg;
 
         // 顶部固定分组标题栏（不随滚动移动）
         _fixedHeader = new Panel
@@ -142,7 +148,7 @@ internal sealed class FloatingPanel : Form
         };
         _content = new Panel
         {
-            BackColor = Color.Transparent,
+            BackColor = PanelBg,
             Location = new Point(_padding, _contentTop),
         };
         _content.Paint += (_, e) => PaintColumnDividers(e.Graphics);
@@ -161,9 +167,22 @@ internal sealed class FloatingPanel : Form
         _animTimer = new System.Windows.Forms.Timer { Interval = 16 };
         _animTimer.Tick += (_, _) => DoAnimationTick();
 
-        // 鼠标离开检测定时器（150ms 轮询一次，比 OnMouseLeave 事件更可靠）
-        _hoverCheckTimer = new System.Windows.Forms.Timer { Interval = 150 };
+        // 鼠标离开检测定时器（100ms 轮询一次，比 OnMouseLeave 事件更可靠）
+        _hoverCheckTimer = new System.Windows.Forms.Timer { Interval = 100 };
         _hoverCheckTimer.Tick += (_, _) => CheckMouseAndCloseIfOutside();
+
+        // 延迟关闭定时器：鼠标离开面板+按钮区域后等待 200ms 再关闭，
+        // 给鼠标穿过两者之间间隙的时间，避免面板反复弹出/关闭导致抖动。
+        _closeDelayTimer = new System.Windows.Forms.Timer { Interval = 200 };
+        _closeDelayTimer.Tick += (_, _) =>
+        {
+            _closeDelayTimer.Stop();
+            if (!_ready || _closing) return;
+            var sp = MousePosition;
+            if (Bounds.Contains(sp)) return;
+            if (_ownerButton is not null && !_ownerButton.IsDisposed && _ownerButton.Bounds.Contains(sp)) return;
+            ClosePanel();
+        };
 
         var layout = BuildCards(menuTree);
         ResizeToFit(layout);
@@ -174,10 +193,11 @@ internal sealed class FloatingPanel : Form
         get
         {
             var cp = base.CreateParams;
-            // WS_EX_TOPMOST (0x8) + WS_EX_TOOLWINDOW (0x80)；
+            // WS_EX_TOPMOST (0x8) + WS_EX_TOOLWINDOW (0x80) + WS_EX_NOACTIVATE (0x08000000)；
             // WS_EX_TOOLWINDOW 让面板不出现在任务栏/Alt+Tab 列表。
-            // 注意：不要加 WS_EX_NOACTIVATE (0x080000)，否则面板不会被激活，OnDeactivate 永远不会触发。
-            cp.ExStyle |= 0x00000008 | 0x00000080;
+            // WS_EX_NOACTIVATE 让面板不抢焦点，避免与悬浮按钮/其他窗口的焦点争夺导致抖动；
+            // 面板关闭改由 _hoverCheckTimer + _closeDelayTimer 的鼠标位置轮询驱动，不依赖 OnDeactivate。
+            cp.ExStyle |= 0x00000008 | 0x00000080 | 0x08000000;
             return cp;
         }
     }
@@ -185,7 +205,8 @@ internal sealed class FloatingPanel : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        Activate();
+        // 不调用 Activate()：面板带 WS_EX_NOACTIVATE 不抢焦点，
+        // 避免与悬浮按钮/其他窗口的焦点争夺导致抖动。
         // 布局引擎跑完后标记就绪，并启动鼠标离开检测
         BeginInvoke(new Action(() =>
         {
@@ -198,9 +219,9 @@ internal sealed class FloatingPanel : Form
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
-        // 失去焦点即关闭（与悬浮按钮菜单行为一致）；
-        // 仅在面板已就绪后才响应失焦，避免刚显示时就被误判关闭。
-        if (_ready && !_closing) BeginInvoke(new Action(ClosePanel));
+        // WS_EX_NOACTIVATE 下面板通常不会被激活也不会触发 OnDeactivate，
+        // 但作为兜底：如果确实触发了，走延迟关闭而非立即关闭。
+        if (_ready && !_closing && !_closeDelayTimer.Enabled) _closeDelayTimer.Start();
     }
 
     protected override void OnMouseLeave(EventArgs e)
@@ -219,12 +240,16 @@ internal sealed class FloatingPanel : Form
         if (!_ready || _closing) return;
         var screenPos = MousePosition;
         var panelRect = Bounds;
-        // 在面板内：不关闭
-        if (panelRect.Contains(screenPos)) return;
-        // 在悬浮按钮内：不关闭（用户可能正从面板移回按钮）
-        if (_ownerButton is not null && !_ownerButton.IsDisposed && _ownerButton.Bounds.Contains(screenPos)) return;
-        // 已离开两者范围：关闭面板
-        BeginInvoke(new Action(ClosePanel));
+        // 在面板内：取消延迟关闭
+        if (panelRect.Contains(screenPos)) { _closeDelayTimer.Stop(); return; }
+        // 在悬浮按钮内：取消延迟关闭（用户可能正从面板移回按钮）
+        if (_ownerButton is not null && !_ownerButton.IsDisposed && _ownerButton.Bounds.Contains(screenPos))
+        {
+            _closeDelayTimer.Stop();
+            return;
+        }
+        // 已离开两者范围：启动延迟关闭（不立即关闭，给鼠标穿过间隙的时间）
+        if (!_closeDelayTimer.Enabled) _closeDelayTimer.Start();
     }
 
     private void ClosePanel()
@@ -233,13 +258,38 @@ internal sealed class FloatingPanel : Form
         _closing = true;
         try
         {
-            Close();
-            _onClose?.Invoke();
+            Close(); // Close() 同步触发 OnFormClosed，在其中保底调用 _onClose
         }
         catch
         {
-            // 关闭过程中可能抛出的异常忽略
+            // Close() 抛异常时 OnFormClosed 不会触发，finally 中保底回调
         }
+        finally
+        {
+            InvokeCloseCallback();
+        }
+    }
+
+    /// <summary>保底调用关闭回调，防止重复调用。</summary>
+    private void InvokeCloseCallback()
+    {
+        if (_closeCallbackInvoked) return;
+        _closeCallbackInvoked = true;
+        try { _onClose?.Invoke(); } catch { }
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _hoverCheckTimer.Stop();
+        _hoverCheckTimer.Dispose();
+        _closeDelayTimer.Stop();
+        _closeDelayTimer.Dispose();
+        _animTimer.Stop();
+        _animTimer.Dispose();
+        // 保底：无论面板通过什么路径关闭，都通知按钮恢复状态。
+        // ClosePanel() 中 Close() 抛异常时这条路径是唯一的回调机会。
+        InvokeCloseCallback();
+        base.OnFormClosed(e);
     }
 
     // ============ 卡片构建 ============
@@ -732,6 +782,7 @@ internal sealed class FloatingPanel : Form
         int height = Math.Min(desiredHeight, maxHeight);
 
         Size = new Size(width, height);
+        UpdateRegion();
 
         // 布局完成后：先算滚动范围，再复位滚动位置
         CalculateScrollRange();
@@ -775,6 +826,22 @@ internal sealed class FloatingPanel : Form
             if (form is FloatingButton) return form as Form;
         }
         return null;
+    }
+
+    /// <summary>
+    /// 设置圆角区域裁剪：替代 TransparencyKey 抠色透明。
+    /// 抠色透明的像素是 click-through 的，鼠标穿过透明区域会命中底层窗口，
+    /// 导致面板误判失焦而关闭、再被悬浮按钮重新弹出，表现为面板抖动。
+    /// 改用 Region 裁剪后，圆角以外的区域不属于窗口，不会收到鼠标事件。
+    /// </summary>
+    private void UpdateRegion()
+    {
+        var rect = new Rectangle(0, 0, Width, Height);
+        if (rect.Width <= 0 || rect.Height <= 0) return;
+        using var path = RoundedRect(rect, S(8));
+        var old = Region;
+        Region = new Region(path);
+        old?.Dispose();
     }
 
     private static GraphicsPath RoundedRect(Rectangle rect, int radius)

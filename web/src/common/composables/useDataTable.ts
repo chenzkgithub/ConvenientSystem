@@ -24,12 +24,15 @@ export interface UseDataTableOptions<F extends Record<string, any>> {
   pageSize?: number
   /** 是否在 onMounted 时自动加载一次（默认 true） */
   immediate?: boolean
-  /**
-   * 追加/改写请求参数。用于 filters 无法直接映射的场景，
+  /** 追加/改写请求参数。用于 filters 无法直接映射的场景，
    * 典型如日期区间需要拆成 startTime / endTime 两个参数。
    * 返回值里显式给某个键 undefined，表示该参数不下发（可用来剔除仅供界面绑定的 filters 字段）。
    */
   extraParams?: (filters: F) => Record<string, unknown>
+  /** 默认排序字段（配合 sortable: 'custom' 的服务端排序） */
+  defaultSortField?: string
+  /** 默认排序方向 */
+  defaultSortOrder?: 'ascending' | 'descending'
 }
 
 /**
@@ -56,6 +59,10 @@ export function useDataTable<T, F extends Record<string, any> = Record<string, n
   const total = ref(0)
   const page = ref(1)
   const size = ref(pageSize)
+
+  // 服务端排序状态
+  const sortField = ref(options.defaultSortField ?? '')
+  const sortOrder = ref<'ascending' | 'descending' | null>(options.defaultSortOrder ?? null)
 
   const filters = (options.filters ? reactive(options.filters) : reactive({})) as F
   // 初始筛选值快照：reset 时逐字段还原。
@@ -89,6 +96,11 @@ export function useDataTable<T, F extends Record<string, any> = Record<string, n
         if (value === undefined) delete params[key]
         else params[key] = value
       }
+    }
+    // 服务端排序参数
+    if (sortField.value) {
+      params.sortField = sortField.value
+      params.sortOrder = sortOrder.value === 'ascending' ? 'asc' : 'desc'
     }
     return params
   }
@@ -125,7 +137,15 @@ export function useDataTable<T, F extends Record<string, any> = Record<string, n
     await search()
   }
 
+  /** 排序变化回调：绑定到 CommonDataTable 的 @sort-change */
+  function onSortChange(info: { prop: string | null; order: 'ascending' | 'descending' | null }) {
+    sortField.value = info.prop ?? ''
+    sortOrder.value = info.order
+    page.value = 1
+    load()
+  }
+
   if (immediate) onMounted(load)
 
-  return { loading, list, total, page, size, filters, load, search, reset }
+  return { loading, list, total, page, size, filters, sortField, sortOrder, load, search, reset, onSortChange }
 }

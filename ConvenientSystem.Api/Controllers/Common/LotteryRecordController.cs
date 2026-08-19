@@ -25,8 +25,10 @@ namespace ConvenientSystem.Api.Controllers.Common
             [FromQuery] string type = LotteryTypes.DLT,
             [FromQuery] string? date = null,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_lotteryService.GetRecords(type, date, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_lotteryService.GetRecords(type, date, page, size, sortField, sortOrder));
 
         /// <summary>验证指定选号记录：对应开奖期的奖级判定 + 官网通告中奖明细（全国注数/单注奖金）</summary>
         [HttpGet]

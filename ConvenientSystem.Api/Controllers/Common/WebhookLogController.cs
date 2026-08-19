@@ -25,7 +25,9 @@ namespace ConvenientSystem.Api.Controllers.Common
             [FromQuery] string? configName,
             [FromQuery] bool? success,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_logService.GetList(configName, success, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_logService.GetList(configName, success, page, size, sortField, sortOrder));
     }
 }

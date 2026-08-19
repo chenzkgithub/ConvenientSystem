@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { useUserPrefs } from '@/common/composables/useUserPrefs'
 
 /** 单个标签页：path 为路由 fullPath（含 query），首页固定不可关闭 */
 export interface TabItem {
@@ -14,14 +15,19 @@ const HOME: TabItem = { path: '/', title: '首页', closable: false }
 // 标签栏持久化键：与登录态（auth_state_v1）同用 localStorage，刷新/重启后都恢复上次打开的标签与选中项。
 // 固定端口使 origin 一致，localStorage 才能跨刷新/重启保留（见 Desktop/Program.cs 端口注释）。
 const PERSIST_KEY = 'tabs_state_v1'
+const REMEMBER_KEY = 'UI.RememberTabs'
 
 /**
  * 从 localStorage 恢复标签与选中项。
  * - 首页恒为第一项且不可关闭，无论存储里有没有；
  * - 其余标签一律置为可关闭；
  * - active 必须落在恢复出的标签内，否则回退首页。
+ * - rememberTabs 关闭时仅返回首页。
  */
-function loadPersisted(): { tabs: TabItem[]; active: string } {
+function loadPersisted(): { tabs: TabItem[]; active: string; remember: boolean } {
+  const { getPref } = useUserPrefs()
+  const remember = getPref(REMEMBER_KEY, 'true') !== 'false'
+  if (!remember) return { tabs: [{ ...HOME }], active: '/', remember }
   try {
     const raw = localStorage.getItem(PERSIST_KEY)
     if (raw) {
@@ -34,13 +40,13 @@ function loadPersisted(): { tabs: TabItem[]; active: string } {
           .map((t: TabItem) => ({ path: t.path, title: String(t.title || t.path), closable: true, pinned: !!t.pinned }))
         const tabs = [{ ...HOME }, ...rest]
         const active = typeof o.active === 'string' && tabs.some((t) => t.path === o.active) ? o.active : '/'
-        return { tabs, active }
+        return { tabs, active, remember }
       }
     }
   } catch {
     /* 读取失败时按仅首页处理 */
   }
-  return { tabs: [{ ...HOME }], active: '/' }
+  return { tabs: [{ ...HOME }], active: '/', remember }
 }
 
 /** 标签关闭守卫：返回 false 可阻止关闭（如编辑器有未保存内容时弹窗确认） */
@@ -51,9 +57,11 @@ export const useTabsStore = defineStore('tabs', () => {
   const persisted = loadPersisted()
   const tabs = ref<TabItem[]>(persisted.tabs)
   const active = ref(persisted.active)
+  const rememberTabs = ref(persisted.remember)
 
-  // 标签或选中项变化即写回 localStorage，使刷新/重启后能恢复
+  // 标签或选中项变化即写回 localStorage，使刷新/重启后能恢复（仅在开启记忆时）
   function persist() {
+    if (!rememberTabs.value) return
     try {
       localStorage.setItem(PERSIST_KEY, JSON.stringify({ tabs: tabs.value, active: active.value }))
     } catch {
@@ -61,6 +69,23 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
   watch([tabs, active], persist, { deep: true })
+
+  /** 切换标签记忆开关 */
+  function toggleRememberTabs() {
+    rememberTabs.value = !rememberTabs.value
+    const { setPref } = useUserPrefs()
+    setPref(REMEMBER_KEY, String(rememberTabs.value))
+    if (!rememberTabs.value) {
+      try { localStorage.removeItem(PERSIST_KEY) } catch { /* ignore */ }
+    }
+  }
+
+  // 记忆关闭时立即清除已保存的标签（防止 watcher 在状态切换间隙重新写入）
+  watch(rememberTabs, (val) => {
+    if (!val) {
+      try { localStorage.removeItem(PERSIST_KEY) } catch { /* ignore */ }
+    }
+  })
 
   // 窗口关闭/刷新时保留持久化标签页，下次进入恢复上次打开的标签与选中项；
   // 退出登录时由 reset() 负责清除，避免下一位用户继承上一位的页签
@@ -164,5 +189,19 @@ export const useTabsStore = defineStore('tabs', () => {
     }
   }
 
-  return { tabs, active, refreshCounters, openTab, renameTab, closeTab, closeOtherTabs, closeAllTabs, togglePin, refreshTab, reset, registerCloseGuard, unregisterCloseGuard, canCloseTab }
+  /** 服务器偏好加载后同步：从 auth.uiPrefs 读取标签记忆开关 */
+  function applyServerPrefs() {
+    const { getPref } = useUserPrefs()
+    const serverRemember = getPref(REMEMBER_KEY, 'true') !== 'false'
+    if (rememberTabs.value !== serverRemember) {
+      rememberTabs.value = serverRemember
+      if (!serverRemember) {
+        tabs.value = [{ ...HOME }]
+        active.value = '/'
+        try { localStorage.removeItem(PERSIST_KEY) } catch { /* ignore */ }
+      }
+    }
+  }
+
+  return { tabs, active, rememberTabs, refreshCounters, openTab, renameTab, closeTab, closeOtherTabs, closeAllTabs, togglePin, refreshTab, reset, registerCloseGuard, unregisterCloseGuard, canCloseTab, toggleRememberTabs, applyServerPrefs }
 })

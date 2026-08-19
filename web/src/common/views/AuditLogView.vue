@@ -14,7 +14,7 @@ const filters = reactive({
   dateRange: null as [string, string] | null,
 })
 
-const { loading, list, total, page, size, load, search, reset } = useDataTable<AuditLogDto, typeof filters>(
+const { loading, list, total, page, size, load, search, reset, onSortChange } = useDataTable<AuditLogDto, typeof filters>(
   listAuditLogs,
   {
     filters,
@@ -38,17 +38,20 @@ const columns: DataTableColumn<AuditLogDto>[] = [
     label: '时间',
     width: 170,
     type: 'date',
+    sortable: 'custom',
   },
   {
     prop: 'account',
     label: '账号',
     width: 120,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'module',
     label: '模块',
     width: 100,
+    sortable: 'custom',
   },
   {
     prop: 'method',
@@ -61,18 +64,21 @@ const columns: DataTableColumn<AuditLogDto>[] = [
       if (row.method === 'PUT') return 'warning'
       return 'info'
     },
+    sortable: 'custom',
   },
   {
     prop: 'action',
     label: '操作',
     minWidth: 160,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'path',
     label: '路径',
     minWidth: 200,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'success',
@@ -81,18 +87,21 @@ const columns: DataTableColumn<AuditLogDto>[] = [
     type: 'tag',
     tagType: (row) => (row.success ? 'success' : 'danger'),
     formatter: (row) => `${row.success ? '成功' : '失败'} ${row.statusCode}`,
+    sortable: 'custom',
   },
   {
     prop: 'ip',
     label: 'IP',
     width: 130,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'costMs',
     label: '耗时',
     width: 80,
     formatter: (row) => `${row.costMs}ms`,
+    sortable: 'custom',
   },
 ]
 
@@ -105,6 +114,11 @@ function showDetail(row: AuditLogDto) {
 <template>
   <div class="audit-log-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="audit-log"
+      @load="load"
+      @sort-change="onSortChange"
       v-model:page="page"
       v-model:pageSize="size"
       :columns="columns"
@@ -114,7 +128,6 @@ function showDetail(row: AuditLogDto) {
       :actions-width="80"
       searchable
       pagination-layout="prev, pager, next"
-      @load="load"
       @search="search"
       @reset="reset"
       @row-dblclick="(row: AuditLogDto) => showDetail(row)"

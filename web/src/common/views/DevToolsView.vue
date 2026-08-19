@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, shallowRef, computed, watch, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
 import { monaco } from '@/common/monacoSetup'
+import { generateSnowflakeIds } from '@/common/api/devTools'
 
 // ==================== 工具 Tab ====================
-type ToolTab = 'json' | 'diff' | 'timestamp' | 'codec' | 'regex'
+type ToolTab = 'json' | 'diff' | 'timestamp' | 'codec' | 'regex' | 'snowflake'
 const activeToolTab = ref<ToolTab>('json')
-const toolTabs: { key: ToolTab; label: string }[] = [
-  { key: 'diff', label: '文本对比' },
-  { key: 'json', label: 'JSON 工具' },
-  { key: 'timestamp', label: '时间戳' },
-  { key: 'codec', label: '编解码' },
-  { key: 'regex', label: '正则测试' },
-]
 
 // ==================== JSON 工具 ====================
 const jsonEditorEl = ref<HTMLElement>()
@@ -125,13 +120,11 @@ function jsonValidate() {
 
 /** 从 JSON.parse 错误信息中解析出行列位置 */
 function parseJsonErrorPosition(raw: string, msg: string): { line: number; column: number } | null {
-  // Chrome/Edge: "... at position 123"
   const posMatch = msg.match(/position\s+(\d+)/)
   if (posMatch) {
     const offset = parseInt(posMatch[1])
     return offsetToLineCol(raw, offset)
   }
-  // Firefox: "... at line 5 column 10"
   const lcMatch = msg.match(/line\s+(\d+)\s+column\s+(\d+)/)
   if (lcMatch) {
     return { line: parseInt(lcMatch[1]), column: parseInt(lcMatch[2]) }
@@ -236,12 +229,9 @@ const codecType = ref<CodecType>('base64')
 const codecInput = ref('')
 const codecOutput = ref('')
 
-const codecMsg = ref('')
-const codecMsgType = ref<'success' | 'error'>('success')
-
 function codecEncode() {
   const s = codecInput.value
-  if (!s) { codecMsg.value = '请输入内容'; codecMsgType.value = 'error'; return }
+  if (!s) { ElMessage.warning('请输入内容'); return }
   try {
     switch (codecType.value) {
       case 'base64': codecOutput.value = btoa(unescape(encodeURIComponent(s))); break
@@ -249,15 +239,15 @@ function codecEncode() {
       case 'unicode': codecOutput.value = Array.from(s).map(c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')).join(''); break
       case 'html': codecOutput.value = s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c)); break
     }
-    codecMsg.value = '编码成功'; codecMsgType.value = 'success'
+    ElMessage.success('编码成功')
   } catch (e) {
     codecOutput.value = ''
-    codecMsg.value = '编码失败：' + (e as Error).message; codecMsgType.value = 'error'
+    ElMessage.error('编码失败：' + (e as Error).message)
   }
 }
 function codecDecode() {
   const s = codecInput.value
-  if (!s) { codecMsg.value = '请输入内容'; codecMsgType.value = 'error'; return }
+  if (!s) { ElMessage.warning('请输入内容'); return }
   try {
     switch (codecType.value) {
       case 'base64': codecOutput.value = decodeURIComponent(escape(atob(s))); break
@@ -270,17 +260,17 @@ function codecDecode() {
         break
       }
     }
-    codecMsg.value = '解码成功'; codecMsgType.value = 'success'
+    ElMessage.success('解码成功')
   } catch (e) {
     codecOutput.value = ''
-    codecMsg.value = '解码失败：' + (e as Error).message; codecMsgType.value = 'error'
+    ElMessage.error('解码失败：' + (e as Error).message)
   }
 }
 function codecSwap() {
   const tmp = codecInput.value
   codecInput.value = codecOutput.value
   codecOutput.value = tmp
-  codecMsg.value = '已互换'; codecMsgType.value = 'success'
+  ElMessage.success('已互换')
 }
 
 // ==================== 正则测试 ====================
@@ -293,7 +283,6 @@ const regexMatches = computed(() => {
     const re = new RegExp(regexPattern.value, regexFlags.value)
     const results: { match: string; index: number; groups: string[] }[] = []
     let m: RegExpExecArray | null
-    // 防无限循环（无 g 标志只取一次）
     const hasG = regexFlags.value.includes('g')
     while ((m = re.exec(regexTestText.value)) !== null) {
       results.push({ match: m[0], index: m.index, groups: m.slice(1) })
@@ -306,6 +295,44 @@ const regexError = computed(() => {
   if (!regexPattern.value) return ''
   try { new RegExp(regexPattern.value, regexFlags.value); return '' } catch (e) { return (e as Error).message }
 })
+
+// ==================== 雪花ID ====================
+const snowflakeCount = ref(1)
+const snowflakeEpoch = ref('')
+const snowflakeIds = ref<string[]>([])
+const snowflakeLoading = ref(false)
+
+async function generateSnowflake() {
+  const n = Math.max(1, Math.min(1000, Number(snowflakeCount.value) || 1))
+  snowflakeCount.value = n
+  snowflakeLoading.value = true
+  try {
+    const res = await generateSnowflakeIds(n, snowflakeEpoch.value || undefined)
+    snowflakeIds.value = res.ids
+    ElMessage.success(`已生成 ${res.count} 个雪花ID`)
+  } catch {
+    /* request.ts 已弹错误提示 */
+  } finally {
+    snowflakeLoading.value = false
+  }
+}
+
+function copySnowflakeId(id: string) {
+  navigator.clipboard.writeText(id).then(() => {
+    ElMessage.success(`已复制：${id}`)
+  }).catch(() => {
+    ElMessage.error('复制失败')
+  })
+}
+
+function copyAllSnowflakeIds() {
+  if (!snowflakeIds.value.length) return
+  navigator.clipboard.writeText(snowflakeIds.value.join('\n')).then(() => {
+    ElMessage.success(`已复制全部 ${snowflakeIds.value.length} 个ID`)
+  }).catch(() => {
+    ElMessage.error('复制失败')
+  })
+}
 
 // ==================== 生命周期 ====================
 onMounted(() => {
@@ -327,101 +354,118 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="dev-tools">
-    <!-- 工具 Tab 栏 -->
-    <div class="tool-tabs">
-      <button
-        v-for="t in toolTabs" :key="t.key"
-        :class="['tab-btn', { active: activeToolTab === t.key }]"
-        @click="activeToolTab = t.key"
-      >{{ t.label }}</button>
-    </div>
-
-    <!-- JSON 工具 -->
-    <div v-show="activeToolTab === 'json'" class="tool-panel">
-      <div class="toolbar">
-        <button class="act-btn" @click="jsonFormat">格式化</button>
-        <button class="act-btn" @click="jsonCompress">压缩</button>
-        <button class="act-btn" @click="jsonEscape">转义</button>
-        <button class="act-btn" @click="jsonUnescape">反转义</button>
-        <button class="act-btn" @click="jsonValidate">校验</button>
-        <span v-if="jsonMessage" :class="['msg', jsonMessageType]">{{ jsonMessage }}</span>
-      </div>
-      <div ref="jsonEditorEl" class="editor-area"></div>
-    </div>
-
-    <!-- 文本对比 -->
-    <div v-show="activeToolTab === 'diff'" class="tool-panel">
-      <div class="toolbar">
-        <button class="act-btn" @click="diffCompare">对比</button>
-        <button class="act-btn" @click="diffClear">清空</button>
-        <span class="hint">左侧为原始文本，右侧为修改后文本，直接编辑即可</span>
-      </div>
-      <div ref="diffEditorEl" class="editor-area"></div>
-    </div>
-
-    <!-- 时间戳转换 -->
-    <div v-show="activeToolTab === 'timestamp'" class="tool-panel ts-panel">
-      <div class="ts-section">
-        <h4>时间戳 → 日期</h4>
-        <div class="ts-row">
-          <input v-model="tsInput" placeholder="输入时间戳" class="ts-input" @keyup.enter="tsToDate" />
-          <select v-model="tsUnit" class="ts-select">
-            <option value="s">秒(s)</option>
-            <option value="ms">毫秒(ms)</option>
-          </select>
-          <button class="act-btn" @click="tsToDate">转换</button>
-          <button class="act-btn" @click="tsNow">当前时间</button>
+    <el-tabs v-model="activeToolTab" class="tool-tabs">
+      <!-- 文本对比 -->
+      <el-tab-pane label="文本对比" name="diff" class="tool-pane">
+        <div class="toolbar">
+          <el-button @click="diffCompare">对比</el-button>
+          <el-button @click="diffClear">清空</el-button>
+          <el-text type="info" size="small">左侧为原始文本，右侧为修改后文本，直接编辑即可</el-text>
         </div>
-        <div :class="['ts-result', tsResultType]" v-if="tsResult">{{ tsResult }}</div>
-      </div>
-      <div class="ts-section">
-        <h4>日期 → 时间戳</h4>
-        <div class="ts-row">
-          <input v-model="dtInput" placeholder="如 2025-01-01 12:00:00" class="ts-input wide" @keyup.enter="dateToTs" />
-          <button class="act-btn" @click="dateToTs">转换</button>
-        </div>
-        <div :class="['ts-result', dtResultType]" v-if="dtResult">{{ dtResult }}</div>
-      </div>
-    </div>
+        <div ref="diffEditorEl" class="editor-area"></div>
+      </el-tab-pane>
 
-    <!-- 编解码 -->
-    <div v-show="activeToolTab === 'codec'" class="tool-panel codec-panel">
-      <div class="toolbar">
-        <select v-model="codecType" class="codec-select">
-          <option value="base64">Base64</option>
-          <option value="url">URL</option>
-          <option value="unicode">Unicode</option>
-          <option value="html">HTML 实体</option>
-        </select>
-        <button class="act-btn" @click="codecEncode">编码 ↓</button>
-        <button class="act-btn" @click="codecDecode">解码 ↓</button>
-        <button class="act-btn" @click="codecSwap">↕ 互换</button>
-        <span v-if="codecMsg" :class="['msg', codecMsgType]">{{ codecMsg }}</span>
-      </div>
-      <textarea v-model="codecInput" class="codec-area" placeholder="输入内容"></textarea>
-      <textarea v-model="codecOutput" class="codec-area" placeholder="输出结果" readonly></textarea>
-    </div>
-
-    <!-- 正则测试 -->
-    <div v-show="activeToolTab === 'regex'" class="tool-panel regex-panel">
-      <div class="regex-row">
-        <span class="regex-slash">/</span>
-        <input v-model="regexPattern" class="regex-input" placeholder="输入正则表达式" />
-        <span class="regex-slash">/</span>
-        <input v-model="regexFlags" class="regex-flags" placeholder="flags" />
-      </div>
-      <div class="regex-error" v-if="regexError">{{ regexError }}</div>
-      <textarea v-model="regexTestText" class="regex-text" placeholder="输入测试文本"></textarea>
-      <div class="regex-results" v-if="regexMatches.length">
-        <div class="regex-match" v-for="(m, i) in regexMatches" :key="i">
-          <span class="match-index">#{{ i + 1 }}</span>
-          <span class="match-text">"{{ m.match }}"</span>
-          <span class="match-pos">位置 {{ m.index }}</span>
-          <span v-if="m.groups.length" class="match-groups">捕获组: {{ m.groups.join(', ') }}</span>
+      <!-- JSON 工具 -->
+      <el-tab-pane label="JSON 工具" name="json" class="tool-pane">
+        <div class="toolbar">
+          <el-button @click="jsonFormat">格式化</el-button>
+          <el-button @click="jsonCompress">压缩</el-button>
+          <el-button @click="jsonEscape">转义</el-button>
+          <el-button @click="jsonUnescape">反转义</el-button>
+          <el-button @click="jsonValidate">校验</el-button>
+          <el-text v-if="jsonMessage" :type="jsonMessageType === 'success' ? 'success' : 'danger'" size="small">{{ jsonMessage }}</el-text>
         </div>
-      </div>
-      <div class="regex-no-match" v-else-if="regexPattern && regexTestText">无匹配</div>
-    </div>
+        <div ref="jsonEditorEl" class="editor-area"></div>
+      </el-tab-pane>
+
+      <!-- 时间戳转换 -->
+      <el-tab-pane label="时间戳" name="timestamp" class="tool-pane">
+        <div class="ts-panel">
+          <el-divider content-position="left">时间戳 → 日期</el-divider>
+          <div class="ts-row">
+            <el-input v-model="tsInput" placeholder="输入时间戳" style="width: 220px" @keyup.enter="tsToDate" />
+            <el-select v-model="tsUnit" style="width: 110px">
+              <el-option label="秒(s)" value="s" />
+              <el-option label="毫秒(ms)" value="ms" />
+            </el-select>
+            <el-button type="primary" @click="tsToDate">转换</el-button>
+            <el-button @click="tsNow">当前时间</el-button>
+          </div>
+          <el-alert v-if="tsResult" :title="tsResult" :type="tsResultType" show-icon :closable="false" />
+
+          <el-divider content-position="left">日期 → 时间戳</el-divider>
+          <div class="ts-row">
+            <el-input v-model="dtInput" placeholder="如 2025-01-01 12:00:00" style="width: 320px" @keyup.enter="dateToTs" />
+            <el-button type="primary" @click="dateToTs">转换</el-button>
+          </div>
+          <el-alert v-if="dtResult" :title="dtResult" :type="dtResultType" show-icon :closable="false" />
+        </div>
+      </el-tab-pane>
+
+      <!-- 编解码 -->
+      <el-tab-pane label="编解码" name="codec" class="tool-pane">
+        <div class="codec-panel">
+          <div class="toolbar">
+            <el-select v-model="codecType" style="width: 130px">
+              <el-option label="Base64" value="base64" />
+              <el-option label="URL" value="url" />
+              <el-option label="Unicode" value="unicode" />
+              <el-option label="HTML 实体" value="html" />
+            </el-select>
+            <el-button @click="codecEncode">编码 ↓</el-button>
+            <el-button @click="codecDecode">解码 ↓</el-button>
+            <el-button @click="codecSwap">↕ 互换</el-button>
+          </div>
+          <el-input v-model="codecInput" type="textarea" :rows="6" placeholder="输入内容" class="codec-area" />
+          <el-input v-model="codecOutput" type="textarea" :rows="6" placeholder="输出结果" readonly class="codec-area" />
+        </div>
+      </el-tab-pane>
+
+      <!-- 正则测试 -->
+      <el-tab-pane label="正则测试" name="regex" class="tool-pane">
+        <div class="regex-panel">
+          <div class="regex-row">
+            <el-text class="regex-slash">/</el-text>
+            <el-input v-model="regexPattern" placeholder="输入正则表达式" class="regex-input" />
+            <el-text class="regex-slash">/</el-text>
+            <el-input v-model="regexFlags" placeholder="flags" class="regex-flags" />
+          </div>
+          <el-text v-if="regexError" type="danger" size="small">{{ regexError }}</el-text>
+          <el-input v-model="regexTestText" type="textarea" :rows="6" placeholder="输入测试文本" class="regex-text" />
+          <div class="regex-results" v-if="regexMatches.length">
+            <div class="regex-match" v-for="(m, i) in regexMatches" :key="i">
+              <el-text type="info" size="small" class="match-index">#{{ i + 1 }}</el-text>
+              <el-text type="warning" class="match-text">"{{ m.match }}"</el-text>
+              <el-text type="info" size="small">位置 {{ m.index }}</el-text>
+              <el-text v-if="m.groups.length" type="success" size="small">捕获组: {{ m.groups.join(', ') }}</el-text>
+            </div>
+          </div>
+          <el-text v-else-if="regexPattern && regexTestText" type="info" size="small">无匹配</el-text>
+        </div>
+      </el-tab-pane>
+
+      <!-- 雪花ID -->
+      <el-tab-pane label="雪花ID" name="snowflake" class="tool-pane">
+        <div class="snowflake-panel">
+          <div class="toolbar">
+            <el-text type="info" size="small">数量</el-text>
+            <el-input-number v-model="snowflakeCount" :min="1" :max="1000" controls-position="right" style="width: 110px" />
+            <el-text type="info" size="small">起始日期</el-text>
+            <el-date-picker v-model="snowflakeEpoch" type="date" placeholder="不选则用默认纪元" format="YYYY-MM-DD" value-format="YYYY-MM-DD" style="width: 170px" />
+            <el-button type="primary" :loading="snowflakeLoading" @click="generateSnowflake">生成</el-button>
+            <el-button :disabled="!snowflakeIds.length" @click="copyAllSnowflakeIds">复制全部</el-button>
+          </div>
+          <div class="sf-results" v-if="snowflakeIds.length">
+            <div class="sf-item" v-for="(id, i) in snowflakeIds" :key="i">
+              <el-text type="info" size="small" class="sf-index">#{{ i + 1 }}</el-text>
+              <span class="sf-id">{{ id }}</span>
+              <el-button link type="primary" size="small" @click="copySnowflakeId(id)">复制</el-button>
+            </div>
+          </div>
+          <el-empty v-else description="点击「生成」按钮创建雪花ID" :image-size="60" />
+        </div>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -431,120 +475,164 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: #fff;
 }
-.tool-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 8px 12px 0;
-  border-bottom: 1px solid #e4e7ed;
-  background: #f5f7fa;
-  flex-shrink: 0;
-}
-.tab-btn {
-  padding: 7px 18px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 13px;
-  border-radius: 4px 4px 0 0;
-  color: #606266;
-  transition: all .15s;
-}
-.tab-btn.active {
-  background: #fff;
-  color: #409eff;
-  font-weight: 600;
-  box-shadow: 0 -1px 3px rgba(0,0,0,.06);
-}
-.tab-btn:hover:not(.active) { background: #ecf5ff; }
 
-.tool-panel {
+/* el-tabs 布局：纵向 flex，内容区撑满剩余空间 */
+.tool-tabs {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 10px 12px;
 }
+.tool-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 12px;
+}
+.tool-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  overflow: hidden;
+}
+/* 激活的 pane 撑满内容区并纵向布局；非激活 pane 有内联 display:none 不受影响 */
+.tool-tabs :deep(.el-tab-pane.tool-pane) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+/* 通用工具栏 */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
   flex-shrink: 0;
 }
-.act-btn {
-  padding: 5px 14px;
-  border: 1px solid #dcdfe6;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  color: #606266;
-  transition: all .15s;
-}
-.act-btn:hover { border-color: #409eff; color: #409eff; }
-.msg { font-size: 12px; margin-left: 8px; }
-.msg.success { color: #67c23a; }
-.msg.error { color: #f56c6c; }
-.hint { font-size: 12px; color: #909399; margin-left: 8px; }
 
+/* Monaco 编辑器区域 */
 .editor-area {
   flex: 1;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
   overflow: hidden;
   min-height: 200px;
 }
 
 /* 时间戳 */
-.ts-panel { gap: 20px; padding-top: 20px; }
-.ts-section h4 { margin: 0 0 10px; font-size: 14px; color: #303133; }
-.ts-row { display: flex; gap: 8px; align-items: center; }
-.ts-input { padding: 6px 10px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; width: 220px; }
-.ts-input.wide { width: 300px; }
-.ts-select { padding: 6px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 13px; }
-.ts-result { margin-top: 8px; padding: 8px 12px; border-radius: 4px; font-size: 14px; font-family: monospace; }
-.ts-result.success { background: #f0f9eb; color: #67c23a; }
-.ts-result.error { background: #fef0f0; color: #f56c6c; }
+.ts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ts-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 /* 编解码 */
-.codec-panel { gap: 8px; }
-.codec-select { padding: 5px 10px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 13px; }
+.codec-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
 .codec-area {
   flex: 1;
-  min-height: 100px;
-  padding: 10px;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  font-size: 13px;
+  min-height: 80px;
+}
+.codec-area :deep(.el-textarea__inner) {
   font-family: 'Consolas', monospace;
-  resize: none;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 /* 正则 */
-.regex-panel { gap: 10px; }
-.regex-row { display: flex; align-items: center; gap: 4px; }
-.regex-slash { font-size: 18px; color: #909399; font-family: monospace; }
-.regex-input { flex: 1; padding: 6px 10px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; font-family: monospace; }
-.regex-flags { width: 60px; padding: 6px 10px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 14px; font-family: monospace; }
-.regex-error { color: #f56c6c; font-size: 12px; }
-.regex-text {
-  min-height: 120px;
-  padding: 10px;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  font-size: 13px;
+.regex-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.regex-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.regex-slash {
+  font-size: 18px;
+  color: var(--el-text-color-secondary);
   font-family: monospace;
-  resize: none;
+}
+.regex-input {
+  flex: 1;
+}
+.regex-flags {
+  width: 80px;
+}
+.regex-text {
+  flex: 1;
+  min-height: 100px;
+}
+.regex-text :deep(.el-textarea__inner) {
+  font-family: monospace;
+  font-size: 13px;
   line-height: 1.6;
 }
-.regex-results { max-height: 200px; overflow-y: auto; }
-.regex-match { padding: 6px 10px; border-bottom: 1px solid #f2f6fc; display: flex; gap: 12px; align-items: center; font-size: 13px; }
-.match-index { color: #909399; font-weight: 600; }
-.match-text { color: #e6a23c; font-family: monospace; word-break: break-all; }
-.match-pos { color: #909399; font-size: 12px; }
-.match-groups { color: #67c23a; font-size: 12px; }
-.regex-no-match { color: #909399; font-size: 13px; padding: 8px; }
+.regex-results {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+}
+.regex-match {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.regex-match:last-child {
+  border-bottom: none;
+}
+.match-text {
+  word-break: break-all;
+}
+
+/* 雪花ID */
+.snowflake-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.sf-results {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+}
+.sf-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.sf-item:last-child {
+  border-bottom: none;
+}
+.sf-index {
+  flex-shrink: 0;
+}
+.sf-id {
+  color: var(--el-text-color-primary);
+  font-family: 'Consolas', monospace;
+  font-size: 14px;
+  flex: 1;
+  word-break: break-all;
+}
 </style>

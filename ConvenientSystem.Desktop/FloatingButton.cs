@@ -19,6 +19,8 @@ public sealed class FloatingButton : Form
     private bool _moved;
     private bool _hovered;
     private bool _panelVisible;
+    // 面板关闭后的冷却期：防止面板刚关闭就因鼠标仍在按钮上而立即重新弹出
+    private bool _inPanelCooldown;
 
     /// <summary>双击按钮时触发的回调（如显示主窗口）。</summary>
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -34,6 +36,21 @@ public sealed class FloatingButton : Form
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     [Browsable(false)]
     public JsonElement? MenuTree { get; set; }
+
+    /// <summary>呼出快速启动器回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? LauncherPopupAction { get; set; }
+
+    /// <summary>管理启动器条目回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? EntryEditorAction { get; set; }
+
+    /// <summary>刷新文件索引回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? RefreshIndexAction { get; set; }
 
     // 程序图标
     private readonly Image? _appIcon;
@@ -55,6 +72,8 @@ public sealed class FloatingButton : Form
 
     // 定时强制置顶定时器（每 2 秒重新声明，防止其他程序抢占）
     private readonly System.Windows.Forms.Timer _topMostTimer;
+    // 面板关闭冷却定时器
+    private readonly System.Windows.Forms.Timer _panelCooldownTimer;
 
     // 右键菜单（关闭悬浮按钮）
     private readonly ContextMenuStrip _selfMenu = new();
@@ -146,7 +165,7 @@ public sealed class FloatingButton : Form
         _hoverTimer.Tick += (_, _) =>
         {
             _hoverTimer.Stop();
-            if (_hovered && !_dragging && !_panelVisible && !_waitingForDblClick) ShowPanel();
+            if (_hovered && !_dragging && !_panelVisible && !_waitingForDblClick && !_inPanelCooldown) ShowPanel();
         };
 
         // 单击/双击区分定时器
@@ -162,11 +181,41 @@ public sealed class FloatingButton : Form
         };
 
         // 定时强制置顶：每 2 秒用 Win32 API 重新声明
+        // 同时兼任看门狗：检测面板声称可见但实际已关闭的异常状态并自动恢复。
         _topMostTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-        _topMostTimer.Tick += (_, _) => ForceTopMost();
+        _topMostTimer.Tick += (_, _) =>
+        {
+            ForceTopMost();
+            // 看门狗：面板声称可见但实际已关闭/disposed 时，恢复按钮状态。
+            // 防止面板关闭回调异常失败导致按钮永远卡在 _panelVisible=true、TopMost 未恢复。
+            if (_panelVisible)
+            {
+                var panel = _currentPanel;
+                if (panel is null || panel.IsDisposed || !panel.Visible)
+                    OnPanelClosed();
+            }
+        };
+
+        // 面板关闭冷却：面板关闭后 300ms 内不重新弹出，防止抖动
+        _panelCooldownTimer = new System.Windows.Forms.Timer { Interval = 300 };
+        _panelCooldownTimer.Tick += (_, _) => { _panelCooldownTimer.Stop(); _inPanelCooldown = false; };
 
         // 右键菜单
         _selfMenu.Renderer = SharedRenderer;
+        var launcherItem = new ToolStripMenuItem("快捷启动器  Ctrl+Alt+Space");
+        launcherItem.Click += (_, _) => LauncherPopupAction?.Invoke();
+        _selfMenu.Items.Add(launcherItem);
+
+        var entryItem = new ToolStripMenuItem("管理启动器条目");
+        entryItem.Click += (_, _) => EntryEditorAction?.Invoke();
+        _selfMenu.Items.Add(entryItem);
+
+        var refreshItem = new ToolStripMenuItem("刷新文件索引");
+        refreshItem.Click += (_, _) => RefreshIndexAction?.Invoke();
+        _selfMenu.Items.Add(refreshItem);
+
+        _selfMenu.Items.Add(new ToolStripSeparator());
+
         var closeItem = new ToolStripMenuItem("关闭悬浮按钮");
         closeItem.Click += (_, _) => Hide();
         _selfMenu.Items.Add(closeItem);
@@ -334,6 +383,7 @@ public sealed class FloatingButton : Form
         _hoverTimer.Dispose();
         _clickTimer.Dispose();
         _topMostTimer.Dispose();
+        _panelCooldownTimer.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -413,6 +463,13 @@ public sealed class FloatingButton : Form
         }
         else if (e.Button == MouseButtons.Right && !_moved)
         {
+            // 右键菜单出现时关闭已展开的悬浮面板，避免菜单被面板遮挡或互相干扰
+            if (_panelVisible)
+            {
+                _currentPanel?.Close();
+                _currentPanel = null;
+                _panelVisible = false;
+            }
             _selfMenu.Show(PointToScreen(new Point(0, Height + 4)));
         }
     }
@@ -470,10 +527,9 @@ public sealed class FloatingButton : Form
 
         _panelVisible = true;
 
-        // 面板显示期间停止强制置顶，否则 _topMostTimer 会把按钮推到面板上方导致面板不可见
-        _topMostTimer.Stop();
-        TopMost = false;
-
+        // 面板与按钮位置不重叠（面板在按钮左侧），两者同为 TopMost 不会互相遮挡。
+        // 不停止 _topMostTimer、不改 TopMost：原来的做法在面板关闭回调失败时
+        // 会导致按钮永远失去 TopMost 被其他窗口遮挡，表现为"悬浮按钮突然不见"。
         var panel = new FloatingPanel(MenuTree, OpenPageAction, OnPanelClosed);
         _currentPanel = panel;
         panel.Show();
@@ -481,9 +537,13 @@ public sealed class FloatingButton : Form
 
     private void OnPanelClosed()
     {
+        // 防重入：面板正常关闭回调与看门狗可能并发触发
+        if (!_panelVisible) return;
         _panelVisible = false;
         _currentPanel = null;
-        if (!IsDisposed) { TopMost = true; ForceTopMost(); _topMostTimer.Start(); }
+        _inPanelCooldown = true;
+        _panelCooldownTimer.Start();
+        if (!IsDisposed) ForceTopMost();
     }
 
     /// <summary>使用 Win32 API 强制置顶窗口。</summary>

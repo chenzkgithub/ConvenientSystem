@@ -1,6 +1,7 @@
 <script setup lang="ts" generic="T extends Record<string, any>">
-import { computed, onActivated, ref, useSlots } from 'vue'
+import { computed, onActivated, onMounted, ref, useSlots, watch } from 'vue'
 import type { ElTable } from 'element-plus'
+import { Refresh, Setting } from '@element-plus/icons-vue'
 import { formatDate } from '@/common/formatDate'
 
 /** 通用表格列配置 */
@@ -97,6 +98,12 @@ const props = withDefaults(
     resetText?: string
     /** 已选中行（配合 selection 列使用，支持 v-model:selected） */
     selected?: T[]
+    /** 是否显示刷新按钮 */
+    showRefresh?: boolean
+    /** 是否显示列显示/隐藏配置按钮 */
+    showColumnToggle?: boolean
+    /** 列配置持久化标识（传 tableKey 后配置会存入 localStorage，刷新不丢失） */
+    tableKey?: string
   }>(),
   {
     loading: false,
@@ -123,6 +130,9 @@ const props = withDefaults(
     searchText: '查询',
     resetText: '重置',
     selected: () => [],
+    showRefresh: false,
+    showColumnToggle: false,
+    tableKey: '',
   }
 )
 
@@ -251,12 +261,68 @@ function getSlotName(column: DataTableColumn<T>): string {
 if (props.refreshOnActivated) {
   onActivated(() => emit('load'))
 }
+
+// ===== 列显示/隐藏配置 =====
+const STORAGE_PREFIX = 'data-table-cols:'
+const hiddenColumns = ref<Set<string>>(new Set())
+const ACTIONS_KEY = '__actions__'
+
+const actionsInToggle = computed(() => props.showActions && !!slots.actions)
+const totalToggleable = computed(() => toggleableColumns.value.length + (actionsInToggle.value ? 1 : 0))
+
+/** 可被配置显示/隐藏的列（排除序号列、多选列） */
+const toggleableColumns = computed(() =>
+  props.columns.filter(c => c.type !== 'index' && c.type !== 'selection')
+)
+
+/** 过滤后的可见列（序号列、多选列始终显示） */
+const visibleColumns = computed(() =>
+  props.columns.filter(c =>
+    c.type === 'index' || c.type === 'selection' || !hiddenColumns.value.has((c.prop as string) || c.label)
+  )
+)
+
+function isColumnVisible(column: DataTableColumn<T>): boolean {
+  const key = (column.prop as string) || column.label
+  return !hiddenColumns.value.has(key)
+}
+
+function toggleColumnVisibility(column: DataTableColumn<T>, visible: boolean) {
+  const key = (column.prop as string) || column.label
+  const newSet = new Set(hiddenColumns.value)
+  if (visible) newSet.delete(key)
+  else newSet.add(key)
+  hiddenColumns.value = newSet
+}
+
+function toggleAllColumns(visible: boolean) {
+  const keys = toggleableColumns.value.map(c => (c.prop as string) || c.label)
+  if (actionsInToggle.value) keys.push(ACTIONS_KEY)
+  hiddenColumns.value = visible ? new Set() : new Set(keys)
+}
+
+// 从 localStorage 恢复列配置
+onMounted(() => {
+  if (!props.tableKey) return
+  try {
+    const stored = localStorage.getItem(STORAGE_PREFIX + props.tableKey)
+    if (stored) hiddenColumns.value = new Set(JSON.parse(stored))
+  } catch { /* ignore */ }
+})
+
+// 列配置变化时持久化
+watch(hiddenColumns, (val) => {
+  if (!props.tableKey) return
+  try {
+    localStorage.setItem(STORAGE_PREFIX + props.tableKey, JSON.stringify([...val]))
+  } catch { /* ignore */ }
+}, { deep: true })
 </script>
 
 <template>
   <div class="common-data-table">
     <!-- 筛选与工具栏 -->
-    <div v-if="slots.filters || slots.toolbar || searchable" class="data-table-header" :class="{ compact }">
+    <div v-if="slots.filters || slots.toolbar || searchable || showRefresh || showColumnToggle" class="data-table-header" :class="{ compact }">
       <div class="data-table-filters">
         <slot name="filters" />
         <!-- 查询 / 重置属于筛选区（紧跟筛选控件），其余按钮一律归 toolbar -->
@@ -265,8 +331,41 @@ if (props.refreshOnActivated) {
           <el-button @click="emit('reset')">{{ resetText }}</el-button>
         </template>
       </div>
-      <div v-if="slots.toolbar" class="data-table-toolbar">
+      <div v-if="slots.toolbar || showRefresh || showColumnToggle" class="data-table-toolbar">
         <slot name="toolbar" :selected="selected" />
+        <!-- 表格工具按钮：刷新 + 列配置 -->
+        <div v-if="showRefresh || showColumnToggle" class="data-table-tools">
+          <el-button :icon="Refresh" circle size="small" :loading="loading" title="刷新" @click="emit('load')" />
+          <el-popover v-if="showColumnToggle" trigger="click" :width="200" placement="bottom-end">
+            <template #reference>
+              <el-button :icon="Setting" circle size="small" title="列显示配置" />
+            </template>
+            <div class="column-toggle-list">
+              <el-checkbox
+                :model-value="hiddenColumns.size === 0"
+                :indeterminate="hiddenColumns.size > 0 && hiddenColumns.size < totalToggleable"
+                @change="(val: boolean) => toggleAllColumns(val)"
+              >
+                全选
+              </el-checkbox>
+              <el-divider style="margin: 6px 0" />
+              <el-checkbox
+                v-for="col in toggleableColumns" :key="(col.prop as string) || col.label"
+                :model-value="isColumnVisible(col)"
+                @change="(val: boolean) => toggleColumnVisibility(col, val)"
+              >
+                {{ col.label }}
+              </el-checkbox>
+              <el-checkbox
+                v-if="actionsInToggle"
+                :model-value="!hiddenColumns.has('__actions__')"
+                @change="(val: boolean) => { const s = new Set(hiddenColumns); val ? s.delete('__actions__') : s.add('__actions__'); hiddenColumns = s }"
+              >
+                操作
+              </el-checkbox>
+            </div>
+          </el-popover>
+        </div>
       </div>
     </div>
 
@@ -288,7 +387,7 @@ if (props.refreshOnActivated) {
         @sort-change="onSortChange"
         @selection-change="onSelectionChange"
       >
-        <template v-for="(column, index) in columns" :key="getColumnKey(column, index)">
+        <template v-for="(column, index) in visibleColumns" :key="getColumnKey(column, index)">
           <!-- 多选列 -->
           <el-table-column
             v-if="column.type === 'selection'"
@@ -369,7 +468,7 @@ if (props.refreshOnActivated) {
 
         <!-- 操作列：内容为按钮组，不需要内容悬浮提示（否则浮层会盖住按钮） -->
         <el-table-column
-          v-if="showActions && hasActionsSlot"
+          v-if="showActions && hasActionsSlot && !hiddenColumns.has('__actions__')"
           label="操作"
           :width="computedActionsWidth"
           :fixed="actionsFixed"
@@ -434,6 +533,21 @@ if (props.refreshOnActivated) {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+.data-table-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.column-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.column-toggle-list :deep(.el-checkbox) {
+  margin-right: 0;
 }
 .data-table-body {
   flex: 1;

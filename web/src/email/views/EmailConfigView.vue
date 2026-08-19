@@ -16,14 +16,14 @@ const loading = ref(false)
 const list = ref<EmailConfigDto[]>([])
 
 const columns: DataTableColumn<EmailConfigDto>[] = [
-  { prop: 'name', label: '名称', minWidth: 140 },
-  { prop: 'smtpServer', label: 'SMTP 服务器', minWidth: 160 },
-  { prop: 'account', label: '发件邮箱', minWidth: 160 },
-  { prop: 'fromName', label: '显示名', width: 120 },
-  { prop: 'enableSsl', label: 'SSL', width: 80, custom: true },
-  { prop: 'isDefault', label: '默认', width: 80, custom: true },
-  { prop: 'enabled', label: '启用', width: 80, custom: true },
-  { prop: 'createTime', label: '创建时间', width: 170, type: 'date' },
+  { prop: 'name', label: '名称', minWidth: 140, sortable: true },
+  { prop: 'smtpServer', label: 'SMTP 服务器', minWidth: 160, sortable: true },
+  { prop: 'account', label: '发件邮箱', minWidth: 160, sortable: true },
+  { prop: 'fromName', label: '显示名', width: 120, sortable: true },
+  { prop: 'enableSsl', label: 'SSL', width: 80, custom: true, sortable: true },
+  { prop: 'isDefault', label: '默认', width: 80, custom: true, sortable: true },
+  { prop: 'enabled', label: '启用', width: 80, custom: true, sortable: true },
+  { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
 ]
 
 async function loadData() {
@@ -170,6 +170,10 @@ onMounted(loadData)
 <template>
   <div class="email-config-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="email-config"
+      @load="loadData"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -177,7 +181,6 @@ onMounted(loadData)
       :show-pagination="false"
       :actions-width="160"
       empty-text="暂无邮件配置"
-      @load="loadData"
     >
       <template #filters>
         <span class="hint">配置邮件 SMTP 凭证，标记为默认的配置用于系统通知联动推送。</span>

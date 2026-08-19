@@ -12,6 +12,8 @@
     <AssemblyName>ConvenientSystem</AssemblyName>
     <!-- exe 程序图标 -->
     <ApplicationIcon>appicon.ico</ApplicationIcon>
+    <!-- 应用程序清单 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 禁用 CS8618：Entity 类字段由 ORM (FreeSql) 在运行时填充，无需构造函数初始化 -->
     <NoWarn>$(NoWarn);CS8618</NoWarn>
     <!-- 抑制 WebView2 WPF 组件引入的 WindowsBase 版本冲突警告（无害） -->

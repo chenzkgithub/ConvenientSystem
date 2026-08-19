@@ -26,8 +26,10 @@ namespace ConvenientSystem.Api.Controllers.Common
             [FromQuery] DateTime? startTime,
             [FromQuery] DateTime? endTime,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_errorLogService.GetList(keyword, startTime, endTime, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_errorLogService.GetList(keyword, startTime, endTime, page, size, sortField, sortOrder));
 
         /// <summary>清空全部错误日志</summary>
         [HttpDelete]

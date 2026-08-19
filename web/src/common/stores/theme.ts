@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useUserPrefs } from '@/common/composables/useUserPrefs'
 
-const THEME_KEY = 'cs_theme'
+const THEME_KEY = 'UI.ThemeMode'
 
 /**
  * 主题管理：支持亮色 / 暗色 / 跟随系统三种模式。
@@ -10,8 +11,9 @@ const THEME_KEY = 'cs_theme'
  */
 export const useThemeStore = defineStore('theme', () => {
   type ThemeMode = 'light' | 'dark' | 'system'
+  const { getPref, setPref } = useUserPrefs()
   const mode = ref<ThemeMode>(
-    (localStorage.getItem(THEME_KEY) as ThemeMode) || 'light',
+    (getPref(THEME_KEY, 'light') as ThemeMode) || 'light',
   )
 
   /** 当前是否处于暗色（考虑 system 模式的实际效果） */
@@ -30,12 +32,22 @@ export const useThemeStore = defineStore('theme', () => {
 
   function setMode(m: ThemeMode) {
     mode.value = m
-    localStorage.setItem(THEME_KEY, m)
+    setPref(THEME_KEY, m)
     apply()
   }
 
   function toggle() {
     setMode(isDark.value ? 'light' : 'dark')
+  }
+
+  /** 服务器偏好加载后同步 */
+  function applyServerPrefs() {
+    const { getPref } = useUserPrefs()
+    const serverMode = (getPref(THEME_KEY, 'light') as ThemeMode) || 'light'
+    if (mode.value !== serverMode) {
+      mode.value = serverMode
+      apply()
+    }
   }
 
   /** 初始化：应用主题 + 监听系统偏好变化 */
@@ -46,5 +58,5 @@ export const useThemeStore = defineStore('theme', () => {
     })
   }
 
-  return { mode, isDark, setMode, toggle, init }
+  return { mode, isDark, setMode, toggle, init, applyServerPrefs }
 })

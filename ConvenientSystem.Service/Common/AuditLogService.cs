@@ -22,7 +22,7 @@ namespace ConvenientSystem.Service.Common
         }
 
         public PagedResult<AuditLogDto> GetList(string? account, string? module, bool? success,
-            DateTime? startTime, DateTime? endTime, int page, int size)
+            DateTime? startTime, DateTime? endTime, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             if (page < 1) page = 1;
             if (size < 1) size = 20;
@@ -37,7 +37,8 @@ namespace ConvenientSystem.Service.Common
             if (endTime.HasValue) query = query.Where(l => l.CreateTime <= endTime.Value);
 
             var total = query.Count();
-            var list = query.OrderByDescending(l => l.CreateTime)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(l => l.CreateTime) : query.OrderByDynamic(sortField, sortOrder);
+            var list = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList()
                 .Select(l => new AuditLogDto

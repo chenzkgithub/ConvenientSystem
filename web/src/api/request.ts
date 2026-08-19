@@ -55,6 +55,10 @@ function readToken(): string {
  *  公开上下文（public=1）静默忽略：外部页面与主窗口共享 localStorage，
  *  这里若清登录态会连带把主窗口挤下线。 */
 let unauthorizedHandled = false
+/** 登录成功后调用：重置 401 去重标志，使新会话的 401 能正常触发退出流程 */
+export function resetUnauthorizedHandled() {
+  unauthorizedHandled = false
+}
 function handleUnauthorized(message: string) {
   if (IS_PUBLIC_CONTEXT) return
   if (unauthorizedHandled) return
@@ -247,6 +251,14 @@ api.interceptors.response.use(undefined, (error: AxiosError) => {
 
     // 401：登录态失效（挤号、账号停用等）
     if (status === 401) {
+      // 检查发送请求时的 token 是否与当前存储的 token 一致；
+      // 不一致（含旧请求不带 token 而当前已登录）说明是旧会话的迟到响应，忽略避免误踢
+      const requestToken = (error.config?.headers?.Authorization as string)?.replace('Bearer ', '') ?? ''
+      const currentToken = readToken()
+      if (currentToken && requestToken !== currentToken) {
+        // 旧会话的迟到响应，静默丢弃
+        throw new Error(`旧会话请求已过期（忽略），接口地址：${url}`)
+      }
       if (!silent) {
         const message = typeof body.message === 'string' ? body.message : '登录已过期或未登录，请重新登录'
         handleUnauthorized(message)
@@ -298,8 +310,13 @@ export async function httpGet<T>(url: string, params?: Record<string, unknown>, 
   }
 }
 
+export interface HttpPostOptions {
+  silent?: boolean
+  headers?: Record<string, string>
+}
+
 /** POST JSON 请求；signal 可选用于取消请求（如中止 SQL 执行），timeoutMs 可选用于长耗时接口 */
-export async function httpPost<T>(url: string, body: unknown, signal?: AbortSignal, timeoutMs?: number, opts?: { silent?: boolean }): Promise<T> {
+export async function httpPost<T>(url: string, body: unknown, signal?: AbortSignal, timeoutMs?: number, opts?: HttpPostOptions): Promise<T> {
   const silent = opts?.silent === true
   if (!silent) loadingStart()
   try {
@@ -308,6 +325,7 @@ export async function httpPost<T>(url: string, body: unknown, signal?: AbortSign
       // 调用方已提供 signal 时由其自行管理超时，禁用 axios 内置超时
       timeout: signal ? 0 : timeoutMs,
       __silent: silent,
+      headers: opts?.headers,
     } as Record<string, unknown>)
   } finally {
     if (!silent) loadingEnd()

@@ -10,7 +10,7 @@ namespace ConvenientSystem.Service.Sms
     {
         /// <summary>按条件分页查询发送日志（手机号脱敏返回）</summary>
         PagedResult<SmsLogDto> GetList(int? taskId, string? phone, byte? status,
-            DateTime? startTime, DateTime? endTime, int page, int size);
+            DateTime? startTime, DateTime? endTime, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>获取发送统计信息</summary>
         SmsStatisticsDto GetStatistics();

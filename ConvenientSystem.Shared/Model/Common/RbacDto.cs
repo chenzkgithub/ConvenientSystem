@@ -12,6 +12,7 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? Email { get; set; }
         public string? Remark { get; set; }
         public bool Enabled { get; set; }
+        public bool IsDeleted { get; set; }
         public DateTime CreateTime { get; set; }
         public List<int> RoleIds { get; set; } = new();
         public List<string> RoleNames { get; set; } = new();

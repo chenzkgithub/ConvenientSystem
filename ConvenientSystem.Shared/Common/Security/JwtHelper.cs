@@ -86,4 +86,18 @@ namespace ConvenientSystem.Shared.Common.Security
             NameClaimType = ClaimTypes.Name,
         };
     }
+
+    /// <summary>
+    /// JWT 密钥持有者（单例）：API 启动时一次性确定密钥，签发方（LoginService）与验证方
+    /// （TokenValidationParameters）共用同一实例，避免启动时 DB 不可用导致 ReadJwtKeyFromDb
+    /// 回退默认值、而 LoginService 从 DB 读到不同值时密钥不一致——不一致会令签发的 token
+    /// 无法通过验证，后续请求全部 401，用户登录后立即被踢出。
+    /// </summary>
+    public class JwtKeyHolder
+    {
+        /// <summary>API 启动时确定的 JWT 对称密钥（环境变量 → SysConfig 表 → 内置缺省）。</summary>
+        public string Key { get; }
+
+        public JwtKeyHolder(string key) => Key = key;
+    }
 }

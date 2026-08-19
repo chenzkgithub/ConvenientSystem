@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ConvenientSystem.Shared.Model.Common;
 using ConvenientSystem.Service.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -29,6 +30,36 @@ namespace ConvenientSystem.Api.Controllers.Common
         {
             _userConfigService.UpdateBatch(items ?? new());
             return Ok(new { message = "个人配置已保存" });
+        }
+
+        /// <summary>获取当前用户 UI 偏好键值字典（含默认值），供登录后一次拉取。</summary>
+        [HttpGet]
+        public ActionResult<Dictionary<string, string>> GetUIPrefs()
+            => Ok(_userConfigService.GetUIPrefs());
+
+        /// <summary>获取当前用户的启动器自定义条目（JSON 数组）</summary>
+        [HttpGet]
+        public ActionResult<JsonElement?> GetLauncherItems()
+        {
+            var raw = _userConfigService.GetRawValue("Launcher.Items");
+            if (string.IsNullOrWhiteSpace(raw)) return Ok(null);
+            try
+            {
+                // 直接返回解析后的 JSON 数组，前端和桌面端无需二次 JSON.parse，统一取数口径。
+                return Ok(JsonDocument.Parse(raw).RootElement.Clone());
+            }
+            catch
+            {
+                return Ok(null);
+            }
+        }
+
+        /// <summary>保存当前用户的启动器自定义条目（JSON 字符串）</summary>
+        [HttpPost]
+        public IActionResult SaveLauncherItems([FromBody] string json)
+        {
+            _userConfigService.SetRawValue("Launcher.Items", json ?? string.Empty);
+            return Ok(new { message = "启动器条目已保存" });
         }
     }
 }

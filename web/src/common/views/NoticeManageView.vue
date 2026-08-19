@@ -23,15 +23,15 @@ async function loadData() {
 }
 
 const columns: DataTableColumn<NoticeDto>[] = [
-  { prop: 'title', label: '标题', minWidth: 180, showOverflowTooltip: true },
-  { prop: 'level', label: '级别', width: 80, align: 'center', custom: true },
-  { prop: 'targets', label: '发送范围', width: 150, custom: true },
-  { prop: 'channels', label: '联动推送', width: 170, custom: true },
-  { prop: 'content', label: '内容', minWidth: 220, showOverflowTooltip: true },
-  { prop: 'expireTime', label: '有效期', width: 160, align: 'center', custom: true },
-  { prop: 'enabled', label: '状态', width: 80, align: 'center', custom: true },
-  { prop: 'createdBy', label: '发布人', width: 150, formatter: (row) => formatCreator(row), showOverflowTooltip: true },
-  { prop: 'createTime', label: '发布时间', width: 170 },
+  { prop: 'title', label: '标题', minWidth: 180, showOverflowTooltip: true, sortable: true },
+  { prop: 'level', label: '级别', width: 80, align: 'center', custom: true, sortable: true },
+  { prop: 'targets', label: '发送范围', width: 150, custom: true, sortable: true },
+  { prop: 'channels', label: '联动推送', width: 170, custom: true, sortable: true },
+  { prop: 'content', label: '内容', minWidth: 220, showOverflowTooltip: true, sortable: true },
+  { prop: 'expireTime', label: '有效期', width: 160, align: 'center', custom: true, sortable: true },
+  { prop: 'enabled', label: '状态', width: 80, align: 'center', custom: true, sortable: true },
+  { prop: 'createdBy', label: '发布人', width: 150, formatter: (row) => formatCreator(row), showOverflowTooltip: true, sortable: true },
+  { prop: 'createTime', label: '发布时间', width: 170, sortable: true },
 ]
 
 /** 联动推送渠道标签（未勾选任何渠道表示仅站内通知） */
@@ -156,6 +156,9 @@ onMounted(loadData)
     <!-- 通知列表（按钮行封装进列表组件插槽，与表格统一对齐） -->
     <div class="notice-list">
       <CommonDataTable
+        show-refresh
+        show-column-toggle
+        table-key="notice-manage"
         :columns="columns"
         :data="notices"
         :loading="loading"
@@ -166,7 +169,6 @@ onMounted(loadData)
       >
         <template #toolbar>
           <el-button v-if="$has('notice:publish')" type="success" @click="openCreate">+ 发布通知</el-button>
-          <el-button @click="loadData">刷新</el-button>
         </template>
         <template #cell-level="{ row }">
           <el-tag :type="NOTICE_LEVELS[(row as NoticeDto).level]?.type || 'info'" size="small">

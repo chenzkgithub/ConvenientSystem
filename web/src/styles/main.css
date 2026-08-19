@@ -679,6 +679,7 @@ body {
 }
 
 .layout-main {
+  position: relative;
   background: var(--page-bg);
   padding: 0;
   overflow: auto;
@@ -1392,7 +1393,9 @@ body {
   font-weight: 600;
 }
 
-/* ---- 路由切换淡入淡出 ---- */
+/* ---- 路由切换交叉淡入淡出 ----
+   不用 mode="out-in"，新旧组件同时存在期间旧组件用 absolute 脱离文档流，
+   新组件占满空间，避免两者堆叠导致滚动条跳动。 */
 .route-fade-enter-active,
 .route-fade-leave-active {
   transition: opacity 0.12s ease;
@@ -1400,6 +1403,14 @@ body {
 .route-fade-enter-from,
 .route-fade-leave-to {
   opacity: 0;
+}
+.route-fade-leave-active {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: auto;
 }
 
 /* ============ 暗黑模式：布局 & 组件深度适配 ============ */

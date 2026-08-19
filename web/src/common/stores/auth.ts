@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getLoginDefault, verifyLogin } from '@/common/api/login'
+import { resetUnauthorizedHandled } from '@/api/request'
+import { getUIPrefs } from '@/common/api/userConfig'
 import { useTabsStore } from '@/common/stores/tabs'
 import { useMenuStore } from '@/common/stores/menu'
 import router from '@/router'
@@ -50,6 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
   const menuCodes = ref<string[]>(persisted.menuCodes) // 可见菜单权限码（仅前端参考）
   const sessionTimeoutMinutes = ref<number>(persisted.sessionTimeoutMinutes) // 会话超时时间（分钟），0 表示不自动退出
   const disabledReason = ref<'account_disabled' | 'api_401' | null>(null) // 登出原因：账号停用 / API 返回 401 / 正常登出(null)
+  const uiPrefs = ref<Record<string, string>>({}) // UI 偏好设置（登录后从数据库加载）
 
   /** 将当前登录态写入 localStorage（永不过期，仅退出登录时清除） */
   function persist() {
@@ -68,6 +71,15 @@ export const useAuthStore = defineStore('auth', () => {
       )
     } catch {
       /* 忽略写入失败 */
+    }
+  }
+
+  /** 从数据库加载 UI 偏好设置（登录成功后调用） */
+  async function loadUIPrefs() {
+    try {
+      uiPrefs.value = await getUIPrefs()
+    } catch {
+      /* 加载失败时保持空字典，各组件回退 localStorage */
     }
   }
 
@@ -101,6 +113,8 @@ export const useAuthStore = defineStore('auth', () => {
     const previousAccount = currentAccount.value
     loggedIn.value = !!data.ok
     if (loggedIn.value) {
+      // 重置 401 去重标志：退出后重新登录时，确保新会话的 401 能正常触发退出流程
+      resetUnauthorizedHandled()
       currentAccount.value = account
       displayName.value = data.displayName || ''
       avatar.value = data.avatar || ''
@@ -111,7 +125,11 @@ export const useAuthStore = defineStore('auth', () => {
       if (previousAccount && previousAccount !== account) {
         clearUserCaches()
       }
+      // 先持久化到 localStorage，确保后续 API 请求（loadUIPrefs 等）能读到新 token
+      persist()
       useTabsStore().reset()
+      // 登录成功后加载服务器 UI 偏好
+      await loadUIPrefs()
       // 登录成功后重置路由到首页，避免仍停留在前账号打开的无权限页面
       if (router.currentRoute.value.path !== '/') {
         void router.replace('/')
@@ -141,6 +159,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = ''
     menuCodes.value = []
     sessionTimeoutMinutes.value = 0
+    uiPrefs.value = {} // 清除 UI 偏好
     disabledReason.value = reason ?? null
     clearUserCaches()
     // 重置菜单和标签页的加载状态，下次登录时会重新加载
@@ -152,5 +171,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { loggedIn, defaultAccount, defaultPassword, currentAccount, displayName, avatar, token, menuCodes, sessionTimeoutMinutes, disabledReason, loadDefault, login, logout, setDisplayName, setAvatar }
+  return { loggedIn, defaultAccount, defaultPassword, currentAccount, displayName, avatar, token, menuCodes, sessionTimeoutMinutes, disabledReason, uiPrefs, loadDefault, login, logout, setDisplayName, setAvatar, loadUIPrefs }
 })

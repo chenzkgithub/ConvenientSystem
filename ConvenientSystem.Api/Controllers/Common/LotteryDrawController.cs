@@ -31,8 +31,10 @@ namespace ConvenientSystem.Api.Controllers.Common
         public ActionResult<PagedResult<LotteryDrawDto>> List(
             [FromQuery] string type = LotteryTypes.DLT,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_drawService.GetDraws(type, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_drawService.GetDraws(type, page, size, sortField, sortOrder));
 
         /// <summary>批量导入开奖记录</summary>
         [HttpPost]

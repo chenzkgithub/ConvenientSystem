@@ -9,7 +9,7 @@ namespace ConvenientSystem.Service.Common
     {
         /// <summary>分页查询审计日志（按时间倒序）。</summary>
         PagedResult<AuditLogDto> GetList(string? account, string? module, bool? success,
-            DateTime? startTime, DateTime? endTime, int page, int size);
+            DateTime? startTime, DateTime? endTime, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>按日审计操作趋势（默认近 N 天，带数据权限过滤）。</summary>
         SendTrendDto GetTrend(int days);

@@ -85,7 +85,7 @@ namespace ConvenientSystem.Shared.Jobs
                     try
                     {
                         // since=今天：翻到早于今天的期即停，等效于只补拉最新开奖
-                        await _crawlJob.CrawlAsync(t, 900, false, today, ct);
+                        await _crawlJob.CrawlAsync(t, 900, false, today, ct: ct);
                     }
                     catch (Exception ex)
                     {

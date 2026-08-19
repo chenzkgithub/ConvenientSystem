@@ -28,8 +28,10 @@ namespace ConvenientSystem.Api.Controllers.Common
             [FromQuery] DateTime? startTime,
             [FromQuery] DateTime? endTime,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_auditLogService.GetList(account, module, success, startTime, endTime, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_auditLogService.GetList(account, module, success, startTime, endTime, page, size, sortField, sortOrder));
 
         /// <summary>按日审计操作趋势（默认近 7 天）</summary>
         [HttpGet]

@@ -105,6 +105,11 @@ namespace ConvenientSystem.Api
                 ?? ReadJwtKeyFromDb(configuration)
                 ?? "ConvenientSystem-Default-Jwt-Key-please-change-in-production";
 
+            // 注册 JWT 密钥持有者（单例）：LoginService（签发方）与 TokenValidationParameters（验证方）
+            // 共用同一实例，避免启动时 DB 不可用导致 ReadJwtKeyFromDb 回退默认值、
+            // 而 LoginService 从 DB 读到不同值时密钥不一致——不一致会令签发的 token 无法通过验证。
+            services.AddSingleton(new JwtKeyHolder(jwtKey));
+
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 .AddJwtBearer(options =>
                 {
@@ -274,6 +279,9 @@ namespace ConvenientSystem.Api
 
             // 代码命名转换（百度翻译 API 优先，MyMemory 回退，前端拼音兜底）
             services.AddSingleton<ICodeNamingService, CodeNamingService>();
+
+            // 雪花ID生成器（线程安全单例，开发工具集调用）
+            services.AddSingleton<ISnowflakeIdService, SnowflakeIdService>();
 
             // 网站/API 监控
             services.AddSingleton<IWebMonitorService, WebMonitorService>();

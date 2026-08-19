@@ -28,8 +28,8 @@ namespace ConvenientSystem.Api.Controllers.Email
 
         /// <summary>分页查询发送日志</summary>
         [HttpGet]
-        public ActionResult<PagedResult<EmailLogDto>> Logs(int? taskId, int page = 1, int size = 20)
-            => Ok(_taskService.GetLogs(taskId, page, size));
+        public ActionResult<PagedResult<EmailLogDto>> Logs(int? taskId, int page = 1, int size = 20, string? sortField = null, string? sortOrder = null)
+            => Ok(_taskService.GetLogs(taskId, page, size, sortField, sortOrder));
 
         /// <summary>按日发送趋势（days：往前天数，含今天）</summary>
         [HttpGet]

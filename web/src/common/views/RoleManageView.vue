@@ -19,13 +19,13 @@ const loading = ref(false)
 const list = ref<RoleDto[]>([])
 
 const columns: DataTableColumn<RoleDto>[] = [
-  { prop: 'name', label: '角色名称', minWidth: 140 },
-  { prop: 'code', label: '编码', width: 140 },
-  { prop: 'description', label: '描述', minWidth: 180 },
-  { prop: 'enabled', label: '启用', width: 100, custom: true },
-  { prop: 'isAdmin', label: '管理员', width: 90, custom: true },
-  { prop: 'dataScope', label: '数据范围', width: 100, custom: true },
-  { prop: 'createTime', label: '创建时间', width: 170, type: 'date' },
+  { prop: 'name', label: '角色名称', minWidth: 140, sortable: true },
+  { prop: 'code', label: '编码', width: 140, sortable: true },
+  { prop: 'description', label: '描述', minWidth: 180, sortable: true },
+  { prop: 'enabled', label: '启用', width: 100, custom: true, sortable: true },
+  { prop: 'isAdmin', label: '管理员', width: 90, custom: true, sortable: true },
+  { prop: 'dataScope', label: '数据范围', width: 100, custom: true, sortable: true },
+  { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
 ]
 
 // 菜单树（供分配可见菜单）
@@ -164,6 +164,10 @@ onMounted(loadData)
   <div class="role-page">
     <!-- 角色列表（提示文字与新增按钮封装进列表组件插槽，与表格统一对齐） -->
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="role-manage"
+      @load="loadData"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -171,7 +175,6 @@ onMounted(loadData)
       :show-pagination="false"
       :actions-width="150"
       empty-text="暂无角色"
-      @load="loadData"
     >
       <template #filters>
         <span class="hint">角色决定用户可见的菜单与可访问的接口；管理员标记仅影响数据范围，菜单权限统一按配置。</span>

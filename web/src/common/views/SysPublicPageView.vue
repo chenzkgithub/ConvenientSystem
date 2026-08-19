@@ -52,12 +52,12 @@ async function copyUrl(url: string) {
 }
 
 const columns: DataTableColumn<SysPublicPageItem>[] = [
-  { prop: 'title', label: '名称', minWidth: 120 },
-  { prop: 'pageKey', label: '路由路径', width: 200 },
-  { prop: 'component', label: '组件', minWidth: 200, showOverflowTooltip: true },
-  { prop: 'enabled', label: '启用', width: 80, custom: true },
-  { prop: 'sortOrder', label: '排序', width: 70, align: 'center' },
-  { prop: 'pageKey', label: '访问链接', minWidth: 280, custom: true },
+  { prop: 'title', label: '名称', minWidth: 120, sortable: true },
+  { prop: 'pageKey', label: '路由路径', width: 200, sortable: true },
+  { prop: 'component', label: '组件', minWidth: 200, showOverflowTooltip: true, sortable: true },
+  { prop: 'enabled', label: '启用', width: 80, custom: true, sortable: true },
+  { prop: 'sortOrder', label: '排序', width: 70, align: 'center', sortable: true },
+  { prop: 'pageKey', label: '访问链接', minWidth: 280, custom: true, sortable: true },
   { prop: 'actions', label: '操作', width: 140, fixed: 'right', custom: true },
 ]
 
@@ -180,6 +180,9 @@ onMounted(loadData)
   <div class="public-page-container">
     <!-- 表格 -->
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="sys-public-page"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -189,7 +192,6 @@ onMounted(loadData)
       <!-- 工具栏按钮 -->
       <template #toolbar>
         <el-button v-if="$has('sys-public-page:create')" type="primary" @click="openCreate">新增公开页面</el-button>
-        <el-button @click="loadData">刷新</el-button>
       </template>
       <!-- 启用状态 -->
       <template #cell-enabled="{ row }">

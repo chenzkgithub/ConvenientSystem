@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listUsers,
@@ -28,16 +28,28 @@ const loading = ref(false)
 const list = ref<UserManageDto[]>([])
 const roles = ref<RoleDto[]>([])
 
+// 状态筛选
+const filterStatus = ref<'' | 'enabled' | 'disabled' | 'deleted'>('')
+const filteredList = computed(() => {
+  if (!filterStatus.value) return list.value
+  switch (filterStatus.value) {
+    case 'enabled': return list.value.filter(u => !u.isDeleted && u.enabled)
+    case 'disabled': return list.value.filter(u => !u.isDeleted && !u.enabled)
+    case 'deleted': return list.value.filter(u => u.isDeleted)
+    default: return list.value
+  }
+})
+
 const columns: DataTableColumn<UserManageDto>[] = [
   { prop: 'avatar', label: '头像', width: 70, align: 'center', custom: true },
-  { prop: 'account', label: '账号', width: 130 },
-  { prop: 'displayName', label: '显示名称', minWidth: 110 },
-  { prop: 'phone', label: '手机号', width: 120 },
-  { prop: 'email', label: '邮箱', minWidth: 160 },
-  { prop: 'roleNames', label: '角色', minWidth: 160, custom: true },
-  { prop: 'enabled', label: '启用', width: 90, custom: true },
-  { prop: 'createTime', label: '创建时间', width: 170, type: 'date' },
-  { prop: 'remark', label: '备注', minWidth: 140 },
+  { prop: 'account', label: '账号', width: 130, sortable: true },
+  { prop: 'displayName', label: '显示名称', minWidth: 110, sortable: true },
+  { prop: 'phone', label: '手机号', width: 120, sortable: true },
+  { prop: 'email', label: '邮箱', minWidth: 160, sortable: true },
+  { prop: 'roleNames', label: '角色', minWidth: 160, custom: true, sortable: true },
+  { prop: 'enabled', label: '状态', width: 90, custom: true, sortable: true },
+  { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
+  { prop: 'remark', label: '备注', minWidth: 140, sortable: true },
 ]
 
 async function loadData() {
@@ -59,6 +71,10 @@ async function loadData() {
 
 function isBuiltInAdmin(row: any) {
   return (row as UserManageDto).account === ADMIN_ACCOUNT
+}
+
+function isDeletedUser(row: any) {
+  return (row as UserManageDto).isDeleted === true
 }
 
 // ========== 编辑弹窗 ==========
@@ -195,16 +211,24 @@ onMounted(loadData)
   <div class="user-page">
     <!-- 用户列表（提示文字与新增按钮封装进列表组件插槽，与表格统一对齐） -->
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="user-manage"
+      @load="loadData"
       :columns="columns"
-      :data="list"
+      :data="filteredList"
       :loading="loading"
       :total="list.length"
       :show-pagination="false"
       :actions-width="260"
       empty-text="暂无用户"
-      @load="loadData"
     >
       <template #filters>
+        <el-select v-model="filterStatus" placeholder="全部状态" clearable style="width: 120px" @clear="filterStatus = ''">
+          <el-option label="启用" value="enabled" />
+          <el-option label="停用" value="disabled" />
+          <el-option label="已删除" value="deleted" />
+        </el-select>
         <span class="hint">用户通过所属角色获得可见菜单与接口权限；内置管理员 admin 不可停用或删除。</span>
       </template>
       <template #toolbar>
@@ -221,15 +245,19 @@ onMounted(loadData)
         <span v-if="!row.roleNames || !row.roleNames.length" class="muted">未分配</span>
       </template>
       <template #cell-enabled="{ row }">
-        <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+        <el-tag v-if="row.isDeleted" type="danger" size="small" effect="dark">已删除</el-tag>
+        <el-tag v-else :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
       </template>
       <template #actions="{ row }">
-        <el-button v-if="$has('user-manage:edit')" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-        <el-button v-if="$has('user-manage:reset-pwd')" link type="primary" size="small" @click="onResetPassword(row)">重置密码</el-button>
-        <el-button link type="warning" size="small" :disabled="isBuiltInAdmin(row)" @click="onToggleEnabled(row)">
-          {{ row.enabled ? '停用' : '启用' }}
-        </el-button>
-        <el-button v-if="$has('user-manage:delete')" link type="danger" size="small" :disabled="isBuiltInAdmin(row)" @click="onDelete(row)">删除</el-button>
+        <template v-if="!row.isDeleted">
+          <el-button v-if="$has('user-manage:edit')" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="$has('user-manage:reset-pwd')" link type="primary" size="small" @click="onResetPassword(row)">重置密码</el-button>
+          <el-button link type="warning" size="small" :disabled="isBuiltInAdmin(row)" @click="onToggleEnabled(row)">
+            {{ row.enabled ? '停用' : '启用' }}
+          </el-button>
+          <el-button v-if="$has('user-manage:delete')" link type="danger" size="small" :disabled="isBuiltInAdmin(row)" @click="onDelete(row)">删除</el-button>
+        </template>
+        <span v-else class="muted">已删除，不可操作</span>
       </template>
     </CommonDataTable>
 

@@ -49,6 +49,7 @@ namespace ConvenientSystem.Service.Common
                     Email = u.Email,
                     Remark = u.Remark,
                     Enabled = u.Enabled,
+                    IsDeleted = u.IsDeleted,
                     CreateTime = u.CreateTime,
                     RoleIds = myRoleIds,
                     RoleNames = myRoleIds.Where(roleById.ContainsKey).Select(id => roleById[id]).ToList(),
@@ -114,6 +115,8 @@ namespace ConvenientSystem.Service.Common
 
             var user = _configDb.Select<SysUserEntity>().Where(u => u.Id == dto.Id).First()
                 ?? throw new NotFoundException("用户不存在");
+            if (user.IsDeleted)
+                throw new BadRequestException("该账号已被删除，无法编辑");
 
             // 账号变更需保证唯一。
             if (!string.Equals(user.Account, account, StringComparison.Ordinal)
@@ -151,6 +154,8 @@ namespace ConvenientSystem.Service.Common
         {
             var user = _configDb.Select<SysUserEntity>().Where(u => u.Id == dto.Id).First()
                 ?? throw new NotFoundException("用户不存在");
+            if (user.IsDeleted)
+                throw new BadRequestException("该账号已被删除，无法操作");
             if (!dto.Enabled && string.Equals(user.Account, BuiltInAdminAccount, StringComparison.OrdinalIgnoreCase))
                 throw new BadRequestException("内置管理员账号不可停用");
 
@@ -162,6 +167,11 @@ namespace ConvenientSystem.Service.Common
 
         public void ResetPassword(ResetPasswordDto dto)
         {
+            var user = _configDb.Select<SysUserEntity>().Where(u => u.Id == dto.Id).First()
+                ?? throw new NotFoundException("用户不存在");
+            if (user.IsDeleted)
+                throw new BadRequestException("该账号已被删除，无法重置密码");
+
             // 账户管理允许重置登录密码为空
             var newPassword = dto.Password ?? string.Empty;
             var affected = _configDb.Update<SysUserEntity>()
@@ -177,13 +187,15 @@ namespace ConvenientSystem.Service.Common
                 ?? throw new NotFoundException("用户不存在");
             if (string.Equals(user.Account, BuiltInAdminAccount, StringComparison.OrdinalIgnoreCase))
                 throw new BadRequestException("内置管理员账号不可删除");
+            if (user.IsDeleted)
+                return; // 已软删除，幂等处理
 
-            _configDb.Transaction(() =>
-            {
-                _configDb.Delete<SysUserRoleEntity>().Where(ur => ur.UserId == id).ExecuteAffrows();
-                _configDb.Delete<SysUserEntity>().Where(u => u.Id == id).ExecuteAffrows();
-            });
-            _logger.LogInformation("删除用户 Id={Id}", id);
+            _configDb.Update<SysUserEntity>()
+                .Set(u => u.IsDeleted, true)
+                .Set(u => u.Enabled, false)
+                .Where(u => u.Id == id)
+                .ExecuteAffrows();
+            _logger.LogInformation("软删除用户 Id={Id} Account={Account}", id, user.Account);
         }
 
         /// <summary>全量替换用户的角色关联（须在事务内调用）。</summary>

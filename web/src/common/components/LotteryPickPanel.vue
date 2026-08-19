@@ -120,23 +120,27 @@ const savedColumns = computed<DataTableColumn<LotteryRecord>[]>(() => {
     {
       prop: 'issueNumber', label: '期号', width: 90, align: 'center',
       formatter: (row) => row.issueNumber ?? '—',
+      sortable: true,
     },
     {
       prop: 'drawDate', label: '开奖日期', width: 110, align: 'center', className: 'cell-nowrap',
       formatter: (row) => row.drawDate ? formatDate(row.drawDate).slice(0, 10) : '—',
+      sortable: true,
     },
     {
       prop: 'createdAt', label: '选号时间', width: 170, className: 'cell-nowrap',
       formatter: (row) => formatDate(row.createdAt),
+      sortable: true,
     },
     {
       prop: 'front', label: frontLabel.value,
       minWidth: positional.value ? 150 : 180,
       custom: true,
+      sortable: true,
     },
   ]
   if (backZones.value.length > 0) {
-    cols.push({ prop: 'back', label: backLabel.value, width: 80, custom: true })
+    cols.push({ prop: 'back', label: backLabel.value, width: 80, custom: true, sortable: true })
   }
   return cols
 })
@@ -444,6 +448,10 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
         <!-- 左下角：数据库保存记录（分页表格） -->
         <div class="saved-panel">
           <CommonDataTable
+            show-refresh
+            show-column-toggle
+            table-key="lottery-pick-saved"
+            @load="loadSaved"
             v-model:page="savedPage"
             v-model:pageSize="savedSize"
             :columns="savedColumns"
@@ -455,7 +463,6 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
             :teleported="!isFullscreen"
             compact
             pagination-layout="total, sizes, prev, pager, next"
-            @load="loadSaved"
           >
             <template #filters>
               <el-date-picker
@@ -473,7 +480,6 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
             <template #toolbar>
               <el-button type="primary" size="small" @click="querySaved">查询</el-button>
               <el-button v-if="filterDate" type="danger" size="small" plain @click="removeFilteredDate">删除该日</el-button>
-              <el-button size="small" @click="loadSaved">刷新</el-button>
             </template>
 
             <template #cell-front="{ row }">

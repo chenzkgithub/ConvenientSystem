@@ -26,7 +26,7 @@ namespace ConvenientSystem.Service.Common
         private Guid RequireUserId()
             => _currentUser.UserId ?? throw new UnauthorizedAccessException("未登录");
 
-        public PagedResult<LotteryBetDto> GetRecords(string type, string? date, int page, int size)
+        public PagedResult<LotteryBetDto> GetRecords(string type, string? date, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             var userId = RequireUserId();
             var t = LotteryTypes.Normalize(type);
@@ -43,7 +43,8 @@ namespace ConvenientSystem.Service.Common
             }
 
             var total = query.Count();
-            var list = query.OrderByDescending(r => r.CreatedAt)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(r => r.CreatedAt) : query.OrderByDynamic(sortField, sortOrder);
+            var list = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList()
                 .Select(MapToDto)

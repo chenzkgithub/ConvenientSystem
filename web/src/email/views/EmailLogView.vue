@@ -10,17 +10,19 @@ const logs = ref<EmailLogDto[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
+const sortField = ref('')
+const sortOrder = ref<'ascending' | 'descending' | null>(null)
 
 const columns: DataTableColumn<EmailLogDto>[] = [
-  { prop: 'taskName', label: '任务名称', minWidth: 120 },
-  { prop: 'subject', label: '邮件主题', minWidth: 150 },
-  { prop: 'recipients', label: '收件人', minWidth: 140 },
-  { prop: 'status', label: '状态', width: 80, align: 'center', custom: true },
-  { prop: 'content', label: '邮件内容', minWidth: 180 },
-  { prop: 'errorMessage', label: '错误信息', minWidth: 150, custom: true },
-  { prop: 'costMs', label: '耗时', width: 80, align: 'center', custom: true },
-  { prop: 'createTime', label: '发送时间', width: 160, type: 'date' },
-  { prop: 'createdByName', label: '创建人', width: 150, formatter: (row) => formatCreator(row) },
+  { prop: 'taskName', label: '任务名称', minWidth: 120, sortable: 'custom' },
+  { prop: 'subject', label: '邮件主题', minWidth: 150, sortable: 'custom' },
+  { prop: 'recipients', label: '收件人', minWidth: 140, sortable: 'custom' },
+  { prop: 'status', label: '状态', width: 80, align: 'center', custom: true, sortable: 'custom' },
+  { prop: 'content', label: '邮件内容', minWidth: 180, sortable: 'custom' },
+  { prop: 'errorMessage', label: '错误信息', minWidth: 150, custom: true, sortable: 'custom' },
+  { prop: 'costMs', label: '耗时', width: 80, align: 'center', custom: true, sortable: 'custom' },
+  { prop: 'createTime', label: '发送时间', width: 160, type: 'date', sortable: 'custom' },
+  { prop: 'createdByName', label: '创建人', width: 150, formatter: (row) => formatCreator(row), sortable: 'custom' },
 ]
 
 // ========== 筛选 ==========
@@ -44,6 +46,10 @@ async function loadData() {
       size: pageSize.value,
     }
     if (filterTaskId.value != null) params.taskId = filterTaskId.value
+    if (sortField.value) {
+      params.sortField = sortField.value
+      params.sortOrder = sortOrder.value === 'ascending' ? 'asc' : 'desc'
+    }
     const res = await listEmailLogs(params)
     logs.value = res.list
     total.value = res.total
@@ -90,11 +96,23 @@ onMounted(() => {
   loadTaskOptions()
   loadData()
 })
+
+function onSortChange(info: { prop: string | null; order: 'ascending' | 'descending' | null }) {
+  sortField.value = info.prop ?? ''
+  sortOrder.value = info.order
+  currentPage.value = 1
+  loadData()
+}
 </script>
 
 <template>
   <div class="email-log-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="email-log"
+      @load="loadData"
+      @sort-change="onSortChange"
       :columns="columns"
       :data="filteredLogs"
       :loading="loading"
@@ -103,7 +121,6 @@ onMounted(() => {
       :page-size="pageSize"
       empty-text="暂无发送日志"
       searchable
-      @load="loadData"
       @search="handleFilter"
       @reset="handleReset"
     >
@@ -124,9 +141,6 @@ onMounted(() => {
           value-format="YYYY-MM-DD"
           style="width: 260px"
         />
-      </template>
-      <template #toolbar>
-        <el-button @click="loadData">刷新</el-button>
       </template>
 
       <template #cell-status="{ row }">

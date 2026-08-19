@@ -11,7 +11,7 @@ namespace ConvenientSystem.Service.Common
         LotteryConfigDto GetConfig(string type);
 
         /// <summary>分页查询开奖记录（按期号倒序）</summary>
-        PagedResult<LotteryDrawDto> GetDraws(string type, int page, int size);
+        PagedResult<LotteryDrawDto> GetDraws(string type, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>批量导入开奖记录</summary>
         int ImportDraws(string type, List<LotteryDrawItem> draws);

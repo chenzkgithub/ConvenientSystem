@@ -633,11 +633,13 @@ public sealed class BrowserForm : Form, ILockable
         try
         {
             var child = new BrowserForm();
+            // 先显示窗口，确保在前台（await 之后 Show 可能被前台锁阻止）
+            child.SizeToWorkingArea();
+            child.Show();
+            child.Activate();
             await child.InitializeAsync(env);
             e.NewWindow = child.Core;
             e.Handled = true;
-            child.Show();
-            child.SizeToWorkingArea();
         }
         catch (Exception ex)
         {

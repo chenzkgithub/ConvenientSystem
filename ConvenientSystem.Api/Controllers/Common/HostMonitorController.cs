@@ -44,8 +44,10 @@ namespace ConvenientSystem.Api.Controllers.Common
         public ActionResult<PagedResult<HostMonitorLogDto>> Logs(
             [FromQuery] int targetId,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_hostMonitorService.GetLogs(targetId, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_hostMonitorService.GetLogs(targetId, page, size, sortField, sortOrder));
 
         /// <summary>立即对指定目标执行一次探测，返回本次探测结果</summary>
         [HttpPost]

@@ -25,8 +25,10 @@ namespace ConvenientSystem.Api.Controllers.Common
             [FromQuery] string type = LotteryTypes.DLT,
             [FromQuery] string? date = null,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_lotteryService.GetRecords(type, date, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_lotteryService.GetRecords(type, date, page, size, sortField, sortOrder));
 
         /// <summary>批量保存选号记录（彩种代码在请求体 Type 字段）</summary>
         [HttpPost]

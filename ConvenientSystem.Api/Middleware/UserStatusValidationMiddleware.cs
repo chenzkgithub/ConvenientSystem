@@ -61,12 +61,13 @@ namespace ConvenientSystem.Api.Middleware
                                         .Where(u => u.Id == userId)
                                         .FirstAsync();
 
-                                    // 用户不存在或被停用 → 返回 401，强制重新登录
-                                    if (user == null || !user.Enabled)
+                                    // 用户不存在、被停用或已被删除 → 返回 401，强制重新登录
+                                    if (user == null || !user.Enabled || user.IsDeleted)
                                     {
                                         var account = context.User.FindFirst("account")?.Value ?? "Unknown";
-                                        _logger.LogWarning("用户已停用或不存在，拒绝访问。UserId={UserId}, Account={Account}, Path={Path}",
-                                            userId, account, context.Request.Path);
+                                        var reason = user?.IsDeleted == true ? "已删除" : "已停用或不存在";
+                                        _logger.LogWarning("用户{Reason}，拒绝访问。UserId={UserId}, Account={Account}, Path={Path}",
+                                            reason, userId, account, context.Request.Path);
                                     
                                         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                                         await context.Response.WriteAsJsonAsync(new

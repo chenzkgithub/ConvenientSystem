@@ -14,7 +14,7 @@ const filters = reactive({
   dateRange: null as [string, string] | null,
 })
 
-const { loading, list, total, page, size, load, search, reset } = useDataTable<ErrorLogDto, typeof filters>(
+const { loading, list, total, page, size, load, search, reset, onSortChange } = useDataTable<ErrorLogDto, typeof filters>(
   listErrorLogs,
   {
     filters,
@@ -38,12 +38,14 @@ const columns: DataTableColumn<ErrorLogDto>[] = [
     label: '时间',
     width: 170,
     type: 'date',
+    sortable: 'custom',
   },
   {
     prop: 'account',
     label: '账号',
     width: 120,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'method',
@@ -51,6 +53,7 @@ const columns: DataTableColumn<ErrorLogDto>[] = [
     width: 80,
     type: 'tag',
     tagType: () => 'info',
+    sortable: 'custom',
   },
   {
     prop: 'statusCode',
@@ -58,30 +61,35 @@ const columns: DataTableColumn<ErrorLogDto>[] = [
     width: 90,
     type: 'tag',
     tagType: () => 'danger',
+    sortable: 'custom',
   },
   {
     prop: 'exceptionType',
     label: '异常类型',
     minWidth: 200,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'errorMessage',
     label: '错误消息',
     minWidth: 300,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'path',
     label: '路径',
     minWidth: 200,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
   {
     prop: 'ip',
     label: 'IP',
     width: 130,
     showOverflowTooltip: true,
+    sortable: 'custom',
   },
 ]
 
@@ -109,6 +117,11 @@ async function handleClear() {
 <template>
   <div class="error-log-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="error-log"
+      @load="load"
+      @sort-change="onSortChange"
       v-model:page="page"
       v-model:pageSize="size"
       :columns="columns"
@@ -118,7 +131,6 @@ async function handleClear() {
       :actions-width="80"
       searchable
       pagination-layout="prev, pager, next"
-      @load="load"
       @search="search"
       @reset="reset"
       @row-dblclick="(row: ErrorLogDto) => showDetail(row)"

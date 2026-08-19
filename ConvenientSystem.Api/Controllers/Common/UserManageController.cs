@@ -49,10 +49,10 @@ namespace ConvenientSystem.Api.Controllers.Common
             return Ok();
         }
 
-        /// <summary>删除用户。</summary>
+        /// <summary>删除用户（软删除）。</summary>
         [HttpPost]
         [PermissionAuthorize("user-manage:delete")]
-        public IActionResult Delete([FromBody] Guid id)
+        public IActionResult Delete([FromQuery] Guid id)
         {
             _service.Delete(id);
             return Ok();

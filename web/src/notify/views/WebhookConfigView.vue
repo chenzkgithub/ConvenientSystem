@@ -18,14 +18,14 @@ const list = ref<WebhookConfigDto[]>([])
 const providerTypes = ref<string[]>(['dingtalk', 'wecom', 'feishu'])
 
 const columns: DataTableColumn<WebhookConfigDto>[] = [
-  { prop: 'name', label: '名称', minWidth: 140 },
-  { prop: 'providerType', label: '类型', width: 110, custom: true },
-  { prop: 'mode', label: '模式', width: 130, custom: true },
-  { prop: 'recipientIds', label: '接收者', minWidth: 180, custom: true },
-  { prop: 'isDefault', label: '默认', width: 80, custom: true },
-  { prop: 'enabled', label: '启用', width: 90, custom: true },
-  { prop: 'createTime', label: '创建时间', width: 170, type: 'date' },
-  { prop: 'updateTime', label: '更新时间', width: 170, type: 'date' },
+  { prop: 'name', label: '名称', minWidth: 140, sortable: true },
+  { prop: 'providerType', label: '类型', width: 110, custom: true, sortable: true },
+  { prop: 'mode', label: '模式', width: 130, custom: true, sortable: true },
+  { prop: 'recipientIds', label: '接收者', minWidth: 180, custom: true, sortable: true },
+  { prop: 'isDefault', label: '默认', width: 80, custom: true, sortable: true },
+  { prop: 'enabled', label: '启用', width: 90, custom: true, sortable: true },
+  { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
+  { prop: 'updateTime', label: '更新时间', width: 170, type: 'date', sortable: true },
 ]
 
 function providerLabel(t: string) {
@@ -164,6 +164,9 @@ onMounted(loadData)
 <template>
   <div class="webhook-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="webhook-config"
       :columns="columns"
       :data="list"
       :loading="loading"

@@ -20,13 +20,13 @@ const providerTypes = ref<string[]>(['aliyun', 'ihuyi'])
 const templates = ref<SmsTemplateDto[]>([])
 
 const columns: DataTableColumn<SmsProviderConfigDto>[] = [
-  { prop: 'name', label: '名称', minWidth: 140 },
-  { prop: 'providerType', label: '类型', width: 100, custom: true },
-  { prop: 'defaultSignature', label: '签名', width: 100 },
-  { prop: 'templateName', label: '关联模板', minWidth: 140 },
-  { prop: 'isDefault', label: '默认', width: 80, custom: true },
-  { prop: 'enabled', label: '启用', width: 80, custom: true },
-  { prop: 'createTime', label: '创建时间', width: 170, type: 'date' },
+  { prop: 'name', label: '名称', minWidth: 140, sortable: true },
+  { prop: 'providerType', label: '类型', width: 100, custom: true, sortable: true },
+  { prop: 'defaultSignature', label: '签名', width: 100, sortable: true },
+  { prop: 'templateName', label: '关联模板', minWidth: 140, sortable: true },
+  { prop: 'isDefault', label: '默认', width: 80, custom: true, sortable: true },
+  { prop: 'enabled', label: '启用', width: 80, custom: true, sortable: true },
+  { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
 ]
 
 async function loadData() {
@@ -151,6 +151,10 @@ onMounted(loadData)
 <template>
   <div class="sms-config-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="sms-config"
+      @load="loadData"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -158,7 +162,6 @@ onMounted(loadData)
       :show-pagination="false"
       :actions-width="160"
       empty-text="暂无短信配置"
-      @load="loadData"
     >
       <template #filters>
         <span class="hint">配置短信服务商凭证，标记为默认的配置用于系统通知联动推送。</span>

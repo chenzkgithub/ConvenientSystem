@@ -23,19 +23,19 @@ const filters = reactive({
   keyword: '',
 })
 
-const { loading, list, total, load, search, reset } = useDataTable<SmsTemplateDto, typeof filters>(
+const { loading, list, total, load, search, reset, onSortChange } = useDataTable<SmsTemplateDto, typeof filters>(
   listTemplates,
   { filters, paged: false }
 )
 
 const columns: DataTableColumn<SmsTemplateDto>[] = [
-  { prop: 'name', label: '模板名称', minWidth: 160 },
-  { prop: 'category', label: '分类', width: 100 },
-  { prop: 'signature', label: '签名', width: 80 },
-  { prop: 'enabled', label: '状态', width: 80, custom: true },
-  { prop: 'content', label: '模板内容', minWidth: 260 },
-  { prop: 'createTime', label: '创建时间', width: 170, type: 'date' },
-  { prop: 'creatorName', label: '创建人', width: 150, formatter: (row) => formatCreator(row) },
+  { prop: 'name', label: '模板名称', minWidth: 160, sortable: true },
+  { prop: 'category', label: '分类', width: 100, sortable: true },
+  { prop: 'signature', label: '签名', width: 80, sortable: true },
+  { prop: 'enabled', label: '状态', width: 80, custom: true, sortable: true },
+  { prop: 'content', label: '模板内容', minWidth: 260, sortable: true },
+  { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
+  { prop: 'creatorName', label: '创建人', width: 150, formatter: (row) => formatCreator(row), sortable: true },
 ]
 
 // ========== 新增/编辑弹层 ==========
@@ -119,6 +119,11 @@ async function openPreview(row: SmsTemplateDto) {
 <template>
   <div class="sms-template-page">
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="sms-template"
+      @load="load"
+      @sort-change="onSortChange"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -127,7 +132,6 @@ async function openPreview(row: SmsTemplateDto) {
       :actions-width="240"
       empty-text="暂无模板数据"
       searchable
-      @load="load"
       @search="search"
       @reset="reset"
     >

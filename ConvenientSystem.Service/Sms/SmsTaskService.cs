@@ -29,7 +29,7 @@ namespace ConvenientSystem.Service.Sms
             _currentUser = currentUser;
         }
 
-        public PagedResult<SmsTaskDto> GetList(byte? status, int page, int size)
+        public PagedResult<SmsTaskDto> GetList(byte? status, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             var query = _fsql.Select<SmsTaskEntity>();
             if (_currentUser.DataScope != DataScope.All && _currentUser.UserId.HasValue)
@@ -37,7 +37,8 @@ namespace ConvenientSystem.Service.Sms
             if (status.HasValue) query = query.Where(t => t.Status == status.Value);
 
             var total = query.Count();
-            var tasks = query.OrderByDescending(t => t.CreateTime)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(t => t.CreateTime) : query.OrderByDynamic(sortField, sortOrder);
+            var tasks = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList();
             // 创建人账号与姓名关联 SysUser 查询

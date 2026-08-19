@@ -117,5 +117,152 @@
 - **选号记录**：必须包含期号与开奖日期字段
 - **开奖结果邮件**：必须使用独立定时汇总任务触发
 - **邮件 HTML 表格**：单元格 `text-align:center` 必须显式声明（邮件客户端继承失效）
-- **外部页面**：访问链接旁必须有"打开"和"复制"图标按钮，只显示图标不显示文字（用 title 属性提供悬浮提示）；新增外部页面时路由路径根据所选组件自动生成（组件名 PascalCase 转 kebab-case，统一加 out- 前缀）
+- **外部页面**：访问链接旁必须有“打开”和“复制”图标按钮，只显示图标不显示文字（用 title 属性提供悬浮提示）；新增外部页面时路由路径根据所选组件自动生成（组件名 PascalCase 转 kebab-case，统一加 out- 前缀）
 - **考勤管理模块**：所有需求排除考勤管理模块及其数据库
+
+---
+
+## 六、经验记忆
+
+> 本节集中存放项目知识、架构约定、技能经验、踩坑教训、技术决策与任务总结。新增记忆追加到对应小节；已沉淀为规范的要点同时见正文相关章节，此处作为记忆索引保留。
+
+### 6.1 项目知识
+
+**项目概述**
+- 定位：一站式内部工具管理平台，覆盖数据查询、定时任务、监控告警、消息通知、彩票分析等业务场景
+- 架构：前后端分离（ASP.NET Core + Vue 3），桌面端通过 WinForms + WebView2 提供原生窗口体验
+- 核心模块：系统管理（用户/角色/权限/菜单/配置）、日志（审计/错误/实时）、运维监控（大盘/定时任务/主机/网站）、开发工具（SQL 查询/命名转换/Python 知识库）、彩票分析（走势/历史/智能推荐）、消息通知（短信/邮件/群机器人）、效率工具（命令面板/快捷键/暗黑模式）
+
+**技术栈**
+- 后端：ASP.NET Core 10（.NET 10），ORM 用 FreeSql（SQL Server），定时任务用 Hangfire 1.8（SqlServer 持久化）
+- 前端：Vue 3 + TypeScript + Vite 6，UI 用 Element Plus 2.9，图表 ECharts 5，代码编辑器 Monaco Editor，状态管理 Pinia
+- 桌面端：WinForms + WebView2
+- 数据库：SQL Server LocalDB（开发）/ SQL Server Express（生产）
+
+**开发环境搭建与启动**
+- 运行环境：.NET 10 SDK、Node.js 18+、SQL Server LocalDB 或 SQL Server 实例
+- 启动步骤：1) 初始化数据库 `sqllocaldb start MSSQLLocalDB` 后 `sqlcmd -S (localdb)\MSSQLLocalDB -E -i db\init.sql`；2) 安装前端依赖 `cd web && npm install`；3) 分别运行 `dev-backend.cmd` 和 `dev-web.cmd`
+- 默认账号：admin / admin
+
+**构建与发布配置**
+- `dev-backend.cmd`：启动后端开发服务（端口 51943）
+- `dev-web.cmd`：启动前端热更新服务（端口 5173，代理到 51943）
+- `publish.cmd`：一键发布（前端构建 → API 打包到 api/ → 桌面端打包到 exe/）
+- `start.cmd`：启动已发布的程序
+- 发布产物：`api/`（单文件自包含）、`exe/`（WinForms + WebView2）
+
+### 6.2 架构约定
+
+**FreeSql 动态排序扩展点**
+- 新增动态排序能力需改三处：1) 新建工具类 `FreeSqlSortExtensions.cs`，提供安全的 `OrderByDynamic<T>` 方法（按实体校验属性名，防 SQL 注入）；2) 各分页服务查询链在分页前调用 `OrderByDynamic`；3) 对应 Controller 接收前端的 `sortField`/`sortOrder` 并传入 Service
+
+**视图管理模块导航菜单位置**
+- 视图管理模块必须排在菜单管理之前，以体现其定义页面及权限点的基础性作用
+
+### 6.3 规范要点（记忆补充）
+
+> 以下要点同时在正文相关章节体现，此处作为记忆索引保留。
+
+**CommonDataTable 操作列必须支持列配置**
+- 操作列（Actions Column）必须在列配置面板中支持显示/隐藏控制，供用户自定义表格列可见性
+
+**弹窗必须使用 CommonDialog**
+- 所有弹窗用 `web/src/common/components/CommonDialog.vue`，禁止直接写 `el-dialog`
+- CommonDialog 内置三个标准头按钮：折叠吸底（Minus）、全屏/还原（FullScreen/Aim）、关闭（Close）；自动提供拖动/拉伸 + close-on-click-modal=false
+- 违规典型表现：用户发现弹窗缺少“那三个按钮”（折叠/全屏/关闭）
+
+**UI 偏好持久化到 UserConfig 表**
+- UI 偏好（侧边栏折叠、标签记忆、导航模式、主题模式）必须存入 UserConfig 数据库表，每次登录从数据库读取，不用 localStorage
+
+**方案 B：页面与按钮权限独立授权模型**
+- 采用独立授权模型：页面访问（菜单导航）与按钮级权限分别授权。授予页面访问不会自动授予其按钮权限，每个按钮权限需单独分配
+
+### 6.4 技能经验
+
+**批量注入 props 到 Vue 组件的标准化流程**
+- 目标：给可复用 Vue 组件的所有实例批量注入相同 props（如 show-refresh、show-column-toggle、table-key），保证一致性
+- 步骤：
+  1. grep 定位所有包含目标组件名的文件（先拿完整使用清单，避免漏实例）
+  2. grep 在每个文件中定位组件标签起始行（精确行定位，避免注入到注释或无关上下文）
+  3. SearchReplace 在各文件起始标签处注入新 props（直接字符串替换，原子性）
+  4. 阶段校验：注入实例数是否等于原始清单数；不一致则扩大搜索范围，捕捉动态导入或别名引用
+- 注意：逐个手改易不一致且漏实例，必须用 grep + SearchReplace；仅按组件名搜不核对起始标签，有注入到注释/错行的风险
+
+### 6.5 踩坑经验
+
+**前端登录流程执行顺序导致 401**
+- 现象：登录后立即被 401 踢出
+- 根因：`login()` 中 `loadUIPrefs()` 在 `persist()` 之前调用，API 用的是 localStorage 里的空 token 而非新 token
+- 修复：把 `persist()` 移到设置 `token.value` 之后立即执行，确保新 token 写入 localStorage 后再发后续已认证请求
+- 适用：实现/修改前端登录流程时；不适用后端鉴权逻辑
+
+**SQL Server 重复 ORDER BY 错误**
+- 现象：SQL Server 报 “A column has been specified more than once”
+- 根因：传了动态排序字段时，服务方法仍叠加了硬编码 `.OrderByDescending(l => l.CreateTime)`，导致 ORDER BY 出现两个相同列
+- 修复：所有分页服务方法改为仅当 `sortField` 为空时才应用默认排序（条件分支）
+- 适用：SQL Server 分页查询实现动态排序时；不适用允许 ORDER BY 重复列的数据库
+
+**sqlcmd 读取 UTF-8 SQL 文件需指定 -f 65001 编码**
+- 现象：含中文的 UTF-8（无 BOM）SQL 文件被 sqlcmd 执行后中文乱码、批处理静默失败（返回 “(0 rows affected)” 但不报错）
+- 根因：sqlcmd 默认按系统 OEM 代码页（中文 Windows 为 GBK/936）读取 `-i` 文件，`N'中文'` 被误读为乱码字节，SQL 解析失败、整个 batch 被静默跳过
+- 修复：执行含中文的 UTF-8 SQL 文件必须加 `-f 65001`：`sqlcmd -S "(localdb)\MSSQLLocalDB" -d dbname -i "file.sql" -f 65001 -W`；或将文件存为 UTF-8 with BOM / GBK
+- 适用：执行含中文的 UTF-8 迁移脚本；不适用纯 ASCII 文件或带 BOM 文件
+
+### 6.6 技术决策
+
+**UI 偏好持久化策略：数据库优先 + localStorage 兜底**
+- 结论：UI 偏好以数据库（UserConfig 表）为唯一事实源，localStorage 仅作未登录/离线场景兜底
+- 取舍：数据库保证跨设备一致与集中管理；localStorage 提供即时响应与无网络可用性。权衡一致性 vs 可用性
+- 否决方案：纯 localStorage（跨设备不一致，弃）；纯数据库无兜底（断网或登录前体验差，弃）
+- 适用条件：UI 偏好需跨设备/会话一致时成立；若转向完全离线优先架构需重新评估
+
+### 6.7 任务总结
+
+**登录会话竞态修复**
+- 需求：修复登录成功后立即被 401 踢出的 bug
+- 根因：登录流 `token.value = data.token` → `await loadUIPrefs()` → `persist()`，loadUIPrefs 用的是 localStorage 空 token
+- 修复：把 `persist()` 提前到设置 `token.value` 后立即执行
+- 关键文件：`web/src/common/stores/auth.ts`、`web/src/api/request.ts`
+- 教训：多会话场景下，错误处理里必须比对当前 token 与请求 token，过滤过期响应
+
+**CommonDataTable 排序功能（后端动态排序支持）**
+- 需求：给 CommonDataTable 加排序能力并应用到全系统列表页（考勤页除外）
+- 实施：前端扩展 `useDataTable` 管理 `sortField`/`sortOrder` 并在 `buildParams()` 上送；后端建 `FreeSqlSortExtensions.cs` 的安全 `OrderByDynamic<T>`；更新 10 个分页服务与 Controller；8 个分页视图加 `sortable:'custom'`，SmsTemplateView 加 `sortable:true`；修复 SQL Server 重复 ORDER BY
+- 关键文件：`useDataTable.ts`、`FreeSqlSortExtensions.cs`、各 Service/Controller、ErrorLogView/AuditLogView 等 21+ 页面
+- 教训：动态排序字段存在时不要再叠加硬编码默认排序，否则触发 SQL Server 重复列错误
+
+**CommonDataTable 刷新按钮标准化与列切换配置**
+- 需求：标准化全项目 CommonDataTable 刷新按钮用法、修正列切换配置
+- 实施：给 15 个缺 @load 的页面补 `@load="loadData"/"load"`；清除 11 处重复 @load；移除 UserOnlineView 工具栏多余手写刷新按钮
+- 注意：操作列硬编码不进列配置面板，设计上应常驻可见
+
+**CommonDataTable 标准化、Hangfire 日志重构及登录会话竞态修复**
+- 需求：1) 标准化 CommonDataTable 刷新按钮与列切换；2) Hangfire 任务日志弹窗由 el-table+expand 换成 CommonDataTable；3) 修复重登后被踢的会话竞态
+- 实施：CommonDataTable 标准化（补 @load、去重、去多余按钮）；Hangfire 日志改用 CommonDataTable + CommonDialog 详情弹窗；登录竞态在 request.ts 的 401 处理里加 token 比对过滤过期请求，登录成功后调 `resetUnauthorizedHandled()` 重置标志
+- 关键文件：`CommonDataTable.vue`、`HangfireJobsView.vue`、`request.ts`、`auth.ts` 等
+- 教训：多会话场景下错误处理必须比对当前 token 与请求 token，过滤过期响应
+
+**视图管理全量注册与按钮级权限控制**
+- 需求：把所有现有前端页面注册到视图管理系统并加按钮级权限控制
+- 实施：迁移脚本 017_add_all_views.sql 插入 30 条 SysView、56 条 SysViewPermission（IF NOT EXISTS）；init.sql 同步种子（37 视图、68 权限）；main.ts 注册 `$has` 全局属性 + env.d.ts 类型声明；重构 22 个 Vue 文件把 `v-if="has(...)"` 换成 `v-if="$has(...)"`
+- 关键文件：`db/migrations/017_add_all_views.sql`、`init.sql`、`main.ts`、`env.d.ts`、`usePermission.ts`、各视图
+- 教训：sqlcmd 执行含中文的 UTF-8 SQL 必须加 `-f 65001`，否则 batch 静默失败
+
+**Hangfire 任务日志表创建与视图管理搜索功能**
+- 需求：1) 修复 Hangfire 任务报 'Invalid object name dbo.JobExecutionLog'；2) ViewManageView 加视图搜索；3) MainLayout 加标签记忆开关
+- 实施：执行已有的 017_add_job_execution_log.sql（sqlcmd -f 65001）；ViewManageView 左侧列表加 el-input 搜索 + searchKey + filteredViews 客户端过滤；tabs.ts 加 REMEMBER_KEY 开关，loadPersisted/persist 据此跳过，MainLayout 头部加图标按钮
+- 关键文件：`017_add_job_execution_log.sql`、`ViewManageView.vue`、`tabs.ts`、`MainLayout.vue`
+- 教训：迁移脚本存在不代表已执行，需确认表是否实际建好
+
+**Hangfire 任务日志显示 bug：同类定时任务 JobName 区分**
+- 需求：修复点第一个定时任务“触发”却把日志显示到第二个任务下
+- 根因：两个定时任务都用 `LotteryDrawCrawlJob` 类但 recurring job ID 不同；`JobExecutionLog.JobName` 存的是类名/硬编码名而非 recurring job ID，导致日志混在一起
+- 修复：给 `CrawlAsync` 加可选 `logJobName` 参数；`BackfillRecentAsync` 调用时传 `“{彩种}奖级明细补拉”` 作为 logJobName
+- 关键文件：`ConvenientSystem.Shared/Jobs/LotteryDrawCrawlJob.cs`
+- 教训：多个定时任务共用同一类/方法时，`ExecuteWithLog` 必须为每个 recurring job ID 传唯一的 jobName，日志才能正确过滤
+
+**UI 偏好持久化从 localStorage 迁移到 UserConfig 表**
+- 需求：把 UI 偏好（侧边栏折叠、标签记忆、导航模式、主题模式）从 localStorage 迁到 UserConfig 表，实现跨设备/浏览器一致
+- 实施：后端在 UserConfigService.cs 的 ConfigMetadata 加 4 个 UI 配置键（UI.SidebarCollapsed/UI.RememberTabs/UI.NavMode/UI.ThemeMode）；加 `GetUIPrefs()` 与 `GET /api/userconfig/ui-prefs`；前端建 `useUserPrefs.ts` composable（DB 优先 + localStorage 兜底 + 防抖保存）；auth 登录后加载 UI 偏好；tabs.ts/theme.ts/MainLayout.vue 改用 `useUserPrefs()` 替代直接 localStorage；加 `applyServerPrefs()` 同步
+- 关键文件：`UserConfigService.cs`、`IUserConfigService.cs`、`UserConfigController.cs`、`useUserPrefs.ts`、`auth.ts`、`tabs.ts`、`theme.ts`、`MainLayout.vue`
+- 结果：4 个偏好跨浏览器/设备持久化，个人配置页自动显示“界面偏好”区

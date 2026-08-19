@@ -8,7 +8,7 @@ namespace ConvenientSystem.Service.Common
     public interface IErrorLogService
     {
         /// <summary>分页查询错误日志（按时间倒序）。</summary>
-        PagedResult<ErrorLogDto> GetList(string? keyword, DateTime? startTime, DateTime? endTime, int page, int size);
+        PagedResult<ErrorLogDto> GetList(string? keyword, DateTime? startTime, DateTime? endTime, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>清空全部错误日志。</summary>
         int Clear();

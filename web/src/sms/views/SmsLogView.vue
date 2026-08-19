@@ -34,7 +34,7 @@ const filters = reactive({
 })
 
 // immediate: false —— 首屏需要先出统计卡片再拉日志，加载顺序由下方 onMounted 统一编排
-const { loading, list, total, page, size, load, search, reset } = useDataTable<SmsLogDto, typeof filters>(listLogs, {
+const { loading, list, total, page, size, load, search, reset, onSortChange } = useDataTable<SmsLogDto, typeof filters>(listLogs, {
   filters,
   immediate: false,
   // dateRange 仅供日期控件绑定，接口要的是 startTime / endTime
@@ -46,8 +46,8 @@ const { loading, list, total, page, size, load, search, reset } = useDataTable<S
 })
 
 const columns: DataTableColumn<SmsLogDto>[] = [
-  { prop: 'createTime', label: '时间', width: 170, type: 'date' },
-  { prop: 'phone', label: '手机号', width: 130 },
+  { prop: 'createTime', label: '时间', width: 170, type: 'date', sortable: 'custom' },
+  { prop: 'phone', label: '手机号', width: 130, sortable: 'custom' },
   {
     prop: 'status',
     label: '状态',
@@ -55,10 +55,11 @@ const columns: DataTableColumn<SmsLogDto>[] = [
     type: 'tag',
     tagType: (row) => (row.status === 1 ? 'success' : row.status === 2 ? 'danger' : 'info'),
     formatter: (row) => (row.status === 0 ? '待发送' : row.status === 1 ? '成功' : '失败'),
+    sortable: 'custom',
   },
-  { prop: 'content', label: '发送内容', minWidth: 260, showOverflowTooltip: true },
-  { prop: 'errorMessage', label: '错误信息', minWidth: 160, showOverflowTooltip: true },
-  { prop: 'costMs', label: '耗时', width: 80, formatter: (row) => `${row.costMs}ms` },
+  { prop: 'content', label: '发送内容', minWidth: 260, showOverflowTooltip: true, sortable: 'custom' },
+  { prop: 'errorMessage', label: '错误信息', minWidth: 160, showOverflowTooltip: true, sortable: 'custom' },
+  { prop: 'costMs', label: '耗时', width: 80, formatter: (row) => `${row.costMs}ms`, sortable: 'custom' },
 ]
 
 onMounted(async () => {
@@ -106,6 +107,11 @@ onMounted(async () => {
 
     <!-- 日志列表 -->
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="sms-log"
+      @load="load"
+      @sort-change="onSortChange"
       class="log-table"
       v-model:page="page"
       v-model:pageSize="size"
@@ -116,7 +122,6 @@ onMounted(async () => {
       :show-actions="false"
       searchable
       pagination-layout="prev, pager, next"
-      @load="load"
       @search="search"
       @reset="reset"
     >

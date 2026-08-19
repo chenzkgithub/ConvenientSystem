@@ -18,7 +18,7 @@ namespace ConvenientSystem.Service.Common
         void Delete(int id);
 
         /// <summary>分页查询指定目标的探测日志（时间倒序）</summary>
-        PagedResult<WebMonitorLogDto> GetLogs(int targetId, int page, int size);
+        PagedResult<WebMonitorLogDto> GetLogs(int targetId, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>立即对指定目标执行一次探测（状态变化同样触发邮件告警），返回本次探测结果</summary>
         Task<WebMonitorLogDto> CheckNow(int id);

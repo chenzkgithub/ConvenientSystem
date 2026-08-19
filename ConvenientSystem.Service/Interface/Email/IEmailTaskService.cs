@@ -31,7 +31,7 @@ namespace ConvenientSystem.Service.Email
         EmailTaskRunNowDto RunNow(int id);
 
         /// <summary>分页查询发送日志</summary>
-        PagedResult<EmailLogDto> GetLogs(int? taskId, int page, int size);
+        PagedResult<EmailLogDto> GetLogs(int? taskId, int page, int size, string? sortField = null, string? sortOrder = null);
 
         /// <summary>按日发送趋势（含成功/失败），受数据权限过滤；days 为往前天数（含今天）</summary>
         SendTrendDto GetTrend(int days);

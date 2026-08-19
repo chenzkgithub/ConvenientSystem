@@ -11,6 +11,7 @@ export interface UserManageDto {
   email?: string | null
   remark?: string | null
   enabled: boolean
+  isDeleted: boolean
   createTime: string
   roleIds: number[]
   roleNames: string[]
@@ -52,7 +53,7 @@ export function resetUserPassword(id: string, password: string) {
   return httpPost<void>('/api/Common/UserManage/ResetPassword', { id, password })
 }
 
-/** 删除用户 */
+/** 删除用户（软删除） */
 export function deleteUser(id: string) {
-  return httpPost<void>('/api/Common/UserManage/Delete', id)
+  return httpPost<void>(`/api/Common/UserManage/Delete?id=${id}`)
 }

@@ -29,8 +29,10 @@ namespace ConvenientSystem.Api.Controllers.Sms
             [FromQuery] DateTime? startTime,
             [FromQuery] DateTime? endTime,
             [FromQuery] int page = 1,
-            [FromQuery] int size = 20)
-            => Ok(_logService.GetList(taskId, phone, status, startTime, endTime, page, size));
+            [FromQuery] int size = 20,
+            [FromQuery] string? sortField = null,
+            [FromQuery] string? sortOrder = null)
+            => Ok(_logService.GetList(taskId, phone, status, startTime, endTime, page, size, sortField, sortOrder));
 
         /// <summary>获取统计信息</summary>
         [HttpGet]

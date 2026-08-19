@@ -30,12 +30,13 @@ namespace ConvenientSystem.Service.Common
             };
         }
 
-        public PagedResult<LotteryDrawDto> GetDraws(string type, int page, int size)
+        public PagedResult<LotteryDrawDto> GetDraws(string type, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             var t = LotteryTypes.Normalize(type);
             var query = _fsql.Select<LotteryDrawEntity>().Where(d => d.LotteryType == t);
             var total = query.Count();
-            var list = query.OrderByDescending(d => d.IssueNumber)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(d => d.IssueNumber) : query.OrderByDynamic(sortField, sortOrder);
+            var list = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList()
                 .Select(MapToDto)

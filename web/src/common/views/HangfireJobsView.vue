@@ -4,9 +4,10 @@
  */
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, VideoPlay, Document } from '@element-plus/icons-vue'
+import { VideoPlay, Document } from '@element-plus/icons-vue'
 import { httpGet, httpPost } from '@/api/request'
 import CommonDialog from '@/common/components/CommonDialog.vue'
+import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 
 interface JobItem {
   id: string
@@ -33,11 +34,36 @@ interface ExecutionLog {
 const loading = ref(false)
 const jobs = ref<JobItem[]>([])
 
+const columns: DataTableColumn<JobItem>[] = [
+  { prop: 'id', label: '任务标识', minWidth: 160, sortable: true },
+  { prop: 'description', label: '任务类型', minWidth: 180, sortable: true },
+  { prop: 'cron', label: 'Cron 表达式', width: 140, sortable: true },
+  { prop: 'queue', label: '队列', width: 100, sortable: true },
+  { prop: 'lastState', label: '上次状态', width: 100, type: 'tag', tagType: (row) => stateTagType(row.lastState), sortable: true },
+  { prop: 'lastExecution', label: '上次执行', width: 170, sortable: true },
+  { prop: 'nextExecution', label: '下次执行', width: 170, sortable: true },
+]
+
+const logColumns: DataTableColumn<ExecutionLog>[] = [
+  { prop: 'state', label: '状态', width: 110, type: 'tag', tagType: (row) => stateTagType(row.state), sortable: true },
+  { prop: 'startedAt', label: '执行时间', width: 170, sortable: true },
+  { prop: 'methodName', label: '调用方法', minWidth: 160, sortable: true },
+  { prop: 'durationMs', label: '耗时', width: 90, sortable: true },
+]
+
 // ===== 执行日志弹窗 =====
 const logVisible = ref(false)
 const logLoading = ref(false)
 const logJobTitle = ref('')
 const logRows = ref<ExecutionLog[]>([])
+
+const detailVisible = ref(false)
+const currentDetail = ref<ExecutionLog | null>(null)
+
+function showDetail(log: ExecutionLog) {
+  currentDetail.value = log
+  detailVisible.value = true
+}
 
 async function load() {
   loading.value = true
@@ -105,85 +131,86 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="hangfire-page" v-loading="loading">
+  <div class="hangfire-page">
     <div class="page-header">
       <h2>定时任务管理</h2>
-      <el-button :icon="Refresh" size="small" @click="load" :loading="loading">刷新</el-button>
     </div>
 
     <div class="table-card">
-      <el-table :data="jobs" border stripe size="small" empty-text="暂无定时任务">
-        <el-table-column prop="id" label="任务标识" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="description" label="任务类型" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="cron" label="Cron 表达式" width="140" />
-        <el-table-column prop="queue" label="队列" width="100" />
-        <el-table-column prop="lastState" label="上次状态" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.lastState" :type="stateTagType(row.lastState)" size="small">
-              {{ row.lastState }}
-            </el-tag>
-            <span v-else class="text-muted">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="lastExecution" label="上次执行" width="170" />
-        <el-table-column prop="nextExecution" label="下次执行" width="170" />
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button link size="small" type="primary" :icon="Document" @click="openLog(row as JobItem)">日志</el-button>
-            <el-button v-if="$has('hangfire-jobs:trigger')" link size="small" type="primary" :icon="VideoPlay" @click="triggerJob(row as JobItem)">触发</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <CommonDataTable
+        :columns="columns"
+        :data="jobs"
+        :loading="loading"
+        :show-pagination="false"
+        :border="true"
+        :stripe="true"
+        size="small"
+        show-refresh
+        show-column-toggle
+        table-key="hangfire-jobs"
+        empty-text="暂无定时任务"
+        @load="load"
+      >
+        <template #cell-lastState="{ row }">
+          <el-tag v-if="row.lastState" :type="stateTagType(row.lastState)" size="small">
+            {{ row.lastState }}
+          </el-tag>
+          <span v-else class="text-muted">-</span>
+        </template>
+        <template #actions="{ row }">
+          <el-button link size="small" type="primary" :icon="Document" @click="openLog(row as JobItem)">日志</el-button>
+          <el-button v-if="$has('hangfire-jobs:trigger')" link size="small" type="primary" :icon="VideoPlay" @click="triggerJob(row as JobItem)">触发</el-button>
+        </template>
+      </CommonDataTable>
     </div>
 
     <!-- 执行日志弹窗 -->
     <CommonDialog v-model="logVisible" :title="`执行日志 - ${logJobTitle}`" width="900px" :close-on-click-modal="false" destroy-on-close>
-      <el-table :data="logRows" border stripe size="small" v-loading="logLoading"
-        empty-text="暂无执行记录" max-height="60vh"
-        row-key="jobId" :default-expand-all="false">
-        <el-table-column type="expand">
-          <template #default="{ row }">
-            <div class="log-expand">
-              <div v-if="row.arguments" class="log-section">
-                <div class="log-label">请求入参</div>
-                <pre class="log-code">{{ formatArgs(row.arguments) }}</pre>
-              </div>
-              <div v-if="row.error" class="log-section">
-                <div class="log-label log-label-danger">异常信息</div>
-                <pre class="log-code log-error">{{ row.error }}</pre>
-              </div>
-              <div class="log-section">
-                <div class="log-label">调用信息</div>
-                <span class="log-meta">{{ row.methodName || '-' }}()</span>
-                <span class="log-meta">日志 ID: {{ row.jobId }}</span>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="state" label="状态" width="110"
-          :filters="[
-            { text: 'Succeeded', value: 'Succeeded' },
-            { text: 'Failed', value: 'Failed' },
-            { text: 'Processing', value: 'Processing' },
-          ]"
-          :filter-method="(value: string, row: ExecutionLog) => row.state === value">
-          <template #default="{ row }">
-            <el-tag :type="stateTagType(row.state)" size="small">{{ row.state }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="startedAt" label="执行时间" width="170" />
-        <el-table-column prop="methodName" label="调用方法" min-width="160" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ row.methodName || '-' }}
-            <span v-if="row.arguments" class="text-muted">({{ row.arguments.length > 30 ? row.arguments.slice(0, 30) + '…' : row.arguments }})</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="durationMs" label="耗时" width="90" align="right">
-          <template #default="{ row }">
-            {{ row.durationMs != null ? row.durationMs + ' ms' : '-' }}
-          </template>
-        </el-table-column>
-      </el-table>
+      <CommonDataTable
+        :columns="logColumns"
+        :data="logRows"
+        :loading="logLoading"
+        :show-pagination="false"
+        :border="true"
+        :stripe="true"
+        size="small"
+        show-refresh
+        show-column-toggle
+        table-key="hangfire-log"
+        empty-text="暂无执行记录"
+        max-height="60vh"
+        @load="() => { if (logJobTitle) openLog({ id: logJobTitle } as JobItem) }"
+      >
+        <template #cell-methodName="{ row }">
+          {{ row.methodName || '-' }}
+          <span v-if="row.arguments" class="text-muted">({{ row.arguments.length > 30 ? row.arguments.slice(0, 30) + '…' : row.arguments }})</span>
+        </template>
+        <template #cell-durationMs="{ row }">
+          {{ row.durationMs != null ? row.durationMs + ' ms' : '-' }}
+        </template>
+        <template #actions="{ row }">
+          <el-button link size="small" type="primary" @click="showDetail(row as ExecutionLog)">详情</el-button>
+        </template>
+      </CommonDataTable>
+    </CommonDialog>
+
+    <!-- 执行详情弹窗 -->
+    <CommonDialog v-model="detailVisible" title="执行详情" width="700px" destroy-on-close>
+      <template v-if="currentDetail">
+        <div class="log-section" v-if="currentDetail.arguments">
+          <div class="log-label">请求入参</div>
+          <pre class="log-code">{{ formatArgs(currentDetail.arguments) }}</pre>
+        </div>
+        <div class="log-section" v-if="currentDetail.error">
+          <div class="log-label log-label-danger">异常信息</div>
+          <pre class="log-code log-error">{{ currentDetail.error }}</pre>
+        </div>
+        <div class="log-section">
+          <div class="log-label">调用信息</div>
+          <span class="log-meta">{{ currentDetail.methodName || '-' }}()</span>
+          <span class="log-meta">日志 ID: {{ currentDetail.jobId }}</span>
+        </div>
+      </template>
     </CommonDialog>
   </div>
 </template>
@@ -217,12 +244,9 @@ onMounted(load)
   font-size: 12px;
 }
 
-/* 执行日志展开区域 */
-.log-expand {
-  padding: 12px 20px;
-}
+/* 执行日志详情 */
 .log-section {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 .log-label {
   font-weight: 600;

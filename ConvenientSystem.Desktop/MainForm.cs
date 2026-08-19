@@ -46,6 +46,16 @@ public sealed class MainForm : Form
     // 前端上报的菜单树 JSON（悬浮按钮平铺展开卡片网格用）
     private JsonElement? _lastMenuTree;
 
+    // 全局热键管理器：注册系统级热键（主窗口隐藏到托盘时仍能触发）
+    private GlobalHotkeyManager? _hotkey;
+    // 快速启动器：全局热键呼出的搜索式启动器
+    private QuickLauncher? _launcher;
+    // 程序索引服务：后台扫描开始菜单快捷方式
+    private AppIndexService? _appIndex;
+    // 启动器自定义条目存储
+    private LauncherStore? _store;
+    // 本地文件索引服务：后台全盘扫描，融入启动器搜索
+    private FileIndexService? _fileIndex;
     public MainForm(string startUrl)
     {
         _startUrl = startUrl;
@@ -90,10 +100,8 @@ public sealed class MainForm : Form
     {
         try
         {
-            // 将 WebView2 的缓存/用户数据放到 LocalAppData，避免写入程序安装目录（可能无权限）。
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AttendanceApp", "WebView2");
+            // WebView2 用户数据存放在 exe 目录下。
+            var userDataFolder = Path.Combine(Application.StartupPath, "WebView2");
             Directory.CreateDirectory(userDataFolder);
 
             _env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, new CoreWebView2EnvironmentOptions
@@ -148,6 +156,28 @@ public sealed class MainForm : Form
             catch { /* 清缓存失败不影响启动 */ }
 
             _webView.CoreWebView2.Navigate(_startUrl);
+
+            // === 快速启动器 + 全局热键 ===
+            _appIndex = new AppIndexService();
+            _store = new LauncherStore(_startUrl, () => LockCoordinator.CachedJwt);
+            _fileIndex = new FileIndexService();
+            _launcher = new QuickLauncher(
+                _appIndex, _store, _fileIndex,
+                openPage: (page, title, ext) => OpenPageWindow(page, title, ext),
+                openUrl: url => OpenPageWindow(url, url, true));
+            if (_lastMenuTree is not null) _launcher.SetMenuTree(_lastMenuTree);
+            _appIndex.StartIndexAsync(onCompleted: () =>
+            {
+                if (_launcher is not null && _launcher.Visible) _launcher.RefreshResults();
+            });
+            _fileIndex.StartIndexAsync(onCompleted: () =>
+            {
+                if (_launcher is not null && _launcher.Visible) _launcher.RefreshResults();
+            });
+
+            _hotkey = new GlobalHotkeyManager();
+            if (!_hotkey.Register("Ctrl+Alt+Space", () => _launcher?.Popup()))
+                LogHost("HOTKEY-FAIL Ctrl+Alt+Space（可能被其他程序占用）");
         }
         catch (Exception ex)
         {
@@ -238,8 +268,10 @@ public sealed class MainForm : Form
                     break;
 
                 case "menu:list":
-                    // 前端上报"首页所有页面"菜单树：据此重建托盘右键菜单。
+                    // 前端上报“首页所有页面”菜单树：据此重建托盘右键菜单。
                     RebuildTrayMenu(root.TryGetProperty("items", out var itemsEl) ? itemsEl : (JsonElement?)null);
+                    // 登录成功后菜单树上报，此时缓存 JWT 并从数据库拉取启动器条目。
+                    _ = ReloadLauncherFromApiAsync();
                     break;
             
                 case "file:open":
@@ -275,15 +307,27 @@ public sealed class MainForm : Form
         catch { /* 缓存失败不影响锁屏流程，弹出窗口仍可尝试自己读取 */ }
     }
 
-    /// <summary>宿主诊断日志通用入口：写入 %LocalAppData%\AttendanceApp\host.log。</summary>
+    /// <summary>
+    /// 登录成功后：缓存 JWT，从数据库拉取启动器条目覆盖本地，刷新启动器。
+    /// </summary>
+    private async Task ReloadLauncherFromApiAsync()
+    {
+        await CacheJwtForLockAsync();
+        try
+        {
+            _store?.ReloadFromApi();
+            _launcher?.RefreshResults();
+        }
+        catch { /* 启动器加载失败不影响主界面 */ }
+    }
+
+    /// <summary>宿主诊断日志通用入口：写入 exe 目录\host.log。</summary>
     private static void LogHost(string message)
     {
         try
         {
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}";
-            var path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AttendanceApp", "host.log");
+            var path = Path.Combine(Application.StartupPath, "host.log");
             File.AppendAllText(path, line);
         }
         catch
@@ -301,6 +345,15 @@ public sealed class MainForm : Form
         {
             DoubleClickAction = ActivateMainWindow,
             OpenPageAction = (page, title, external) => OpenPageWindow(page, title, external),
+            LauncherPopupAction = () => _launcher?.Popup(),
+            EntryEditorAction = () =>
+            {
+                if (_store is null) return;
+                using var editor = new LauncherEntryEditor(_store);
+                editor.ShowDialog();
+                _launcher?.RefreshResults();
+            },
+            RefreshIndexAction = () => _fileIndex?.ForceRebuild(),
         };
         _floatingBtn.PositionAtScreenCorner();
         _floatingBtn.Show();
@@ -340,6 +393,7 @@ public sealed class MainForm : Form
         var clonedTree = itemsEl?.Clone();
         _lastMenuTree = clonedTree;
         if (_floatingBtn is not null) _floatingBtn.MenuTree = clonedTree;
+        if (_launcher is not null) _launcher.SetMenuTree(clonedTree);
 
         // ═══════ 托盘菜单 ═══════
         _trayMenu.Items.Clear();
@@ -371,6 +425,21 @@ public sealed class MainForm : Form
             showFloatItem.Visible = !visible;
         };
         _trayMenu.Items.Add(showFloatItem);
+
+        var launcherItem = new ToolStripMenuItem("快速启动器  Ctrl+Alt+Space");
+        launcherItem.Click += (_, _) => _launcher?.Popup();
+        _trayMenu.Items.Add(launcherItem);
+
+        var entryEditorItem = new ToolStripMenuItem("管理启动器条目");
+        entryEditorItem.Click += (_, _) =>
+        {
+            if (_store is null) return;
+            using var editor = new LauncherEntryEditor(_store);
+            editor.ShowDialog();
+            _launcher?.RefreshResults();
+        };
+        _trayMenu.Items.Add(entryEditorItem);
+
         AddCommonMenuItems(_trayMenu);
     }
 
@@ -504,23 +573,31 @@ public sealed class MainForm : Form
         }
 
         var url = BuildPageUrl(page, external);
+        var browser = new BrowserForm();
+        if (!string.IsNullOrWhiteSpace(title)) browser.SetFixedTitle(title);
+
+        // 先注册到字典并绑定关闭清理，防止 await 期间重复打开同一页面。
+        _openPageWindows[page] = browser;
+        browser.FormClosed += (_, _) => _openPageWindows.Remove(page);
+
+        // 先显示窗口（此时显示“加载中…”），确保窗口立即出现在前台。
+        // 不能在 await 之后才 Show()：await 会让出 UI 线程，恢复后调用 Show()
+        // 时 Windows 前台锁会阻止新窗口获取焦点，导致窗口只在任务栏闪烁
+        // 而不显示到前台（表现为“页面只打开在状态栏没有直接在窗口显示”）。
+        browser.SizeToWorkingArea();
+        browser.Show();
+        browser.Activate();
+
         try
         {
-            var browser = new BrowserForm();
             await browser.InitializeAsync(_env);
-            if (!string.IsNullOrWhiteSpace(title)) browser.SetFixedTitle(title);
+            if (browser.IsDisposed) return;
             browser.Core.Navigate(url);
-
-            // 记录窗口，并在关闭时从字典中移除
-            _openPageWindows[page] = browser;
-            browser.FormClosed += (_, _) => _openPageWindows.Remove(page);
-
-            browser.Show();
-            browser.SizeToWorkingArea();
         }
         catch
         {
-            // 开窗失败时忽略（如非法 URI 或内核初始化失败）
+            // 初始化或导航失败：关闭窗口（FormClosed 会自动从字典移除）
+            if (!browser.IsDisposed) browser.Close();
         }
     }
 
@@ -701,6 +778,9 @@ public sealed class MainForm : Form
             _floatingBtn.Dispose();
             _floatingBtn = null;
         }
+
+        _hotkey?.Dispose();
+        _launcher?.Dispose();
 
         if (_tray is not null)
         {

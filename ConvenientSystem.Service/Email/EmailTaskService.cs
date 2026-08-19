@@ -193,7 +193,7 @@ namespace ConvenientSystem.Service.Email
             return new EmailTaskRunNowDto { HangfireJobId = jobId };
         }
 
-        public PagedResult<EmailLogDto> GetLogs(int? taskId, int page, int size)
+        public PagedResult<EmailLogDto> GetLogs(int? taskId, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             var query = _fsql.Select<EmailLogEntity>();
             if (taskId.HasValue) query = query.Where(l => l.TaskId == taskId.Value);
@@ -208,7 +208,8 @@ namespace ConvenientSystem.Service.Email
             }
 
             var total = query.Count();
-            var logs = query.OrderByDescending(l => l.CreateTime)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(l => l.CreateTime) : query.OrderByDynamic(sortField, sortOrder);
+            var logs = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList();
             // 创建人账号与姓名关联 SysUser 查询（系统自动发送的日志无创建人）

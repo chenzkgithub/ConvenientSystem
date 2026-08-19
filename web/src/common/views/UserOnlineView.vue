@@ -10,11 +10,11 @@ const autoRefresh = ref(true)
 let timer: ReturnType<typeof setInterval> | null = null
 
 const columns: DataTableColumn<OnlineUserDto>[] = [
-  { prop: 'account', label: '账号', width: 140 },
-  { prop: 'displayName', label: '显示名称', minWidth: 120, formatter: (row) => row.displayName || '—' },
-  { prop: 'ip', label: 'IP 地址', width: 150 },
-  { prop: 'loginTime', label: '登录时间', width: 170, dateFormatter: formatDate },
-  { prop: 'lastSeen', label: '最后活跃', width: 260, custom: true },
+  { prop: 'account', label: '账号', width: 140, sortable: true },
+  { prop: 'displayName', label: '显示名称', minWidth: 120, formatter: (row) => row.displayName || '—', sortable: true },
+  { prop: 'ip', label: 'IP 地址', width: 150, sortable: true },
+  { prop: 'loginTime', label: '登录时间', width: 170, dateFormatter: formatDate, sortable: true },
+  { prop: 'lastSeen', label: '最后活跃', width: 260, custom: true, sortable: true },
 ]
 
 async function loadData() {
@@ -60,6 +60,10 @@ onUnmounted(stopAutoRefresh)
   <div class="online-page">
     <!-- 在线用户列表（标题提示与刷新按钮封装进列表组件插槽，与表格统一对齐） -->
     <CommonDataTable
+      show-refresh
+      show-column-toggle
+      table-key="user-online"
+      @load="loadData"
       :columns="columns"
       :data="list"
       :loading="loading"
@@ -81,7 +85,6 @@ onUnmounted(stopAutoRefresh)
         >
           {{ autoRefresh ? '自动刷新中' : '自动刷新已停' }}
         </el-button>
-        <el-button size="small" @click="loadData" :loading="loading">刷新</el-button>
       </template>
       <template #cell-lastSeen="{ row }">
         <span>{{ formatDate(row.lastSeen) }}</span>

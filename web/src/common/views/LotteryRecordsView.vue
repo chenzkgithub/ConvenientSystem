@@ -32,25 +32,28 @@ const total = ref(0)
 const page = ref(1)
 const size = ref(20)
 const loading = ref(false)
+const sortField = ref('')
+const sortOrder = ref<'ascending' | 'descending' | null>(null)
 // 筛选日期默认选中今天（可清空）
 const filterDate = ref(todayYmd())
 
 const columns = computed<DataTableColumn<LotteryRecordItem>[]>(() => {
   const cols: DataTableColumn<LotteryRecordItem>[] = [
     { type: 'index', label: '#', width: 50, align: 'center' },
-    {
-      prop: 'issueNumber', label: '期号', width: 110, align: 'center',
+    { prop: 'issueNumber', label: '期号', width: 110, align: 'center',
       formatter: (row) => row.issueNumber ?? '—',
+      sortable: 'custom',
     },
     {
       prop: 'drawDate', label: '开奖日期', width: 110, align: 'center',
       formatter: (row) => row.drawDate ? formatDate(row.drawDate).slice(0, 10) : '—',
+      sortable: 'custom',
     },
-    { prop: 'createdAt', label: '选号时间', width: 170, formatter: (row) => formatDate(row.createdAt) },
-    { prop: 'front', label: positional.value ? '号码' : '前区', minWidth: positional.value ? 150 : 220, custom: true },
+    { prop: 'createdAt', label: '选号时间', width: 170, formatter: (row) => formatDate(row.createdAt), sortable: 'custom' },
+    { prop: 'front', label: positional.value ? '号码' : '前区', minWidth: positional.value ? 150 : 220, custom: true, sortable: 'custom' },
   ]
   if (!positional.value) {
-    cols.push({ prop: 'back', label: '后区', width: 120, custom: true })
+    cols.push({ prop: 'back', label: '后区', width: 120, custom: true, sortable: 'custom' })
   }
   return cols
 })
@@ -60,6 +63,10 @@ async function load() {
   try {
     const params: Record<string, unknown> = { type: activeType.value, page: page.value, size: size.value }
     if (filterDate.value) params.date = filterDate.value
+    if (sortField.value) {
+      params.sortField = sortField.value
+      params.sortOrder = sortOrder.value === 'ascending' ? 'asc' : 'desc'
+    }
     const res = await httpGet<{ total: number; list: LotteryRecordItem[] }>('/api/Common/LotteryRecord/List', params)
     records.value = res.list
     total.value = res.total
@@ -83,6 +90,13 @@ watch(activeType, () => {
 })
 
 onMounted(() => load())
+
+function onSortChange(info: { prop: string | null; order: 'ascending' | 'descending' | null }) {
+  sortField.value = info.prop ?? ''
+  sortOrder.value = info.order
+  page.value = 1
+  load()
+}
 
 /** 号码球文本：位置型不补零 */
 function fmt(n: number): string {
@@ -171,6 +185,11 @@ function onPickClosed() {
 
     <div class="records-table">
       <CommonDataTable
+        show-refresh
+        show-column-toggle
+        table-key="lottery-records"
+        @load="load"
+        @sort-change="onSortChange"
         v-model:page="page"
         v-model:pageSize="size"
         :columns="columns"
@@ -181,7 +200,6 @@ function onPickClosed() {
         :page-sizes="[10, 20, 50]"
         compact
         pagination-layout="total, sizes, prev, pager, next"
-        @load="load"
       >
         <template #filters>
           <el-date-picker
@@ -199,7 +217,6 @@ function onPickClosed() {
           <el-button type="primary" size="small" @click="query">查询</el-button>
           <el-button type="primary" size="small" @click="openPick">选号</el-button>
           <el-button v-if="$has('lottery-records:verify-issue')" type="danger" size="small" :loading="issueVerifying" @click="openIssueVerify">验证奖金</el-button>
-          <el-button size="small" @click="load">刷新</el-button>
         </template>
 
         <template #cell-front="{ row }">

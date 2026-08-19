@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
 
@@ -16,7 +17,7 @@ namespace ConvenientSystem.Service.Common
             _fsql = fsql;
         }
 
-        public PagedResult<WebhookLogDto> GetList(string? configName, bool? success, int page, int size)
+        public PagedResult<WebhookLogDto> GetList(string? configName, bool? success, int page, int size, string? sortField = null, string? sortOrder = null)
         {
             if (page < 1) page = 1;
             if (size < 1) size = 20;
@@ -28,7 +29,8 @@ namespace ConvenientSystem.Service.Common
                 query = query.Where(l => l.Success == success.Value);
 
             var total = query.Count();
-            var list = query.OrderByDescending(l => l.CreateTime)
+            var sortedQuery = string.IsNullOrWhiteSpace(sortField) ? query.OrderByDescending(l => l.CreateTime) : query.OrderByDynamic(sortField, sortOrder);
+            var list = sortedQuery
                 .Skip((page - 1) * size).Take(size)
                 .ToList()
                 .Select(l => new WebhookLogDto

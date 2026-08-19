@@ -3,10 +3,12 @@
  * 个人配置页面：当前登录用户的个性化配置（锁屏开关/超时等），仅影响自己。
  * 原系统配置页签中的「个人配置」拆分出来的独立菜单页面。
  */
-import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { getMyConfig, updateMyConfig } from '@/common/api/userConfig'
-import type { UserConfigGroup } from '@/common/api/userConfig'
+import { ref, onActivated } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
+import CommonDialog from '@/common/components/CommonDialog.vue'
+import { getMyConfig, updateMyConfig, getLauncherItems, saveLauncherItems } from '@/common/api/userConfig'
+import type { UserConfigGroup, LauncherEntry } from '@/common/api/userConfig'
 import { useLockStore } from '@/common/stores/lock'
 
 const lock = useLockStore()
@@ -109,7 +111,90 @@ async function saveMyGroup(group: UserConfigGroup) {
   }
 }
 
-loadMyConfig()
+// keep-alive 下 onMounted 只触发一次；改用 onActivated，每次进入页面都重新拉取最新数据，
+// 确保桌面端/网页端另一侧的修改能及时反映。
+onActivated(loadMyConfig)
+
+// ========== 启动器条目管理 ==========
+const launcherLoading = ref(false)
+const launcherEntries = ref<LauncherEntry[]>([])
+const launcherDialogVisible = ref(false)
+const launcherDialogTitle = ref('')
+const launcherEditIndex = ref(-1)
+const launcherForm = ref<LauncherEntry>({ title: '', target: '', kind: 'url' })
+
+const launcherColumns: DataTableColumn<LauncherEntry>[] = [
+  { prop: 'title', label: '名称', minWidth: 140 },
+  { prop: 'target', label: '目标', minWidth: 200, showOverflowTooltip: true },
+  { prop: 'kind', label: '类型', width: 100, align: 'center', custom: true },
+]
+
+const KIND_LABELS: Record<string, string> = { url: '网址', file: '文件', command: '命令' }
+const KIND_TYPES: Record<string, string> = { url: 'primary', file: 'success', command: 'warning' }
+
+async function loadLauncherItems() {
+  launcherLoading.value = true
+  try {
+    launcherEntries.value = await getLauncherItems()
+  } catch {
+    /* request.ts 已弹错误提示 */
+  } finally {
+    launcherLoading.value = false
+  }
+}
+
+function openLauncherDialog(row?: LauncherEntry, index?: number) {
+  if (row && index !== undefined) {
+    launcherDialogTitle.value = '编辑条目'
+    launcherEditIndex.value = index
+    launcherForm.value = { ...row }
+  } else {
+    launcherDialogTitle.value = '新增条目'
+    launcherEditIndex.value = -1
+    launcherForm.value = { title: '', target: '', kind: 'url' }
+  }
+  launcherDialogVisible.value = true
+}
+
+async function saveLauncherEntry() {
+  const { title, target, kind } = launcherForm.value
+  if (!title.trim() || !target.trim()) {
+    ElMessage.warning('名称和目标不能为空')
+    return
+  }
+  const previousEntries = [...launcherEntries.value]
+  const newEntry = { ...launcherForm.value }
+  const updatedEntries = launcherEditIndex.value >= 0
+    ? previousEntries.map((e, i) => i === launcherEditIndex.value ? newEntry : e)
+    : [...previousEntries, newEntry]
+  try {
+    await saveLauncherItems(updatedEntries)
+    launcherEntries.value = updatedEntries
+    ElMessage.success('已保存')
+    launcherDialogVisible.value = false
+  } catch {
+    /* request.ts 已弹错误提示；保存失败时本地列表保持原样 */
+  }
+}
+
+async function deleteLauncherEntry(row: LauncherEntry, index: number) {
+  try {
+    await ElMessageBox.confirm(`确定删除「${row.title}」？`, '确认删除', {
+      confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning',
+    })
+  } catch { return }
+  const previousEntries = [...launcherEntries.value]
+  const updatedEntries = [...previousEntries.slice(0, index), ...previousEntries.slice(index + 1)]
+  try {
+    await saveLauncherItems(updatedEntries)
+    launcherEntries.value = updatedEntries
+    ElMessage.success('已删除')
+  } catch {
+    /* request.ts 已弹错误提示；删除失败时本地列表保持原样 */
+  }
+}
+
+onActivated(loadLauncherItems)
 </script>
 
 <template>
@@ -180,7 +265,68 @@ loadMyConfig()
       </el-card>
     </div>
     <el-empty v-if="myGroups.length === 0 && !myLoading" description="暂无个人配置" />
+
+    <!-- 启动器条目管理 -->
+    <div class="config-card-wrapper">
+      <el-card shadow="hover" class="config-card">
+        <template #header>
+          <div class="card-header">
+            <span class="card-title">
+              <span class="card-icon">🚀</span>
+              启动器条目
+            </span>
+            <el-button type="primary" size="small" @click="openLauncherDialog()">新增条目</el-button>
+          </div>
+        </template>
+        <CommonDataTable
+          :columns="launcherColumns"
+          :data="launcherEntries"
+          :loading="launcherLoading"
+          :show-pagination="false"
+          :actions-width="120"
+          empty-text="暂无启动器条目"
+        >
+          <template #cell-kind="{ row }">
+            <el-tag :type="(KIND_TYPES[(row as LauncherEntry).kind] || 'info') as any" size="small">
+              {{ KIND_LABELS[(row as LauncherEntry).kind] || (row as LauncherEntry).kind }}
+            </el-tag>
+          </template>
+          <template #actions="{ row, $index }">
+            <el-button link type="primary" size="small" @click="openLauncherDialog(row as LauncherEntry, $index as number)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="deleteLauncherEntry(row as LauncherEntry, $index as number)">删除</el-button>
+          </template>
+        </CommonDataTable>
+      </el-card>
+    </div>
   </div>
+
+  <!-- 启动器条目编辑弹窗 -->
+  <CommonDialog v-model="launcherDialogVisible" :title="launcherDialogTitle" width="480px">
+    <el-form :model="launcherForm" label-width="80px">
+      <el-form-item label="名称" required>
+        <el-input v-model="launcherForm.title" placeholder="如：管理后台" maxlength="50" />
+      </el-form-item>
+      <el-form-item label="目标" required>
+        <el-input
+          v-model="launcherForm.target"
+          type="textarea"
+          :rows="2"
+          :placeholder="launcherForm.kind === 'url' ? 'https://example.com' : launcherForm.kind === 'file' ? 'C:\\Program Files\\app.exe' : 'notepad'"
+        />
+      </el-form-item>
+      <el-form-item label="类型" required>
+        <el-select v-model="launcherForm.kind" style="width: 100%">
+          <el-option value="url" label="网址" />
+          <el-option value="file" label="文件" />
+          <el-option value="command" label="命令" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="launcherDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="saveLauncherEntry">保存</el-button>
+    </template>
+  </CommonDialog>
 </template>
 
 <style scoped>
