@@ -47,7 +47,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
         /// <summary>删除模板</summary>
         [HttpPost]
         [PermissionAuthorize("sms-template:delete")]
-        public IActionResult Delete([FromBody] int id)
+        public IActionResult Delete([FromQuery] int id)
         {
             _templateService.Delete(id);
             return Ok();
@@ -56,7 +56,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
         /// <summary>切换启用状态</summary>
         [HttpPost]
         [PermissionAuthorize("sms-template:toggle")]
-        public ActionResult<ToggleEnabledDto> ToggleEnabled([FromBody] int id)
+        public ActionResult<ToggleEnabledDto> ToggleEnabled([FromQuery] int id)
             => Ok(_templateService.ToggleEnabled(id));
 
         /// <summary>预览模板渲染效果</summary>
@@ -66,7 +66,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
 
         /// <summary>提取模板中的变量名</summary>
         [HttpPost]
-        public ActionResult<List<string>> ExtractVariables([FromBody] string content)
+        public ActionResult<List<string>> ExtractVariables([FromQuery] string content)
             => Ok(_templateService.ExtractVariables(content));
     }
 }

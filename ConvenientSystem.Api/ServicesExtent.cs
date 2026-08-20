@@ -16,6 +16,7 @@ using FreeSql;
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Data.Sqlite;
 
 namespace ConvenientSystem.Api
 {
@@ -42,9 +43,10 @@ namespace ConvenientSystem.Api
             services.AddSingleton(logBuffer);
             services.AddLogging(logging => logging.AddProvider(new ConvenientSystem.Api.Middleware.MemoryLoggerProvider(logBuffer)));
 
-            var configConnStr = AddDatabases(services, configuration);
+            var dbType = GetDbType(configuration);
+            var configConnStr = AddDatabases(services, configuration, dbType);
             AddAuthInfrastructure(services, configuration);
-            AddHangfire(services, configConnStr);
+            AddHangfire(services, configConnStr, dbType);
             AddSmsInfrastructure(services);
             AddEmailInfrastructure(services);
             AddLotteryServices(services);
@@ -55,22 +57,29 @@ namespace ConvenientSystem.Api
             AddBusinessServices(services);
         }
 
+        /// <summary>读取配置中的数据库类型（SqlServer 或 Sqlite），默认 SqlServer。</summary>
+        private static string GetDbType(IConfiguration configuration)
+            => configuration.GetValue<string>("Database:Type") ?? "SqlServer";
+
         /// <summary>
         /// 数据库连接：业务库 IFreeSql（单例）、本地配置库（Keyed 单例）、SQL 工具动态数据源工厂。
+        /// Sqlite 模式下业务库复用配置库连接（云服务器无法访问内网 SQL Server）。
         /// </summary>
         /// <returns>本地配置库连接字符串，供 Hangfire 持久化复用。</returns>
-        private static string AddDatabases(IServiceCollection services, IConfiguration configuration)
+        private static string AddDatabases(IServiceCollection services, IConfiguration configuration, string dbType)
         {
-            var connStr = configuration.GetConnectionString("YhSystemDb")
-                ?? throw new InvalidOperationException("未配置数据库连接字符串 YhSystemDb，请检查 appsettings.json。");
-
-            services.AddSingleton<IFreeSql>(sp => BuildFreeSql(sp, connStr, "FreeSql"));
-
             var configConnStr = configuration.GetConnectionString("ConvenientSystemDb")
                 ?? throw new InvalidOperationException("未配置数据库连接字符串 ConvenientSystemDb，请检查 appsettings.json。");
 
+            // 业务库（YhSystemDb）：SqlServer 模式下使用独立连接；Sqlite 模式下复用配置库连接。
+            var yhConnStr = configuration.GetConnectionString("YhSystemDb");
+            if (string.IsNullOrWhiteSpace(yhConnStr) || dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
+                yhConnStr = configConnStr;
+
+            services.AddSingleton<IFreeSql>(sp => BuildFreeSql(sp, yhConnStr, "FreeSql", dbType));
+
             services.AddKeyedSingleton<IFreeSql>("ConvenientSystemDb",
-                (sp, _) => BuildFreeSql(sp, configConnStr, "FreeSql(配置库)"));
+                (sp, _) => BuildFreeSql(sp, configConnStr, "FreeSql(配置库)", dbType));
 
             // SQL 查询工具动态数据源的 IFreeSql 工厂。
             services.AddSingleton<DynamicFreeSqlFactory>();
@@ -79,10 +88,14 @@ namespace ConvenientSystem.Api
         }
 
         /// <summary>构建 IFreeSql 实例（关闭自动建表，SQL 执行写 Debug 日志）。</summary>
-        private static IFreeSql BuildFreeSql(IServiceProvider sp, string connStr, string logTag)
+        private static IFreeSql BuildFreeSql(IServiceProvider sp, string connStr, string logTag, string dbType)
         {
+            var dataType = dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase)
+                ? DataType.Sqlite
+                : DataType.SqlServer;
+
             var fsql = new FreeSqlBuilder()
-                .UseConnectionString(DataType.SqlServer, connStr)
+                .UseConnectionString(dataType, connStr)
                 .UseAutoSyncStructure(false)
                 .Build();
 
@@ -125,32 +138,51 @@ namespace ConvenientSystem.Api
         private static string? ReadJwtKeyFromDb(IConfiguration configuration)
         {
             var connStr = configuration.GetConnectionString("ConvenientSystemDb");
+            var dbType = GetDbType(configuration);
             if (string.IsNullOrEmpty(connStr)) return null;
             try
             {
-                using var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
-                conn.Open();
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT TOP 1 ConfigValue FROM dbo.SysConfig WHERE ConfigKey = N'Jwt.Key'";
-                var result = cmd.ExecuteScalar()?.ToString();
-                return string.IsNullOrEmpty(result) ? null : result;
+                if (dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var conn = new SqliteConnection(connStr);
+                    conn.Open();
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT ConfigValue FROM SysConfig WHERE ConfigKey = 'Jwt.Key' LIMIT 1";
+                    var result = cmd.ExecuteScalar()?.ToString();
+                    return string.IsNullOrEmpty(result) ? null : result;
+                }
+                else
+                {
+                    using var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
+                    conn.Open();
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT TOP 1 ConfigValue FROM dbo.SysConfig WHERE ConfigKey = N'Jwt.Key'";
+                    var result = cmd.ExecuteScalar()?.ToString();
+                    return string.IsNullOrEmpty(result) ? null : result;
+                }
             }
             catch { return null; }
         }
 
-        /// <summary>定时任务调度：SqlServer 持久化存储，重启不丢失。</summary>
-        private static void AddHangfire(IServiceCollection services, string hangfireConnStr)
+        /// <summary>定时任务调度：SqlServer 持久化存储 / Sqlite 模式用 InMemory（重启后由启动补偿恢复任务）。</summary>
+        private static void AddHangfire(IServiceCollection services, string hangfireConnStr, string dbType)
         {
-            services.AddHangfire(config => config
-                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-                .UseSimpleAssemblyNameTypeSerializer()
-                .UseRecommendedSerializerSettings()
-                .UseSqlServerStorage(hangfireConnStr, new SqlServerStorageOptions
-                {
-                    QueuePollInterval = TimeSpan.FromSeconds(5),
-                    SchemaName = "Hangfire",
-                    SqlClientFactory = Microsoft.Data.SqlClient.SqlClientFactory.Instance
-                }));
+            services.AddHangfire(config =>
+            {
+                config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                    .UseSimpleAssemblyNameTypeSerializer()
+                    .UseRecommendedSerializerSettings();
+
+                if (dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
+                    config.UseInMemoryStorage();
+                else
+                    config.UseSqlServerStorage(hangfireConnStr, new SqlServerStorageOptions
+                    {
+                        QueuePollInterval = TimeSpan.FromSeconds(5),
+                        SchemaName = "Hangfire",
+                        SqlClientFactory = Microsoft.Data.SqlClient.SqlClientFactory.Instance
+                    });
+            });
             services.AddHangfireServer(options =>
             {
                 options.WorkerCount = 2;

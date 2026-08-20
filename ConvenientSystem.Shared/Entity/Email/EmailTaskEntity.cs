@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Email
 {
     /// <summary>
     /// 邮件定时任务表
     /// </summary>
-    [Table(Name = "dbo.EmailTask")]
+    [Table(Name = "EmailTask")]
     public class EmailTaskEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

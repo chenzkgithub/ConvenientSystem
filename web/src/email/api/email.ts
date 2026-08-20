@@ -11,7 +11,7 @@ export function saveEmailConfig(dto: EmailConfigDto) {
 }
 
 export function deleteEmailConfig(id: number) {
-  return httpPost<void>('/api/Email/EmailConfig/Delete', id)
+  return httpPost<void>(`/api/Email/EmailConfig/Delete?id=${id}`)
 }
 
 export function testSendEmail(req: EmailTestSendRequest) {

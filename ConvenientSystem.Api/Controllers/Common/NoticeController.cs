@@ -39,7 +39,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>标记单条通知已读（幂等）。</summary>
         [HttpPost]
-        public IActionResult MarkRead([FromBody] int noticeId)
+        public IActionResult MarkRead([FromQuery] int noticeId)
         {
             if (!TryGetDbUserId(out var userId, out var error)) return error!;
             _service.MarkRead(userId, noticeId);

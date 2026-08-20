@@ -29,6 +29,8 @@ namespace ConvenientSystem.Service.Common.SqlQuery
         // 动态数据源 IFreeSql 工厂（按数据源名称缓存实例）
         private readonly DynamicFreeSqlFactory _dsFactory;
         private readonly ICurrentUser _currentUser;
+        // 配置的数据库类型（SqlServer / Sqlite），决定内置数据源的连接方式
+        private readonly string _dbType;
 
         public DataSourceService(
             IConfiguration config,
@@ -40,6 +42,7 @@ namespace ConvenientSystem.Service.Common.SqlQuery
             _configDb = configDb;
             _dsFactory = dsFactory;
             _currentUser = currentUser;
+            _dbType = config.GetValue<string>("Database:Type") ?? "SqlServer";
         }
 
         private bool IsDataScopeAll => _currentUser.DataScope == DataScope.All;
@@ -242,7 +245,8 @@ namespace ConvenientSystem.Service.Common.SqlQuery
 
         public IFreeSql Resolve(string dsName, out string dbType)
         {
-            dbType = "sqlserver";
+            var isSqlite = _dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase);
+            dbType = isSqlite ? "sqlite" : "sqlserver";
             if (string.IsNullOrWhiteSpace(dsName))
                 throw new BadRequestException("数据源名称不能为空");
 
@@ -252,9 +256,10 @@ namespace ConvenientSystem.Service.Common.SqlQuery
             {
                 if (!IsDataScopeAll)
                     throw new ForbiddenException($"无权访问内置数据源 '{LocalDbSourceName}'");
-                var builtinConnStr = BuildLocalDbSource().ConnectionString;
-                var readOnly = !IsLocalServerConnStr(builtinConnStr);
-                return _dsFactory.Get(LocalDbSourceName, builtinConnStr, "sqlserver", readOnly);
+                var builtin = BuildLocalDbSource();
+                // Sqlite 是本地文件，始终为全权限；SqlServer 需判断是否指向本机
+                var readOnly = isSqlite ? false : !IsLocalServerConnStr(builtin.ConnectionString);
+                return _dsFactory.Get(LocalDbSourceName, builtin.ConnectionString, builtin.DbType, readOnly);
             }
 
             DataSourceDto? ds;
@@ -288,7 +293,8 @@ namespace ConvenientSystem.Service.Common.SqlQuery
         }
 
         public bool IsFullAccessSource(string? dsName) =>
-            IsLocalDbSource(dsName) && IsLocalServerConnStr(BuildLocalDbSource().ConnectionString);
+            IsLocalDbSource(dsName) && (_dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase)
+                || IsLocalServerConnStr(BuildLocalDbSource().ConnectionString));
 
         public string? GetDefaultDatabase(string dsName)
         {
@@ -369,21 +375,28 @@ namespace ConvenientSystem.Service.Common.SqlQuery
         }
 
         /// <summary>
-        /// 构造内置 ConvenientSystemDb 数据源：连接串取自配置库 ConvenientSystemDb（保证与程序自身连接一致，必然可连通），
-        /// 仅把数据库切到 master 以便浏览本机全部数据库。
+        /// 构造内置 ConvenientSystemDb 数据源：连接串取自配置库 ConvenientSystemDb（保证与程序自身连接一致，必然可连通）。
+        /// SqlServer 模式：把数据库切到 master 以便浏览本机全部数据库；
+        /// Sqlite 模式：直接使用配置的文件路径（SQLite 单库不支持切换）。
         /// </summary>
         private DataSourceDto BuildLocalDbSource()
         {
-            var builder = new SqlConnectionStringBuilder(_config.GetConnectionString(LocalDbSourceName))
+            var connStr = _config.GetConnectionString(LocalDbSourceName) ?? "";
+            var isSqlite = _dbType.Equals("Sqlite", StringComparison.OrdinalIgnoreCase);
+
+            if (!isSqlite)
             {
-                InitialCatalog = "master"
-            };
+                // SqlServer：切到 master 库以便浏览全部数据库
+                var builder = new SqlConnectionStringBuilder(connStr) { InitialCatalog = "master" };
+                connStr = builder.ConnectionString;
+            }
+
             return new DataSourceDto
             {
                 Id = 0,
                 Name = LocalDbSourceName,
-                ConnectionString = builder.ConnectionString,
-                DbType = "sqlserver",
+                ConnectionString = connStr,
+                DbType = isSqlite ? "sqlite" : "sqlserver",
                 IsBuiltIn = true
             };
         }

@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 通知已读记录表（见 db/init.sql dbo.SysNoticeRead）。
     /// 每用户每通知至多一条记录（NoticeId + UserId 唯一）。
     /// </summary>
-    [Table(Name = "dbo.SysNoticeRead")]
+    [Table(Name = "SysNoticeRead")]
     public class SysNoticeReadEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

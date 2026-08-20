@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 操作审计日志表（见 db/init.sql dbo.SysAuditLog）：仅记录写操作（POST/PUT/DELETE）。
     /// </summary>
-    [Table(Name = "dbo.SysAuditLog")]
+    [Table(Name = "SysAuditLog")]
     public class SysAuditLogEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

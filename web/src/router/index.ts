@@ -25,6 +25,14 @@ const LOCK_SCREEN_ROUTE: RouteRecordRaw = {
   component: () => import('@/common/views/LockScreenView.vue'),
 }
 
+const LOTTERY_SUMMARY_ROUTE: RouteRecordRaw = {
+  // 开奖汇总详情页：企业微信通知卡片外链入口，
+  // 静态注册不依赖菜单加载，public=1 时免登录直接打开
+  path: '/lottery-result-summary',
+  name: 'lottery-result-summary',
+  component: () => import('@/common/views/LotteryResultSummaryView.vue'),
+}
+
 const PLACEHOLDER_ROUTE: RouteRecordRaw = {
   // 未实现的菜单路由统一显示“开发中”占位
   path: '/:pathMatch(.*)*',
@@ -35,7 +43,7 @@ const PLACEHOLDER_ROUTE: RouteRecordRaw = {
 export const router = createRouter({
   // hash 模式：由 Kestrel 根提供 index.html，客户端路由无需服务端 fallback
   history: createWebHashHistory(),
-  routes: [HOME_ROUTE, EXTERNAL_ROUTE, LOCK_SCREEN_ROUTE, PLACEHOLDER_ROUTE],
+  routes: [HOME_ROUTE, EXTERNAL_ROUTE, LOCK_SCREEN_ROUTE, LOTTERY_SUMMARY_ROUTE, PLACEHOLDER_ROUTE],
 })
 
 // 捕获路由懒加载失败：chunk 丢失或网络中断时弹提示，留在当前页面

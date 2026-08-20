@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 角色表（本地配置库 ConvenientSystem，见 db/init.sql）。Code=admin 为超级管理员，全通。
     /// </summary>
-    [Table(Name = "dbo.SysRole")]
+    [Table(Name = "SysRole")]
     public class SysRoleEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

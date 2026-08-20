@@ -26,11 +26,11 @@ export function updateTemplate(dto: SmsTemplateDto) {
 }
 
 export function deleteTemplate(id: number) {
-  return httpPost<void>('/api/Sms/SmsTemplate/Delete', id)
+  return httpPost<void>(`/api/Sms/SmsTemplate/Delete?id=${id}`)
 }
 
 export function toggleTemplateEnabled(id: number) {
-  return httpPost<{ enabled: boolean }>('/api/Sms/SmsTemplate/ToggleEnabled', id)
+  return httpPost<{ enabled: boolean }>(`/api/Sms/SmsTemplate/ToggleEnabled?id=${id}`)
 }
 
 export function previewTemplate(content: string, variables: Record<string, string>) {
@@ -38,7 +38,7 @@ export function previewTemplate(content: string, variables: Record<string, strin
 }
 
 export function extractVariables(content: string) {
-  return httpPost<string[]>('/api/Sms/SmsTemplate/ExtractVariables', content)
+  return httpPost<string[]>(`/api/Sms/SmsTemplate/ExtractVariables?content=${encodeURIComponent(content)}`)
 }
 
 // ========== 日志 ==========
@@ -81,7 +81,7 @@ export function saveSmsConfig(dto: SmsProviderConfigDto) {
 }
 
 export function deleteSmsConfig(id: number) {
-  return httpPost<void>('/api/Sms/SmsConfig/Delete', id)
+  return httpPost<void>(`/api/Sms/SmsConfig/Delete?id=${id}`)
 }
 
 export function getQuotaConfig() {

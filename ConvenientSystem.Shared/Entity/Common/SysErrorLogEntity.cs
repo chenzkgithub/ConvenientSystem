@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 系统错误日志表（见 db/init.sql dbo.SysErrorLog）：由全局异常过滤器 BizExceptionFilter
     /// 在捕获未处理异常时写入，记录异常类型、消息、堆栈、请求路径与操作人。
     /// </summary>
-    [Table(Name = "dbo.SysErrorLog")]
+    [Table(Name = "SysErrorLog")]
     public class SysErrorLogEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Sms
 {
     /// <summary>
     /// 短信服务商配置表（见 db/init.sql dbo.SmsProviderConfig）
     /// </summary>
-    [Table(Name = "dbo.SmsProviderConfig")]
+    [Table(Name = "SmsProviderConfig")]
     public class SmsProviderConfigEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

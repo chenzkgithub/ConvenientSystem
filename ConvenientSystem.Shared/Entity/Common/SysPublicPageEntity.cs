@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 外部公开页面表（本地配置库 ConvenientSystem，见 db/init.sql）。
     /// 存储免登录（standalone=1）可直接访问的公开页面配置。
     /// </summary>
-    [Table(Name = "dbo.SysPublicPage")]
+    [Table(Name = "SysPublicPage")]
     public class SysPublicPageEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

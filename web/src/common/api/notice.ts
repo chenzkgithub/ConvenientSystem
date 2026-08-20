@@ -54,7 +54,7 @@ export function saveNotice(dto: NoticeDto) {
 
 /** 删除通知（连同已读记录） */
 export function deleteNotice(id: number) {
-  return httpPost<void>('/api/Common/NoticeManage/Delete', id)
+  return httpPost<void>(`/api/Common/NoticeManage/Delete?id=${id}`)
 }
 
 // ===== 用户端（NoticeController，任何已登录用户可用） =====
@@ -71,7 +71,7 @@ export function getNoticeUnreadCount() {
 
 /** 标记单条通知已读 */
 export function markNoticeRead(noticeId: number) {
-  return httpPost<void>('/api/Common/Notice/MarkRead', noticeId)
+  return httpPost<void>(`/api/Common/Notice/MarkRead?noticeId=${noticeId}`)
 }
 
 /** 全部通知标记已读 */

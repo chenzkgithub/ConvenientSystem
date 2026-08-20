@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -7,7 +7,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 存储用户级键值对配置，覆盖全局 SysConfig 中的同名键。
     /// 每用户每键唯一（UQ_UserConfig_UserId_Key）。
     /// </summary>
-    [Table(Name = "dbo.UserConfig")]
+    [Table(Name = "UserConfig")]
     public class UserConfigEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

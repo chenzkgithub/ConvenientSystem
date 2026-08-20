@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// SQL 快捷输入表（本地配置库 ConvenientSystem，见 db/init.sql）
     /// </summary>
-    [Table(Name = "dbo.SysSqlSnippet")]
+    [Table(Name = "SysSqlSnippet")]
     public class SysSqlSnippetEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 主机资源监控探测日志表（本地配置库 ConvenientSystem，见 db/init.sql；保留 30 天）
     /// </summary>
-    [Table(Name = "dbo.HostMonitorLog")]
+    [Table(Name = "HostMonitorLog")]
     public class HostMonitorLogEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

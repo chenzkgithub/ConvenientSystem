@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 系统通知表（见 db/init.sql dbo.SysNotice）。
     /// 管理员发布站内通知，发布时可按需联动邮件/短信/群机器人推送。
     /// </summary>
-    [Table(Name = "dbo.SysNotice")]
+    [Table(Name = "SysNotice")]
     public class SysNoticeEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

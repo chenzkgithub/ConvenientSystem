@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 登录用户表（本地配置库 ConvenientSystem，见 db/init.sql）
     /// </summary>
-    [Table(Name = "dbo.SysUser")]
+    [Table(Name = "SysUser")]
     public class SysUserEntity
     {
         /// <summary>用户 Id（顺序 GUID，由 SequentialGuid 生成）</summary>

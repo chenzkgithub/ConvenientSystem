@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Sms
 {
     /// <summary>
     /// 短信发送日志表（见 db/init.sql dbo.SmsLog）
     /// </summary>
-    [Table(Name = "dbo.SmsLog")]
+    [Table(Name = "SmsLog")]
     public class SmsLogEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

@@ -37,9 +37,10 @@
     <PackageReference Include="PdfiumViewer.Standard" Version="1.0.0" />
     <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
-    <!-- 短信/邮件管理模块：Hangfire 定时任务调度（SqlServer 持久化存储） -->
+    <!-- 短信/邮件管理模块：Hangfire 定时任务调度（SqlServer 持久化存储 + InMemory 用于 SQLite 模式） -->
     <PackageReference Include="Hangfire.Core" Version="1.8.24" />
     <PackageReference Include="Hangfire.SqlServer" Version="1.8.24" />
+    <PackageReference Include="Hangfire.InMemory" Version="1.0.0" />
     <PackageReference Include="Hangfire.AspNetCore" Version="1.8.24" />
     <PackageReference Include="aliyun-net-sdk-core" Version="1.6.2" />
     <!-- 权限模块：JWT 签发与校验 -->

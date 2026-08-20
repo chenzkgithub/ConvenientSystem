@@ -41,7 +41,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         /// <summary>删除配置</summary>
         [HttpPost]
         [PermissionAuthorize("webhook-config:delete")]
-        public IActionResult Delete([FromBody] int id)
+        public IActionResult Delete([FromQuery] int id)
         {
             _notifyService.Delete(id);
             return Ok();

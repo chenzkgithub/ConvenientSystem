@@ -37,7 +37,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         /// <summary>删除通知（连同已读记录）。</summary>
         [HttpPost]
         [PermissionAuthorize("notice:delete")]
-        public IActionResult Delete([FromBody] int id)
+        public IActionResult Delete([FromQuery] int id)
         {
             _service.Delete(id);
             return Ok();

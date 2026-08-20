@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 网站/API 监控目标表（本地配置库 ConvenientSystem，见 db/init.sql）
     /// </summary>
-    [Table(Name = "dbo.WebMonitorTarget")]
+    [Table(Name = "WebMonitorTarget")]
     public class WebMonitorTargetEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

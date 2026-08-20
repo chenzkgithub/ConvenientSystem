@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using PdfiumViewer.Standard;
 
 namespace ConvenientSystem.Api;
 
@@ -23,6 +25,28 @@ internal static class Program
 
     private static void Main(string[] args)
     {
+        // Linux 下启用 System.Drawing（依赖 libgdiplus）；Windows 无此开关不受影响
+        AppContext.SetSwitch("System.Drawing.EnableUnixSupport", true);
+
+        // PdfiumViewer.Standard 的 P/Invoke 声明为 [DllImport("pdfium.dll")]，
+        // Linux 上需将 pdfium.dll 映射到 libpdfium.so
+        if (OperatingSystem.IsLinux())
+        {
+            NativeLibrary.SetDllImportResolver(
+                typeof(PdfDocument).Assembly,
+                (libraryName, _, _) =>
+                {
+                    if (libraryName == "pdfium.dll")
+                    {
+                        var candidates = new[] { "/app/api/libpdfium.so", "libpdfium.so", "pdfium" };
+                        foreach (var p in candidates)
+                            if (NativeLibrary.TryLoad(p, out var h))
+                                return h;
+                    }
+                    return IntPtr.Zero;
+                });
+        }
+
         var app = BuildWebApp(args);
 
         // 从配置文件读取端口，未配置则用默认值

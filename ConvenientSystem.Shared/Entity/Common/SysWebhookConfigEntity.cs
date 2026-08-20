@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -10,7 +10,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     ///   2. 私聊机器人 (EnablePrivate=true): AppKey + AppSecret + RecipientIds
     /// 可两者都开启，则发送时群与私聊各发一次。
     /// </summary>
-    [Table(Name = "dbo.SysWebhookConfig")]
+    [Table(Name = "SysWebhookConfig")]
     public class SysWebhookConfigEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

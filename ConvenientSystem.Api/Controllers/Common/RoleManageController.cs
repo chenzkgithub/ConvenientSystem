@@ -35,7 +35,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         /// <summary>删除角色。</summary>
         [HttpPost]
         [PermissionAuthorize("role-manage:delete")]
-        public IActionResult Delete([FromBody] int id)
+        public IActionResult Delete([FromQuery] int id)
         {
             _service.Delete(id);
             return Ok();

@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 机器人发送日志表（见 db/init.sql dbo.SysWebhookLog）。
     /// 每次 SendOneAsync 发送后记录一条（群/私聊各记一条）。
     /// </summary>
-    [Table(Name = "dbo.SysWebhookLog")]
+    [Table(Name = "SysWebhookLog")]
     public class SysWebhookLogEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

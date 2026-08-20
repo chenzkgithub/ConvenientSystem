@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Email
 {
     /// <summary>
     /// 邮件 SMTP 配置表（列表化，支持多条配置）
     /// </summary>
-    [Table(Name = "dbo.EmailConfig")]
+    [Table(Name = "EmailConfig")]
     public class EmailConfigEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

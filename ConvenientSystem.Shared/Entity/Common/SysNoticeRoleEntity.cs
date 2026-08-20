@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 通知定向发送角色表（本地配置库 ConvenientSystem，见 db/init.sql）。
     /// 角色内全部用户可见该通知；与用户定向取并集，两表均无记录时默认全部人员可见。
     /// </summary>
-    [Table(Name = "dbo.SysNoticeRole")]
+    [Table(Name = "SysNoticeRole")]
     public class SysNoticeRoleEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

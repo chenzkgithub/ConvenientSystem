@@ -48,7 +48,7 @@ export function saveRole(dto: RoleSaveDto) {
 
 /** 删除角色 */
 export function deleteRole(id: number) {
-  return httpPost<void>('/api/Common/RoleManage/Delete', id)
+  return httpPost<void>(`/api/Common/RoleManage/Delete?id=${id}`)
 }
 
 /** 启用/停用角色 */

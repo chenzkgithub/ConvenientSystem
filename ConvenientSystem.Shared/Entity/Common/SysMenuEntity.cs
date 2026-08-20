@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 菜单表（本地配置库 ConvenientSystem，见 db/init.sql）
     /// </summary>
-    [Table(Name = "dbo.SysMenu")]
+    [Table(Name = "SysMenu")]
     public class SysMenuEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

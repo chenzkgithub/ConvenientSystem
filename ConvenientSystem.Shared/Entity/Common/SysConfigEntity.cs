@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 系统配置表（本地配置库 ConvenientSystem，见 db/init.sql）。
     /// 存储可界面维护的键值对配置：翻译 API 密钥、日志保留天数等。
     /// </summary>
-    [Table(Name = "dbo.SysConfig")]
+    [Table(Name = "SysConfig")]
     public class SysConfigEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

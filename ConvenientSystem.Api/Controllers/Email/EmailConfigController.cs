@@ -36,7 +36,7 @@ namespace ConvenientSystem.Api.Controllers.Email
         /// <summary>删除邮件配置</summary>
         [HttpPost]
         [PermissionAuthorize("email-config:delete")]
-        public IActionResult Delete([FromBody] int id)
+        public IActionResult Delete([FromQuery] int id)
         {
             _configService.Delete(id);
             return Ok();

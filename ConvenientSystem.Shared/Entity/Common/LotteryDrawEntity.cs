@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// 彩票开奖记录表（见 db/init.sql dbo.LotteryDraw，多彩种共用）
     /// </summary>
-    [Table(Name = "dbo.LotteryDraw")]
+    [Table(Name = "LotteryDraw")]
     public class LotteryDrawEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

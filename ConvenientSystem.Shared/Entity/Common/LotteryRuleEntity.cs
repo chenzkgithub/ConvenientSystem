@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 彩票玩法规则表（见 db/init.sql dbo.LotteryRule）：每日自官网抓取条文并按版本留存，
     /// 只有 Status=1 的版本参与判奖，条文变动时新版先以 Status=2 待审入库
     /// </summary>
-    [Table(Name = "dbo.LotteryRule")]
+    [Table(Name = "LotteryRule")]
     public class LotteryRuleEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

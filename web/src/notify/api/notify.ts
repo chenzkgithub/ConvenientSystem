@@ -18,7 +18,7 @@ export function saveWebhook(dto: WebhookConfigDto) {
 
 /** 删除配置 */
 export function deleteWebhook(id: number) {
-  return httpPost<void>('/api/Common/WebhookConfig/Delete', id)
+  return httpPost<void>(`/api/Common/WebhookConfig/Delete?id=${id}`)
 }
 
 /** 测试发送 */

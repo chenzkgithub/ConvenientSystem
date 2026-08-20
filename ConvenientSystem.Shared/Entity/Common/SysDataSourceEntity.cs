@@ -1,11 +1,11 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
     /// <summary>
     /// SQL 查询工具数据源表（本地配置库 ConvenientSystem，见 db/init.sql）
     /// </summary>
-    [Table(Name = "dbo.SysDataSource")]
+    [Table(Name = "SysDataSource")]
     public class SysDataSourceEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]

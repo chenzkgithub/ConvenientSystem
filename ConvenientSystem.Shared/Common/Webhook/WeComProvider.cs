@@ -96,7 +96,7 @@ namespace ConvenientSystem.Shared.Common.Webhook
 
             var baseUrl = GetPublicAppUrl()?.TrimEnd('/') ?? "http://127.0.0.1:51943";
             var summaryDate = ParseDateFromSubtitle(parsed.Subtitle) ?? DateTime.Today;
-            var detailUrl = $"{baseUrl}/#/lottery-result-summary?standalone=1&date={summaryDate:yyyy-MM-dd}";
+            var detailUrl = $"{baseUrl}/#/lottery-result-summary?public=1&date={summaryDate:yyyy-MM-dd}";
 
             var card = new Dictionary<string, object>
             {

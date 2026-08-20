@@ -36,7 +36,7 @@ namespace ConvenientSystem.Api.Controllers.Sms
         /// <summary>删除短信配置</summary>
         [HttpPost]
         [PermissionAuthorize("sms-config:delete")]
-        public IActionResult Delete([FromBody] int id)
+        public IActionResult Delete([FromQuery] int id)
         {
             _configService.Delete(id);
             return Ok();

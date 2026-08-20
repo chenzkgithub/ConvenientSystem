@@ -1,4 +1,4 @@
-using FreeSql.DataAnnotations;
+﻿using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -6,7 +6,7 @@ namespace ConvenientSystem.Shared.Entity.Common
     /// 主机资源监控目标表（本地配置库 ConvenientSystem，见 db/init.sql）。
     /// 支持磁盘/内存/CPU 使用率阈值告警与 Windows 服务运行状态检查。
     /// </summary>
-    [Table(Name = "dbo.HostMonitorTarget")]
+    [Table(Name = "HostMonitorTarget")]
     public class HostMonitorTargetEntity
     {
         [Column(IsPrimary = true, IsIdentity = true)]
