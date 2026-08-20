@@ -341,6 +341,9 @@ namespace ConvenientSystem.Api
 
             // 云汉考勤
             services.AddSingleton<IAttendanceService, AttendanceService>();
+
+            // Web 前端版本包管理（桌面客户端更新）
+            services.AddSingleton<IWebPackageService, WebPackageService>();
         }
     }
 }

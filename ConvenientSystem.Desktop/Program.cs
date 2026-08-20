@@ -71,6 +71,25 @@ internal static class Program
         // 这样每次启动都能保持项目目录干净，无需手动执行 dotnet clean。
         CleanBuildArtifacts();
 
+        // ========== Web 前端版本检查 ==========
+        // 首次安装（wwwroot 为空）→ 静默下载初始版本
+        // 已有版本 → 检查服务器版本，有新版本则弹窗让用户选择是否更新
+        var wwwrootDir = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        var config = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: true)
+            .Build();
+        var remoteUrl = (config["AppSettings:RemoteServerUrl"] ?? string.Empty).Trim();
+        var remoteBaseUrl = !string.IsNullOrEmpty(remoteUrl) ? $"http://{remoteUrl.TrimEnd('/')}" : string.Empty;
+
+        if (!string.IsNullOrEmpty(remoteBaseUrl))
+        {
+            if (!File.Exists(Path.Combine(wwwrootDir, "index.html")))
+                WebUpdateService.DownloadInitialAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+            else
+                WebUpdateService.CheckAndShowDialogAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+        }
+
         var app = BuildWebApp(args);
 
         // 仅监听本机回环地址（127.0.0.1），不对外暴露服务。
@@ -140,6 +159,9 @@ internal static class Program
     private static WebApplication BuildWebApp(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+
+        // wwwroot 指向 exe 同级目录（非嵌入静态资源），由版本管理服务下载更新
+        builder.Environment.WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 
         // 反向代理 HttpClient
         builder.Services.AddHttpClient("ReverseProxy", client =>

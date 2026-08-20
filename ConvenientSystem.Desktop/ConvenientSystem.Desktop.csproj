@@ -18,6 +18,8 @@
     <NoWarn>$(NoWarn);CS8618</NoWarn>
     <!-- 抑制 WebView2 WPF 组件引入的 WindowsBase 版本冲突警告（无害） -->
     <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+    <!-- 禁用 Static Web Assets：wwwroot 不嵌入 exe，由外部目录（exe 同级 wwwroot）提供静态文件 -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,10 +36,8 @@
     <!-- appsettings.json 由 Web SDK 自动包含并复制到输出目录 -->
   </ItemGroup>
 
-  <!-- Release 构建时自动构建 Vue 前端到本项目 wwwroot；Debug 走 vite dev，不触发 npm。
-       可用 -p:SkipVueBuild=true 跳过（例如 publish.cmd 已先手动 npm run build）。
-       CleanWebAssets 与 BuildVueClient 必须同时受 SkipVueBuild 控制，
-       否则 publish.cmd 先 npm run build 产出 assets，dotnet publish 又 Clean 一次导致 assets 被删空。 -->
+  <!-- 安装包模式下 wwwroot 由服务器下载，不再在 dotnet publish 时构建 Vue 前端。
+       开发时手动 npm run build 并将产物复制到 wwwroot 即可。
   <Target Name="CleanWebAssets" BeforeTargets="BuildVueClient" Condition="'$(Configuration)'=='Release' and '$(SkipVueBuild)'!='true'">
     <RemoveDir Directories="$(MSBuildProjectDirectory)\wwwroot\assets" />
     <Delete Files="$(MSBuildProjectDirectory)\wwwroot\index.html" Condition="Exists('$(MSBuildProjectDirectory)\wwwroot\index.html')" />
@@ -60,5 +60,6 @@
     <Exec Command="npm ci" WorkingDirectory="..\web" Condition="!Exists('..\web\node_modules')" />
     <Exec Command="npm run build" WorkingDirectory="..\web" />
   </Target>
+  -->
 
 </Project>

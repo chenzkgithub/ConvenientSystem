@@ -1,4 +1,5 @@
 using ConvenientSystem.Api.Middleware;
+using Microsoft.AspNetCore.Http.Features;
 using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Email;
 using ConvenientSystem.Shared.Common.Sms;
@@ -92,6 +93,10 @@ internal static class Program
 
         // 全部依赖注入登记（数据库、定时任务、短信/邮件、业务服务）。
         ServicesExtent.ConfigureServices(builder.Services, builder.Configuration);
+
+        // 放宽上传大小限制：Web 版本包 zip 最大 200MB
+        builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 200 * 1024 * 1024);
+        builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 210_000_000);
 
         var app = builder.Build();
 

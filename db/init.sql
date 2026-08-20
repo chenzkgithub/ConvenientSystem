@@ -17,6 +17,18 @@ GO
 USE [ConvenientSystem];
 GO
 
+-- ========== 创建 root 账号（供 API 连接使用，非 SA） ==========
+USE master;
+IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'root')
+    CREATE LOGIN root WITH PASSWORD = N'root', CHECK_POLICY = OFF;
+GO
+USE [ConvenientSystem];
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'root')
+    CREATE USER root FOR LOGIN root;
+GO
+ALTER ROLE db_owner ADD MEMBER root;
+GO
+
 -- ========== 注释维护辅助存储过程（幂等） ==========
 CREATE OR ALTER PROCEDURE dbo.usp_AddTableComment
     @tableName NVARCHAR(128),
@@ -85,6 +97,7 @@ BEGIN
         Email       NVARCHAR(100)      NULL,
         Remark      NVARCHAR(200)      NULL,
         Enabled     BIT                NOT NULL DEFAULT 1,
+        IsDeleted   BIT                NOT NULL DEFAULT 0,
         CreateTime  DATETIME           NOT NULL DEFAULT GETDATE(),
         CONSTRAINT UQ_SysUser_Account UNIQUE (Account)
     );
@@ -104,9 +117,9 @@ EXEC dbo.usp_AddColumnComment N'SysUser', N'Enabled',     N'是否启用';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'CreateTime',  N'创建时间';
 GO
 
--- 初始账号（与原 appsettings.json 的 AppSettings:LoginAccount/LoginPassword 一致）
+-- 初始账号（密码 admin 的 PBKDF2 哈希，避免明文存储；首版可用 PasswordHasher.Verify 校验）
 IF NOT EXISTS (SELECT 1 FROM dbo.SysUser)
-    INSERT INTO dbo.SysUser (Account, Password, DisplayName) VALUES (N'admin', N'admin', N'管理员');
+    INSERT INTO dbo.SysUser (Account, Password, DisplayName) VALUES (N'admin', N'pbkdf2$100000$weNyoN62VQm4jyrAnmBTIQ==$bWOhLMXFgid8uBAXdFiCopECopJiwrRqpkTNDE/9mYA=', N'管理员');
 GO
 
 -- ========== 2. SQL 查询工具数据源表（原 datasources.xml） ==========
@@ -183,52 +196,114 @@ EXEC dbo.usp_AddColumnComment N'SysMenu', N'SortOrder',  N'同级排序号';
 EXEC dbo.usp_AddColumnComment N'SysMenu', N'Type',       N'节点类型：0=Group 1=Page 2=Button';
 GO
 
--- 初始菜单（迁移自 menus.xml，同名顶层分组"昀晗"已按读取逻辑合并）
+-- 初始菜单（从本地数据库导出，保持与线上完全一致）
 IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu)
 BEGIN
     SET IDENTITY_INSERT dbo.SysMenu ON;
 
-    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder) VALUES
-    -- 顶层
-    ( 1, 34, N'菜单管理', N'/menu-manage', 0, 1, 0, 0, N'menu-manage', N'/src/common/views/MenuManageView.vue', 1),
-    ( 2, NULL, N'昀晗',     NULL,            0, 1, 0, 1, NULL, NULL, 2),
-    ( 8, NULL, N'开发工具', NULL,            0, 1, 0, 1, NULL, NULL, 3),
-    (12, NULL, N'常用工具', NULL,            0, 1, 0, 1, NULL, NULL, 4),
-    (19, NULL, N'国家公益事业', NULL,        0, 1, 0, 1, NULL, NULL, 5),
-    (24, NULL, N'短信管理',   NULL,            0, 1, 0, 1, NULL, NULL, 6),
-    (29, NULL, N'任务调度',   N'/hangfire',     1, 1, 0, 1, N'hangfire', N'/src/common/views/HangfireView.vue', 7),
+    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type) VALUES
+    -- 系统管理
+    ( 1, NULL, N'系统管理', NULL, 0, 1, 0, 0, 1, NULL, NULL, 1, 0),
+    ( 2, 1, N'系统配置', N'/sys-config', 0, 1, 0, 0, 1, N'sys-config', N'/src/common/views/SysConfigView.vue', 1, 1),
+    ( 3, 1, N'个人配置', N'/personal-config', 0, 1, 0, 0, 1, N'personal-config', N'/src/common/views/PersonalConfigView.vue', 2, 1),
+    ( 4, 1, N'视图管理', N'/view-manage', 0, 1, 0, 0, 1, N'view-manage', N'/src/common/views/ViewManageView.vue', 3, 1),
+    ( 5, 1, N'菜单管理', N'/menu-manage', 0, 1, 0, 0, 1, N'menu-manage', N'/src/common/views/MenuManageView.vue', 4, 1),
+    ( 6, 1, N'用户管理', N'/user-manage', 0, 1, 0, 0, 1, N'user-manage', N'/src/common/views/UserManageView.vue', 5, 1),
+    ( 7, 1, N'角色管理', N'/role-manage', 0, 1, 0, 0, 1, N'role-manage', N'/src/common/views/RoleManageView.vue', 6, 1),
+    ( 8, 1, N'权限设置', N'/permission', 0, 1, 0, 0, 1, N'permission', N'/src/common/views/PermissionView.vue', 7, 1),
+    ( 9, 1, N'在线用户', N'/online-users', 0, 1, 0, 0, 1, N'online-users', N'/src/common/views/UserOnlineView.vue', 8, 1),
+    (10, 1, N'外部页面', N'/sys-public-page', 0, 1, 0, 0, 1, N'sys-public-page', N'/src/common/views/SysPublicPageView.vue', 9, 1),
+    (11, 1, N'通知管理', N'/notice', 0, 1, 0, 0, 1, N'notice', N'/src/common/views/NoticeManageView.vue', 10, 1),
+    (12, 1, N'系统大盘', N'/system-dashboard', 0, 1, 0, 1, 1, N'system-dashboard', N'/src/common/views/SystemDashboardView.vue', 11, 1),
+    (13, 1, N'定时任务', N'/hangfire-jobs', 0, 1, 0, 1, 1, N'hangfire-jobs', N'/src/common/views/HangfireJobsView.vue', 12, 1),
+    -- 日志
+    (14, NULL, N'日志', NULL, 0, 1, 0, 1, 1, N'log-group', NULL, 2, 1),
+    (15, 14, N'审计日志', N'/audit-log', 0, 1, 0, 0, 1, N'audit-log', N'/src/common/views/AuditLogView.vue', 1, 1),
+    (16, 14, N'错误日志', N'/error-log', 0, 1, 0, 0, 1, N'error-log', N'/src/common/views/ErrorLogView.vue', 2, 1),
+    (17, 14, N'实时日志', N'/log-viewer', 0, 1, 0, 1, 1, N'log-viewer', N'/src/common/views/LogViewerView.vue', 3, 1),
     -- 昀晗
-    ( 3, 2, N'考勤查询', N'/attendance', 1, 1, 0, 1, N'attendance', N'/src/yunhan/views/AttendanceView.vue', 1),
-    ( 4, 2, N'项目管理', N'http://192.168.16.240:7003/yhproj/sheetIndex', 1, 1, 1, 1, NULL, NULL, 2),
-    ( 5, 2, N'ERP系统',  NULL, 0, 1, 0, 1, NULL, NULL, 3),
-    ( 6, 5, N'正式-ERP系统', N'http://192.168.16.240:8001/', 1, 1, 1, 1, NULL, NULL, 1),
-    ( 7, 5, N'测试-ERP系统', N'http://192.168.16.240:8000/', 1, 1, 1, 1, NULL, NULL, 2),
+    (18, NULL, N'昀晗', NULL, 0, 1, 0, 1, 1, NULL, NULL, 3, 0),
+    (19, 18, N'考勤查询', N'/attendance', 1, 1, 0, 1, 1, N'attendance', N'/src/yunhan/views/AttendanceView.vue', 1, 1),
+    (20, 18, N'项目管理', N'http://192.168.16.240:7003/yhproj/sheetIndex', 1, 1, 1, 1, 1, NULL, NULL, 2, 1),
+    (21, 18, N'ERP系统', NULL, 0, 1, 0, 1, 1, NULL, NULL, 3, 0),
+    (22, 21, N'测试-ERP系统', N'http://192.168.16.240:8000/', 1, 1, 1, 1, 1, NULL, NULL, 1, 1),
+    (23, 21, N'正式-ERP系统', N'http://192.168.16.240:8001/', 1, 1, 1, 1, 1, NULL, NULL, 2, 1),
     -- 开发工具
-    ( 9, 8, N'代码编辑器', N'/code-editor', 1, 1, 0, 1, N'code-editor', N'/src/common/views/CodeEditorView.vue', 1),
-    (10, 8, N'开发工具集', N'/dev-tools',   1, 1, 0, 1, N'dev-tools',   N'/src/common/views/DevToolsView.vue', 2),
-    (11, 8, N'SQL查询',    N'/sql-query',   1, 1, 0, 1, N'sql-query',   N'/src/common/views/SqlQueryView.vue', 3),
-    (47, 8, N'命名转换',    N'/code-naming', 1, 1, 0, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4),
+    (24, NULL, N'开发工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 4, 0),
+    (25, 24, N'代码编辑器', N'/code-editor', 1, 1, 0, 1, 1, N'code-editor', N'/src/common/views/CodeEditorView.vue', 1, 1),
+    (26, 24, N'开发工具集', N'/dev-tools', 1, 1, 0, 1, 1, N'dev-tools', N'/src/common/views/DevToolsView.vue', 2, 1),
+    (27, 24, N'SQL查询', N'/sql-query', 1, 1, 0, 1, 1, N'sql-query', N'/src/common/views/SqlQueryView.vue', 3, 1),
+    (28, 24, N'命名转换', N'/code-naming', 1, 1, 0, 1, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4, 1),
     -- 常用工具（外链）
-    (13, 12, N'有道词典', N'https://note.youdao.com/web/#/file/WEBf6433cf7e1e375c6ce4268cefeff88ea/note/WEBa6c175a7e3dbc9e5540d70f3316691e2/', 1, 1, 1, 1, NULL, NULL, 1),
-    (14, 12, N'云效',     N'https://devops.aliyun.com/workbench', 1, 1, 1, 1, NULL, NULL, 2),
-    (15, 12, N'百度翻译', N'https://fanyi.baidu.com/mtpe-individual/transText?ext_channel=Aldtype01&from=auto&to=zh&query=#/', 1, 1, 1, 1, NULL, NULL, 3),
-    (16, 12, N'deepseek', N'https://chat.deepseek.com/a/chat/s/e0d4cb7c-ae35-47f9-81b7-7ec67d905ffd', 1, 1, 1, 1, NULL, NULL, 4),
-    (17, 12, N'豆包',     N'https://www.doubao.com/chat/38435646902862338?channel=dbweb_sem_pinz_pinp_zongh_tongy_tongy_ocpc_faxx_9', 1, 1, 1, 1, NULL, NULL, 5),
-    (18, 12, N'json格式化', N'https://www.sojson.com/', 1, 1, 1, 1, NULL, NULL, 6),
-    -- 国家公益事业（内置走势图+选号页面，多彩种共用 LotteryView，按 type 区分彩种）
-    (20, 19, N'双色球', N'/lottery?type=SSQ',  1, 1, 0, 1, N'lottery-ssq',  N'/src/common/views/LotteryView.vue', 1),
-    (21, 19, N'大乐透', N'/lottery',           1, 1, 0, 1, N'lottery',      N'/src/common/views/LotteryView.vue', 2),
-    (22, 19, N'排列五', N'/lottery?type=PL5',  1, 1, 0, 1, N'lottery-pl5',  N'/src/common/views/LotteryView.vue', 3),
-    (23, 19, N'福彩3D', N'/lottery?type=FC3D', 1, 1, 0, 1, N'lottery-fc3d', N'/src/common/views/LotteryView.vue', 4),
-    (43, 19, N'选号记录', N'/lottery-records', 0, 1, 0, 1, N'lottery-records', N'/src/common/views/LotteryRecordsView.vue', 5),
-    (46, 19, N'智能分析', N'/lottery-analysis', 0, 1, 0, 1, N'lottery-analysis', N'/src/common/views/LotteryAnalysisView.vue', 6),
+    (29, NULL, N'常用工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
+    (30, 29, N'有道词典', N'https://note.youdao.com/web/#/file/WEBf6433cf7e1e375c6ce4268cefeff88ea/note/WEBa6c175a7e3dbc9e5540d70f3316691e2/', 1, 1, 1, 1, 1, NULL, NULL, 1, 1),
+    (31, 29, N'云效', N'https://devops.aliyun.com/workbench', 1, 1, 1, 1, 1, NULL, NULL, 2, 1),
+    (32, 29, N'百度翻译', N'https://fanyi.baidu.com/mtpe-individual/transText?ext_channel=Aldtype01&from=auto&to=zh&query=#/', 1, 1, 1, 1, 1, NULL, NULL, 3, 1),
+    (33, 29, N'deepseek', N'https://chat.deepseek.com/a/chat/s/e0d4cb7c-ae35-47f9-81b7-7ec67d905ffd', 1, 1, 1, 1, 1, NULL, NULL, 4, 1),
+    (34, 29, N'豆包', N'https://www.doubao.com/chat/38435646902862338?channel=dbweb_sem_pinz_pinp_zongh_tongy_tongy_ocpc_faxx_9', 1, 1, 1, 1, 1, NULL, NULL, 5, 1),
+    (35, 29, N'json格式化', N'https://www.sojson.com/', 1, 1, 1, 1, 1, NULL, NULL, 6, 1),
+    -- 国家公益事业
+    (36, NULL, N'国家公益事业', NULL, 0, 1, 0, 1, 1, NULL, NULL, 6, 0),
+    (37, 36, N'双色球', N'/lottery?type=SSQ', 1, 1, 0, 1, 1, N'lottery-ssq', N'/src/common/views/LotteryView.vue', 1, 1),
+    (38, 36, N'大乐透', N'/lottery', 1, 1, 0, 1, 1, N'lottery', N'/src/common/views/LotteryView.vue', 2, 1),
+    (39, 36, N'排列五', N'/lottery?type=PL5', 1, 1, 0, 1, 1, N'lottery-pl5', N'/src/common/views/LotteryView.vue', 3, 1),
+    (40, 36, N'福彩3D', N'/lottery?type=FC3D', 1, 1, 0, 1, 1, N'lottery-fc3d', N'/src/common/views/LotteryView.vue', 4, 1),
+    (41, 36, N'选号记录', N'/lottery-records', 0, 1, 0, 1, 1, N'lottery-records', N'/src/common/views/LotteryRecordsView.vue', 5, 1),
+    (42, 36, N'智能分析', N'/lottery-analysis', 0, 1, 0, 1, 1, N'lottery-analysis', N'/src/common/views/LotteryAnalysisView.vue', 6, 1),
     -- 短信管理
-    (25, 24, N'模板管理', N'/sms-template', 0, 1, 0, 1, N'sms-template', N'/src/sms/views/SmsTemplateView.vue', 1),
-    (27, 24, N'发送日志', N'/sms-log',      0, 1, 0, 1, N'sms-log',      N'/src/sms/views/SmsLogView.vue',      2),
-    (28, 24, N'短信配置', N'/sms-config',   0, 1, 0, 1, N'sms-config',   N'/src/sms/views/SmsConfigView.vue',   3);
+    (43, NULL, N'短信管理', NULL, 0, 1, 0, 1, 1, NULL, NULL, 7, 0),
+    (44, 43, N'模板管理', N'/sms-template', 0, 1, 0, 1, 1, N'sms-template', N'/src/sms/views/SmsTemplateView.vue', 1, 1),
+    (45, 43, N'发送日志', N'/sms-log', 0, 1, 0, 1, 1, N'sms-log', N'/src/sms/views/SmsLogView.vue', 2, 1),
+    (46, 43, N'系统配置', N'/sms-config', 0, 1, 0, 1, 1, N'sms-config', N'/src/sms/views/SmsConfigView.vue', 3, 1),
+    -- 邮件通知
+    (47, NULL, N'邮件通知', NULL, 0, 1, 0, 1, 1, NULL, NULL, 8, 0),
+    (48, 47, N'邮件配置', N'/email-config', 0, 1, 0, 1, 1, N'email-config', N'/src/email/views/EmailConfigView.vue', 1, 1),
+    (49, 47, N'发送日志', N'/email-log', 0, 1, 0, 1, 1, N'email-log', N'/src/email/views/EmailLogView.vue', 2, 1),
+    -- 机器人
+    (50, NULL, N'机器人', NULL, 0, 1, 0, 1, 1, NULL, NULL, 9, 0),
+    (51, 50, N'群机器人', N'/webhook-config', 0, 1, 0, 0, 1, N'webhook-config', N'/src/notify/views/WebhookConfigView.vue', 1, 1),
+    (52, 50, N'发送日志', N'/webhook-log', 0, 1, 0, 1, 1, N'webhook-log', N'/src/notify/views/WebhookLogView.vue', 2, 1),
+    -- 任务调度（独立浮窗）
+    (53, NULL, N'任务调度', N'/hangfire', 1, 1, 0, 0, 1, N'hangfire', N'/src/common/views/HangfireView.vue', 10, 1),
+    -- 监控
+    (54, NULL, N'监控', NULL, 0, 1, 0, 1, 1, NULL, NULL, 11, 0),
+    (55, 54, N'网站监控', N'/web-monitor', 0, 1, 0, 1, 1, N'web-monitor', N'/src/common/views/WebMonitorView.vue', 1, 1),
+    (56, 54, N'主机监控', N'/host-monitor', 1, 1, 0, 1, 1, N'host-monitor', N'/src/common/views/HostMonitorView.vue', 2, 1),
+    -- 知识库
+    (57, NULL, N'知识库', NULL, 0, 1, 0, 1, 1, NULL, NULL, 12, 0),
+    (58, 57, N'Python', N'/python-knowledge', 0, 1, 0, 1, 1, N'python-knowledge', N'/src/common/views/PythonKnowledgeView.vue', 1, 1),
+    -- 系统管理 > Web版本管理
+    (59, 1, N'Web版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 13, 1);
 
     SET IDENTITY_INSERT dbo.SysMenu OFF;
 END
+GO
+
+-- ========== 3.5 Web 前端版本包表 ==========
+IF OBJECT_ID(N'dbo.WebPackage') IS NULL
+BEGIN
+    CREATE TABLE dbo.WebPackage (
+        Id              INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        Version         NVARCHAR(50)      NOT NULL,
+        FileName        NVARCHAR(200)     NOT NULL,
+        FileSize        BIGINT            NOT NULL DEFAULT 0,
+        Description     NVARCHAR(500)     NULL,
+        IsActive        BIT               NOT NULL DEFAULT 0,
+        CreateTime      DATETIME          NOT NULL DEFAULT GETDATE(),
+        CreatedById     UNIQUEIDENTIFIER  NULL
+    );
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'WebPackage', N'Web 前端版本包（桌面客户端更新用）';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'Id',          N'主键';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'Version',     N'版本号（如 1.0.0）';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'FileName',    N'存储文件名';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'FileSize',    N'文件大小（字节）';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'Description', N'更新说明';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'IsActive',    N'是否当前激活版本（桌面端下载此版本）';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'CreateTime',  N'上传时间';
+EXEC dbo.usp_AddColumnComment N'WebPackage', N'CreatedById', N'上传人用户 Id（GUID，关联 SysUser.Id）';
 GO
 
 -- ========== 4. SQL 快捷输入表 ==========
@@ -602,17 +677,7 @@ EXEC dbo.usp_AddColumnComment N'EmailLog', N'CreateTime',   N'创建时间';
 EXEC dbo.usp_AddColumnComment N'EmailLog', N'CreatedById',  N'创建人用户 Id（GUID，关联 SysUser.Id；系统自动发送时为 NULL）';
 GO
 
--- 邮件管理菜单
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Title = N'邮件通知')
-BEGIN
-    SET IDENTITY_INSERT dbo.SysMenu ON;
-    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder) VALUES
-    (30, NULL, N'邮件通知', NULL, 0, 1, 0, 1, NULL, NULL, 8),
-    (31, 30, N'邮件配置', N'/email-config', 0, 1, 0, 1, N'email-config', N'/src/email/views/EmailConfigView.vue', 1),
-    (33, 30, N'发送日志', N'/email-log',    0, 1, 0, 1, N'email-log',    N'/src/email/views/EmailLogView.vue',    2);
-    SET IDENTITY_INSERT dbo.SysMenu OFF;
-END
-GO
+-- 邮件管理菜单（已合并到上方初始菜单块）
 
 -- ========== 系统通知模块（站内通知 + 邮件/短信/群机器人联动推送） ==========
 
@@ -1061,166 +1126,9 @@ BEGIN
 END
 GO
 
--- 系统管理菜单（菜单管理/用户管理/角色管理/权限设置/审计日志/在线用户/错误日志/通知管理），均不可在菜单管理中编辑
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Title = N'系统管理')
-BEGIN
-    SET IDENTITY_INSERT dbo.SysMenu ON;
-    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder) VALUES
-    (34, NULL, N'系统管理', NULL, 0, 1, 0, 0, NULL, NULL, 10),
-    (35, 34, N'用户管理', N'/user-manage',    0, 1, 0, 0, N'user-manage',    N'/src/common/views/UserManageView.vue',    2),
-    (36, 34, N'角色管理', N'/role-manage',    0, 1, 0, 0, N'role-manage',    N'/src/common/views/RoleManageView.vue',    3),
-    (39, 34, N'权限设置', N'/permission',     0, 1, 0, 0, N'permission',     N'/src/common/views/PermissionView.vue',     4),
-    (40, 34, N'在线用户', N'/online-users',   0, 1, 0, 0, N'online-users',   N'/src/common/views/UserOnlineView.vue',    5),
-    (42, 34, N'通知管理', N'/notice',         0, 1, 0, 0, N'notice',         N'/src/common/views/NoticeManageView.vue',  6),
-    (48, 34, N'系统配置', N'/sys-config',      0, 1, 0, 0, N'sys-config',     N'/src/common/views/SysConfigView.vue',     1),
-    (49, 34, N'外部页面', N'/sys-public-page', 0, 1, 0, 0, N'sys-public-page', N'/src/common/views/SysPublicPageView.vue', 7),
-    (50, 34, N'个人配置', N'/personal-config', 0, 1, 0, 0, N'personal-config', N'/src/common/views/PersonalConfigView.vue', 8),
-    (51, 34, N'系统大盘', N'/system-dashboard', 0, 1, 0, 0, N'system-dashboard', N'/src/common/views/SystemDashboardView.vue', 9),
-    (52, 34, N'定时任务', N'/hangfire-jobs',    0, 1, 0, 0, N'hangfire-jobs',    N'/src/common/views/HangfireJobsView.vue',    10),
-    (55, 34, N'视图管理', N'/view-manage',      0, 1, 0, 0, N'view-manage',      N'/src/common/views/ViewManageView.vue',      0),
-    (37, 54, N'审计日志', N'/audit-log',      0, 1, 0, 0, N'audit-log',      N'/src/common/views/AuditLogView.vue',      1),
-    (41, 54, N'错误日志', N'/error-log',      0, 1, 0, 0, N'error-log',      N'/src/common/views/ErrorLogView.vue',      2),
-    (53, 54, N'实时日志', N'/log-viewer',     0, 1, 0, 0, N'log-viewer',     N'/src/common/views/LogViewerView.vue',      3);
-    SET IDENTITY_INSERT dbo.SysMenu OFF;
-END
-GO
+-- 系统管理菜单（已合并到上方初始菜单块）
 
--- 日志分组（一级菜单，与系统管理同级，排在其后）
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Title = N'系统管理')
-BEGIN
-    SET IDENTITY_INSERT dbo.SysMenu ON;
-    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder) VALUES
-    (54, NULL, N'日志',     NULL,               0, 1, 0, 0, N'log-group',      NULL,                                        11);
-    SET IDENTITY_INSERT dbo.SysMenu OFF;
-END
-GO
-
--- 系统配置菜单幂等补齐（已有库补充菜单用）
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'sys-config')
-BEGIN
-    DECLARE @SysConfigMenuParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理');
-    IF @SysConfigMenuParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@SysConfigMenuParentId, N'系统配置', N'/sys-config', 0, 1, 0, 0, N'sys-config', N'/src/common/views/SysConfigView.vue', 1);
-END
-GO
-
--- 外部页面菜单幂等补齐（已有库补充菜单用）
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'sys-public-page')
-BEGIN
-    DECLARE @SysPublicPageMenuParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理');
-    IF @SysPublicPageMenuParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@SysPublicPageMenuParentId, N'外部页面', N'/sys-public-page', 0, 1, 0, 0, N'sys-public-page', N'/src/common/views/SysPublicPageView.vue', 9);
-END
-GO
-
--- 个人配置菜单幂等补齐（已有库补充菜单用）
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'personal-config')
-BEGIN
-    DECLARE @PersonalConfigMenuParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理');
-    IF @PersonalConfigMenuParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@PersonalConfigMenuParentId, N'个人配置', N'/personal-config', 0, 1, 0, 0, N'personal-config', N'/src/common/views/PersonalConfigView.vue', 10);
-END
-GO
-
--- 视图管理菜单幂等补齐（已有库补充菜单用）
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'view-manage')
-BEGIN
-    DECLARE @ViewManageParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理');
-    IF @ViewManageParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@ViewManageParentId, N'视图管理', N'/view-manage', 0, 1, 0, 0, N'view-manage', N'/src/common/views/ViewManageView.vue', 0);
-END
-GO
-
--- 机器人菜单（群机器人配置 + 发送日志）
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Id = 44)
-BEGIN
-    SET IDENTITY_INSERT dbo.SysMenu ON;
-    INSERT INTO dbo.SysMenu (Id, ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder) VALUES
-    (44, NULL, N'机器人', NULL, 0, 1, 0, 1, NULL, NULL, 9),
-    (38, 44,  N'群机器人', N'/webhook-config', 0, 1, 0, 0, N'webhook-config', N'/src/notify/views/WebhookConfigView.vue', 1),
-    (45, 44,  N'发送日志', N'/webhook-log',    0, 1, 0, 1, N'webhook-log',    N'/src/notify/views/WebhookLogView.vue',    2);
-    SET IDENTITY_INSERT dbo.SysMenu OFF;
-END
-GO
-
--- 老库补齐“通知管理”菜单（幂等）：系统管理分组已存在但缺该菜单时按 Name 补齐，无需固定 Id
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'notice')
-BEGIN
-    DECLARE @NoticeParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理');
-    IF @NoticeParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@NoticeParentId, N'通知管理', N'/notice', 0, 1, 0, 0, N'notice', N'/src/common/views/NoticeManageView.vue', 9);
-END
-GO
-
--- 老库补齐“选号记录”菜单（幂等）：国家公益事业分组已存在但缺该菜单时按 Name 补齐，无需固定 Id
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'lottery-records')
-BEGIN
-    DECLARE @LotteryRecordsParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'国家公益事业');
-    IF @LotteryRecordsParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@LotteryRecordsParentId, N'选号记录', N'/lottery-records', 0, 1, 0, 1, N'lottery-records', N'/src/common/views/LotteryRecordsView.vue', 5);
-END
-GO
-
--- 老库补齐"智能分析"菜单（幂等）：国家公益事业分组下，按 Name 判重无需固定 Id
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'lottery-analysis')
-BEGIN
-    DECLARE @AnalysisParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'国家公益事业');
-    IF @AnalysisParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@AnalysisParentId, N'智能分析', N'/lottery-analysis', 0, 1, 0, 1, N'lottery-analysis', N'/src/common/views/LotteryAnalysisView.vue', 6);
-END
-GO
-
--- 老库补齐"监控"顶级分组（幂等）：网站监控/主机监控统一挂在该分组下
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Title = N'监控' AND ParentId IS NULL)
-    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-    VALUES (NULL, N'监控', NULL, 0, 1, 0, 1, NULL, NULL, 8);
-GO
-
--- 老库补齐“网站监控”菜单（幂等）：挂在监控分组下，按 Name 判重无需固定 Id
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'web-monitor')
-BEGIN
-    DECLARE @WebMonitorParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'监控' AND ParentId IS NULL);
-    IF @WebMonitorParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@WebMonitorParentId, N'网站监控', N'/web-monitor', 0, 1, 0, 1, N'web-monitor', N'/src/common/views/WebMonitorView.vue', 1);
-END
-GO
-
--- 老库补齐“主机监控”菜单（幂等）：挂在监控分组下，按 Name 判重无需固定 Id
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'host-monitor')
-BEGIN
-    DECLARE @HostMonitorParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'监控' AND ParentId IS NULL);
-    IF @HostMonitorParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@HostMonitorParentId, N'主机监控', N'/host-monitor', 0, 1, 0, 1, N'host-monitor', N'/src/common/views/HostMonitorView.vue', 2);
-END
-GO
-
--- 存量迁移（幂等）：已在其它分组/顶层的网站监控、主机监控统一移动到“监控”分组下
-DECLARE @MonitorGroupId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'监控' AND ParentId IS NULL);
-IF @MonitorGroupId IS NOT NULL
-    UPDATE dbo.SysMenu
-    SET ParentId = @MonitorGroupId
-    WHERE Name IN (N'web-monitor', N'host-monitor')
-      AND ((ParentId IS NULL AND Id <> @MonitorGroupId) OR (ParentId IS NOT NULL AND ParentId <> @MonitorGroupId));
-GO
-
--- 老库补齐"命名转换"菜单（幂等）：开发工具分组下，按 Name 判重无需固定 Id
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'code-naming')
-BEGIN
-    DECLARE @CodeNamingParentId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'开发工具');
-    IF @CodeNamingParentId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@CodeNamingParentId, N'命名转换', N'/code-naming', 1, 1, 0, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4);
-END
-GO
+-- 以下菜单幂等补齐块已全部合并到上方初始菜单块（Id 1-58），无需单独维护
 
 -- 种子角色：超级管理员（管理员=全部数据范围）
 IF NOT EXISTS (SELECT 1 FROM dbo.SysRole WHERE Code = N'admin')

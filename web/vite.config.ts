@@ -31,8 +31,8 @@ export default defineConfig(({ command }) => ({
     // 注意 51942 是桌面客户端静态站点的端口，不是接口服务的端口，勿混用。
     // 后端统一 area 路由 api/{area}/{controller}/{action}，故一条 /api 规则即可覆盖全部接口。
     proxy: {
-      '/api': 'http://localhost:51943',
-      '/hangfire': 'http://localhost:51943',
+      '/api': 'http://123.56.68.132',
+      '/hangfire': 'http://123.56.68.132',
     },
   },
 }))
