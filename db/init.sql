@@ -1,4 +1,4 @@
-/* =============================================================
+﻿/* =============================================================
    ConvenientSystem 本地数据库初始化脚本（唯一维护入口）
    ---------------------------------------------------------------
    - 本文件维护本项目全部数据库对象与初始数据，幂等可重复执行；
@@ -224,7 +224,7 @@ BEGIN
     -- 昀晗
     (18, NULL, N'昀晗', NULL, 0, 1, 0, 1, 1, NULL, NULL, 3, 0),
     (19, 18, N'考勤查询', N'/attendance', 1, 1, 0, 1, 1, N'attendance', N'/src/yunhan/views/AttendanceView.vue', 1, 1),
-    (20, 18, N'项目管理', N'http://192.168.16.240:7003/yhproj/sheetIndex', 1, 1, 1, 1, 1, NULL, NULL, 2, 1),
+    (20, 18, N'项目管理', N'http://192.168.16.240:7003/yhproj/sheetIndex', 1, 1, 1, 1, 1, NULL, NULL, 3, 1),
     (21, 18, N'ERP系统', NULL, 0, 1, 0, 1, 1, NULL, NULL, 3, 0),
     (22, 21, N'测试-ERP系统', N'http://192.168.16.240:8000/', 1, 1, 1, 1, 1, NULL, NULL, 1, 1),
     (23, 21, N'正式-ERP系统', N'http://192.168.16.240:8001/', 1, 1, 1, 1, 1, NULL, NULL, 2, 1),
@@ -234,8 +234,13 @@ BEGIN
     (26, 24, N'开发工具集', N'/dev-tools', 1, 1, 0, 1, 1, N'dev-tools', N'/src/common/views/DevToolsView.vue', 2, 1),
     (27, 24, N'SQL查询', N'/sql-query', 1, 1, 0, 1, 1, N'sql-query', N'/src/common/views/SqlQueryView.vue', 3, 1),
     (28, 24, N'命名转换', N'/code-naming', 1, 1, 0, 1, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4, 1),
+    -- 构建发布（一级菜单）
+    (61, NULL, N'构建发布', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
+    (59, 61, N'Web版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
+    (62, 61, N'构建与发布', N'/build-manager', 1, 1, 0, 1, 1, N'build-manager', N'/src/common/views/BuildManagerView.vue', 2, 1),
+    (60, 61, N'通用构建发布', N'/universal-build', 1, 1, 0, 1, 1, N'universal-build', N'/src/common/views/UniversalBuildView.vue', 3, 1),
     -- 常用工具（外链）
-    (29, NULL, N'常用工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
+    (29, NULL, N'常用工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 6, 0),
     (30, 29, N'有道词典', N'https://note.youdao.com/web/#/file/WEBf6433cf7e1e375c6ce4268cefeff88ea/note/WEBa6c175a7e3dbc9e5540d70f3316691e2/', 1, 1, 1, 1, 1, NULL, NULL, 1, 1),
     (31, 29, N'云效', N'https://devops.aliyun.com/workbench', 1, 1, 1, 1, 1, NULL, NULL, 2, 1),
     (32, 29, N'百度翻译', N'https://fanyi.baidu.com/mtpe-individual/transText?ext_channel=Aldtype01&from=auto&to=zh&query=#/', 1, 1, 1, 1, 1, NULL, NULL, 3, 1),
@@ -243,7 +248,7 @@ BEGIN
     (34, 29, N'豆包', N'https://www.doubao.com/chat/38435646902862338?channel=dbweb_sem_pinz_pinp_zongh_tongy_tongy_ocpc_faxx_9', 1, 1, 1, 1, 1, NULL, NULL, 5, 1),
     (35, 29, N'json格式化', N'https://www.sojson.com/', 1, 1, 1, 1, 1, NULL, NULL, 6, 1),
     -- 国家公益事业
-    (36, NULL, N'国家公益事业', NULL, 0, 1, 0, 1, 1, NULL, NULL, 6, 0),
+    (36, NULL, N'国家公益事业', NULL, 0, 1, 0, 1, 1, NULL, NULL, 7, 0),
     (37, 36, N'双色球', N'/lottery?type=SSQ', 1, 1, 0, 1, 1, N'lottery-ssq', N'/src/common/views/LotteryView.vue', 1, 1),
     (38, 36, N'大乐透', N'/lottery', 1, 1, 0, 1, 1, N'lottery', N'/src/common/views/LotteryView.vue', 2, 1),
     (39, 36, N'排列五', N'/lottery?type=PL5', 1, 1, 0, 1, 1, N'lottery-pl5', N'/src/common/views/LotteryView.vue', 3, 1),
@@ -251,29 +256,28 @@ BEGIN
     (41, 36, N'选号记录', N'/lottery-records', 0, 1, 0, 1, 1, N'lottery-records', N'/src/common/views/LotteryRecordsView.vue', 5, 1),
     (42, 36, N'智能分析', N'/lottery-analysis', 0, 1, 0, 1, 1, N'lottery-analysis', N'/src/common/views/LotteryAnalysisView.vue', 6, 1),
     -- 短信管理
-    (43, NULL, N'短信管理', NULL, 0, 1, 0, 1, 1, NULL, NULL, 7, 0),
+    (43, NULL, N'短信管理', NULL, 0, 1, 0, 1, 1, NULL, NULL, 8, 0),
     (44, 43, N'模板管理', N'/sms-template', 0, 1, 0, 1, 1, N'sms-template', N'/src/sms/views/SmsTemplateView.vue', 1, 1),
     (45, 43, N'发送日志', N'/sms-log', 0, 1, 0, 1, 1, N'sms-log', N'/src/sms/views/SmsLogView.vue', 2, 1),
     (46, 43, N'系统配置', N'/sms-config', 0, 1, 0, 1, 1, N'sms-config', N'/src/sms/views/SmsConfigView.vue', 3, 1),
     -- 邮件通知
-    (47, NULL, N'邮件通知', NULL, 0, 1, 0, 1, 1, NULL, NULL, 8, 0),
+    (47, NULL, N'邮件通知', NULL, 0, 1, 0, 1, 1, NULL, NULL, 9, 0),
     (48, 47, N'邮件配置', N'/email-config', 0, 1, 0, 1, 1, N'email-config', N'/src/email/views/EmailConfigView.vue', 1, 1),
     (49, 47, N'发送日志', N'/email-log', 0, 1, 0, 1, 1, N'email-log', N'/src/email/views/EmailLogView.vue', 2, 1),
     -- 机器人
-    (50, NULL, N'机器人', NULL, 0, 1, 0, 1, 1, NULL, NULL, 9, 0),
+    (50, NULL, N'机器人', NULL, 0, 1, 0, 1, 1, NULL, NULL, 10, 0),
     (51, 50, N'群机器人', N'/webhook-config', 0, 1, 0, 0, 1, N'webhook-config', N'/src/notify/views/WebhookConfigView.vue', 1, 1),
     (52, 50, N'发送日志', N'/webhook-log', 0, 1, 0, 1, 1, N'webhook-log', N'/src/notify/views/WebhookLogView.vue', 2, 1),
     -- 任务调度（独立浮窗）
-    (53, NULL, N'任务调度', N'/hangfire', 1, 1, 0, 0, 1, N'hangfire', N'/src/common/views/HangfireView.vue', 10, 1),
+    (53, NULL, N'任务调度', N'/hangfire', 1, 1, 0, 0, 1, N'hangfire', N'/src/common/views/HangfireView.vue', 11, 1),
     -- 监控
-    (54, NULL, N'监控', NULL, 0, 1, 0, 1, 1, NULL, NULL, 11, 0),
+    (54, NULL, N'监控', NULL, 0, 1, 0, 1, 1, NULL, NULL, 12, 0),
     (55, 54, N'网站监控', N'/web-monitor', 0, 1, 0, 1, 1, N'web-monitor', N'/src/common/views/WebMonitorView.vue', 1, 1),
-    (56, 54, N'主机监控', N'/host-monitor', 1, 1, 0, 1, 1, N'host-monitor', N'/src/common/views/HostMonitorView.vue', 2, 1),
+    (56, 54, N'本机监控', N'/local-monitor', 1, 1, 0, 1, 1, N'local-monitor', N'/src/common/views/LocalMonitorView.vue', 2, 1),
     -- 知识库
-    (57, NULL, N'知识库', NULL, 0, 1, 0, 1, 1, NULL, NULL, 12, 0),
+    (57, NULL, N'知识库', NULL, 0, 1, 0, 1, 1, NULL, NULL, 13, 0),
     (58, 57, N'Python', N'/python-knowledge', 0, 1, 0, 1, 1, N'python-knowledge', N'/src/common/views/PythonKnowledgeView.vue', 1, 1),
-    -- 系统管理 > Web版本管理
-    (59, 1, N'Web版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 13, 1);
+    -- Web版本管理、构建与发布、通用构建发布已移至构建发布一级菜单下
 
     SET IDENTITY_INSERT dbo.SysMenu OFF;
 END
@@ -304,6 +308,33 @@ EXEC dbo.usp_AddColumnComment N'WebPackage', N'Description', N'更新说明';
 EXEC dbo.usp_AddColumnComment N'WebPackage', N'IsActive',    N'是否当前激活版本（桌面端下载此版本）';
 EXEC dbo.usp_AddColumnComment N'WebPackage', N'CreateTime',  N'上传时间';
 EXEC dbo.usp_AddColumnComment N'WebPackage', N'CreatedById', N'上传人用户 Id（GUID，关联 SysUser.Id）';
+GO
+
+-- ========== 3.6 桌面安装包版本表 ==========
+IF OBJECT_ID(N'dbo.DesktopPackage') IS NULL
+BEGIN
+    CREATE TABLE dbo.DesktopPackage (
+        Id              INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        Version         NVARCHAR(50)      NOT NULL,
+        FileName        NVARCHAR(200)     NOT NULL,
+        FileSize        BIGINT            NOT NULL DEFAULT 0,
+        Description     NVARCHAR(500)     NULL,
+        IsActive        BIT               NOT NULL DEFAULT 0,
+        CreateTime      DATETIME          NOT NULL DEFAULT GETDATE(),
+        CreatedById     UNIQUEIDENTIFIER  NULL
+    );
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'DesktopPackage', N'桌面安装包版本（桌面客户端自更新用）';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'Id',          N'主键';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'Version',     N'版本号（如 1.0.0）';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'FileName',    N'存储文件名';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'FileSize',    N'文件大小（字节）';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'Description', N'更新说明';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'IsActive',    N'是否当前激活版本（桌面端下载此版本）';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'CreateTime',  N'上传时间';
+EXEC dbo.usp_AddColumnComment N'DesktopPackage', N'CreatedById', N'上传人用户 Id（GUID，关联 SysUser.Id）';
 GO
 
 -- ========== 4. SQL 快捷输入表 ==========
@@ -1254,11 +1285,15 @@ BEGIN
     (32, N'webhook-log',      N'Webhook日志',N'/src/notify/views/WebhookLogView.vue',        N'/webhook-log',      32),
     -- 监控类
     (33, N'web-monitor',      N'网站监控',   N'/src/common/views/WebMonitorView.vue',       N'/web-monitor',      33),
-    (34, N'host-monitor',     N'主机监控',   N'/src/common/views/HostMonitorView.vue',      N'/host-monitor',     34),
+    (34, N'local-monitor',    N'本机监控',   N'/src/common/views/LocalMonitorView.vue',      N'/local-monitor',    34),
     -- 其他
     (35, N'attendance',       N'考勤查询',   N'/src/yunhan/views/AttendanceView.vue',       N'/attendance',       35),
     (36, N'python-knowledge', N'Python知识库',N'/src/common/views/PythonKnowledgeView.vue',  N'/python-knowledge', 36),
-    (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37);
+    (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37),
+    (38, N'web-package',      N'Web版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
+    (39, N'desktop-package',  N'桌面安装包', N'/src/common/views/WebPackageView.vue',        N'/web-package',      39),
+    (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40),
+    (41, N'build-manager',     N'构建与发布', N'/src/common/views/BuildManagerView.vue',     N'/build-manager',     41);
     SET IDENTITY_INSERT dbo.SysView OFF;
 END
 GO
@@ -1351,16 +1386,27 @@ BEGIN
     (58, 33, N'web-monitor:edit',   N'编辑监控', 2),
     (59, 33, N'web-monitor:delete', N'删除监控', 3),
     (60, 33, N'web-monitor:check',  N'立即检测', 4),
-    -- 主机监控
-    (61, 34, N'host-monitor:create',    N'新增监控', 1),
-    (62, 34, N'host-monitor:edit',     N'编辑监控', 2),
-    (63, 34, N'host-monitor:delete',   N'删除监控', 3),
-    (64, 34, N'host-monitor:check',    N'立即检测', 4),
-    (65, 34, N'host-monitor:clean-disk',N'清理磁盘', 5),
+    -- 本机监控
+    (61, 34, N'local-monitor:clean-disk', N'清理磁盘', 1),
     -- 代码编辑器
     (66, 16, N'code-editor:create',  N'新建文件', 1),
     (67, 16, N'code-editor:save',   N'保存文件', 2),
-    (68, 16, N'code-editor:save-as',N'另存为',   3);
+    (68, 16, N'code-editor:save-as',N'另存为',   3),
+    -- Web版本管理
+    (69, 38, N'web-package',          N'查看版本列表', 0),
+    (70, 38, N'web-package:upload',   N'上传版本包', 1),
+    (71, 38, N'web-package:activate', N'激活版本', 2),
+    (72, 38, N'web-package:delete',   N'删除版本包', 3),
+    -- 桌面安装包（与 Web版本管理 同页面，作为页签展示）
+    (73, 39, N'desktop-package',          N'查看桌面安装包', 0),
+    (74, 39, N'desktop-package:upload',   N'上传安装包', 1),
+    (75, 39, N'desktop-package:activate', N'激活安装包', 2),
+    (76, 39, N'desktop-package:delete',   N'删除安装包', 3),
+    -- 通用构建发布
+    (77, 40, N'universal-build:execute',  N'执行构建', 1),
+    -- 构建与发布
+    (78, 41, N'build-manager:execute',  N'执行构建', 1),
+    (79, 41, N'build-manager:publish', N'发布到服务器', 2);
     SET IDENTITY_INSERT dbo.SysViewPermission OFF;
 END
 GO
@@ -1392,7 +1438,7 @@ WHERE r.Code = N'user'
           N'sms-template', N'sms-log',
           N'email-log',
           N'lottery', N'lottery-ssq', N'lottery-pl5', N'lottery-fc3d', N'lottery-records', N'lottery-analysis',
-          N'web-monitor', N'host-monitor',
+          N'web-monitor', N'local-monitor',
           N'webhook-log',
           N'personal-config'
       )
@@ -1627,120 +1673,6 @@ EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'HttpStatusCode', N'实际 HTTP
 EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'LatencyMs', N'探测耗时（毫秒）';
 EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'ErrorMsg', N'异常原因';
 EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'CheckAt', N'探测时间';
-GO
-
--- ========== 主机资源监控：监控目标表 ==========
-IF OBJECT_ID(N'dbo.HostMonitorTarget') IS NULL
-BEGIN
-CREATE TABLE dbo.HostMonitorTarget (
-        Id               INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-        Name             NVARCHAR(100)     NOT NULL,                      -- 监控目标名称
-        MetricType       NVARCHAR(20)      NOT NULL DEFAULT 'DISK',       -- 指标类型（DISK=磁盘 MEM=内存 CPU=CPU SVC=服务 HOST=整机概览）
-        HostAddress      NVARCHAR(100)     NULL,                          -- 目标电脑 IP/主机名（NULL/空=本机；远程采集需 WinRM）
-        AuthAccount      NVARCHAR(100)     NULL,                          -- 远程采集账号（远程目标必填，如 .\Administrator）
-        AuthPassword     NVARCHAR(200)     NULL,                          -- 远程采集密码（仅远程目标使用）
-        MetricsJson      NVARCHAR(MAX)     NULL,                          -- 整机概览最近指标快照 JSON（CPU/内存/磁盘/开机时长，仅 HOST）
-        DriveLetter      NVARCHAR(5)       NULL,                          -- 磁盘盘符（如 C；NULL=所有固定磁盘，仅 DISK 有效）
-        ServiceNames     NVARCHAR(500)     NULL,                          -- Windows 服务名列表（逗号分隔，仅 SVC 有效）
-        ThresholdPercent DECIMAL(5,2)      NULL,                          -- 告警阈值百分比（磁盘已用%/内存使用率%/CPU 使用率%，超过即异常）
-        TimeoutSeconds   INT               NOT NULL DEFAULT 30,           -- 单次探测超时（秒）
-        IntervalMinutes  INT               NOT NULL DEFAULT 10,           -- 探测间隔（分钟）
-        Enabled          BIT               NOT NULL DEFAULT 1,            -- 是否启用监控
-        NotifyEmail      BIT               NOT NULL DEFAULT 1,            -- 状态变化时是否邮件告警
-        LastStatus       TINYINT           NULL,                          -- 最近探测结果：NULL=未探测 1=正常 2=异常
-        LastValue        DECIMAL(10,2)     NULL,                          -- 最近探测值（磁盘已用%/内存使用率%/CPU 使用率%；SVC 为运行中服务数）
-        LastErrorMsg     NVARCHAR(500)     NULL,                          -- 最近异常原因
-        LastCheckAt      DATETIME2(0)      NULL,                          -- 最近探测时间
-        SnapshotJson     NVARCHAR(200)     NULL,                          -- CPU 计数器快照（内部使用）
-        Remark           NVARCHAR(200)     NULL,                          -- 备注
-        CreateTime       DATETIME2(0)      NOT NULL DEFAULT GETDATE()     -- 创建时间
-);
-END
-GO
-
-EXEC dbo.usp_AddTableComment N'HostMonitorTarget', N'主机资源监控目标表';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'Id', N'主键';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'Name', N'监控目标名称';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'MetricType', N'指标类型（DISK=磁盘 MEM=内存 CPU=CPU SVC=服务 HOST=整机概览）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'HostAddress', N'目标电脑 IP/主机名（NULL/空=本机；远程采集需 WinRM）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'AuthAccount', N'远程采集账号（远程目标必填，如 .\Administrator）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'AuthPassword', N'远程采集密码（仅远程目标使用）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'MetricsJson', N'整机概览最近指标快照 JSON（CPU/内存/磁盘/开机时长，仅 HOST）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'DriveLetter', N'磁盘盘符（如 C；NULL=所有固定磁盘，仅 DISK 有效）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'ServiceNames', N'Windows 服务名列表（逗号分隔，仅 SVC 有效）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'ThresholdPercent', N'告警阈值百分比（磁盘已用%/内存使用率%/CPU 使用率%，超过即异常）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'TimeoutSeconds', N'单次探测超时（秒）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'IntervalMinutes', N'探测间隔（分钟）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'Enabled', N'是否启用监控';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'NotifyEmail', N'状态变化时是否邮件告警';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'LastStatus', N'最近探测结果：NULL=未探测 1=正常 2=异常';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'LastValue', N'最近探测值（磁盘已用%/内存使用率%/CPU 使用率%；SVC 为运行中服务数）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'LastErrorMsg', N'最近异常原因';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'LastCheckAt', N'最近探测时间';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'SnapshotJson', N'CPU 计数器快照（内部使用）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'Remark', N'备注';
-EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'CreateTime', N'创建时间';
-GO
-
--- 老库幂等补齐：HostMonitorTarget 远程目标与整机概览相关列
-IF OBJECT_ID(N'dbo.HostMonitorTarget') IS NOT NULL AND COL_LENGTH(N'dbo.HostMonitorTarget', N'HostAddress') IS NULL
-BEGIN
-    ALTER TABLE dbo.HostMonitorTarget ADD HostAddress NVARCHAR(100) NULL;
-    EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'HostAddress', N'目标电脑 IP/主机名（NULL/空=本机；远程采集需 WinRM）';
-END
-GO
-IF OBJECT_ID(N'dbo.HostMonitorTarget') IS NOT NULL AND COL_LENGTH(N'dbo.HostMonitorTarget', N'AuthAccount') IS NULL
-BEGIN
-    ALTER TABLE dbo.HostMonitorTarget ADD AuthAccount NVARCHAR(100) NULL;
-    EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'AuthAccount', N'远程采集账号（远程目标必填，如 .\Administrator）';
-END
-GO
-IF OBJECT_ID(N'dbo.HostMonitorTarget') IS NOT NULL AND COL_LENGTH(N'dbo.HostMonitorTarget', N'AuthPassword') IS NULL
-BEGIN
-    ALTER TABLE dbo.HostMonitorTarget ADD AuthPassword NVARCHAR(200) NULL;
-    EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'AuthPassword', N'远程采集密码（仅远程目标使用）';
-END
-GO
-IF OBJECT_ID(N'dbo.HostMonitorTarget') IS NOT NULL AND COL_LENGTH(N'dbo.HostMonitorTarget', N'MetricsJson') IS NULL
-BEGIN
-    ALTER TABLE dbo.HostMonitorTarget ADD MetricsJson NVARCHAR(MAX) NULL;
-    EXEC dbo.usp_AddColumnComment N'HostMonitorTarget', N'MetricsJson', N'整机概览最近指标快照 JSON（CPU/内存/磁盘/开机时长，仅 HOST）';
-END
-GO
-
--- ========== 主机资源监控：探测日志表 ==========
-IF OBJECT_ID(N'dbo.HostMonitorLog') IS NULL
-BEGIN
-CREATE TABLE dbo.HostMonitorLog (
-        Id        BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-        TargetId  INT               NOT NULL,                      -- 关联监控目标 Id
-        Status    TINYINT           NOT NULL,                      -- 探测结果：1=正常 2=异常
-        Value     DECIMAL(10,2)     NULL,                          -- 探测值（磁盘已用%/内存使用率%/CPU 使用率%；SVC 为运行中服务数）
-        ErrorMsg  NVARCHAR(500)     NULL,                          -- 异常原因
-        MetricsJson NVARCHAR(MAX)   NULL,                          -- 整机概览指标快照 JSON（CPU/内存/磁盘/网络/IO，仅 HOST）
-        CheckAt   DATETIME2(0)      NOT NULL DEFAULT GETDATE()     -- 探测时间
-);
--- 索引：按目标查最近探测记录
-CREATE INDEX IX_HostMonitorLog_Target_CheckAt ON dbo.HostMonitorLog(TargetId, CheckAt DESC);
-END
-GO
-
-EXEC dbo.usp_AddTableComment N'HostMonitorLog', N'主机资源监控探测日志表（保留 30 天）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'Id', N'主键';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'TargetId', N'关联监控目标 Id';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'Status', N'探测结果：1=正常 2=异常';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'Value', N'探测值（磁盘已用%/内存使用率%/CPU 使用率%；SVC 为运行中服务数）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'ErrorMsg', N'异常原因';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'MetricsJson', N'整机概览指标快照 JSON（CPU/内存/磁盘/网络/IO，仅 HOST）';
-EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'CheckAt', N'探测时间';
-GO
-
--- 老库幂等补齐：HostMonitorLog 指标快照列
-IF OBJECT_ID(N'dbo.HostMonitorLog') IS NOT NULL AND COL_LENGTH(N'dbo.HostMonitorLog', N'MetricsJson') IS NULL
-BEGIN
-    ALTER TABLE dbo.HostMonitorLog ADD MetricsJson NVARCHAR(MAX) NULL;
-    EXEC dbo.usp_AddColumnComment N'HostMonitorLog', N'MetricsJson', N'整机概览指标快照 JSON（CPU/内存/磁盘/网络/IO，仅 HOST）';
-END
 GO
 
 -- ========== 知识库菜单 ==========

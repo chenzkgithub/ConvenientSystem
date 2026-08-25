@@ -73,6 +73,31 @@ namespace ConvenientSystem.Service.Common
             }).ToList();
         }
 
+        /// <summary>系统内部：创建一条不触发邮件/短信/群机器人推送的全员可见通知。</summary>
+        public int CreateSystemNotice(string title, string content, byte level = 1, DateTime? expireTime = null)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+                throw new ArgumentException("通知标题不能为空", nameof(title));
+            if (string.IsNullOrWhiteSpace(content))
+                throw new ArgumentException("通知内容不能为空", nameof(content));
+
+            var id = _fsql.Insert(new SysNoticeEntity
+            {
+                Title = title.Trim(),
+                Content = content.Trim(),
+                Level = level is >= 1 and <= 3 ? level : (byte)1,
+                SendEmail = false,
+                SendSms = false,
+                SendWebhook = false,
+                Enabled = true,
+                ExpireTime = expireTime,
+                CreatedById = null, // 系统通知：对所有用户可见，不会被"跳过发布人"过滤
+                UpdateTime = DateTime.Now
+            }).ExecuteIdentity();
+
+            return (int)id;
+        }
+
         /// <summary>管理端：新增（触发联动推送）或编辑通知。</summary>
         public void Save(NoticeDto dto)
         {

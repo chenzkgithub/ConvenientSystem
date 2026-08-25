@@ -7,10 +7,13 @@ export interface OnlineUserDto {
   displayName?: string | null
   ip: string
   loginTime: string
-  lastSeen: string
+  /** 最后真实操作时间 */
+  lastActive: string
+  /** 最后心跳时间（页面开着就更新） */
+  lastHeartbeat: string
 }
 
-/** 在线用户列表（最近 6 分钟内有心跳的用户） */
+/** 在线用户列表（已登录且未注销的用户） */
 export function listOnlineUsers() {
   return httpGet<OnlineUserDto[]>('/api/Common/UserOnline/List')
 }

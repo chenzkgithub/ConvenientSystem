@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getLoginDefault, verifyLogin } from '@/common/api/login'
+import { getLoginDefault, verifyLogin, logoutApi } from '@/common/api/login'
 import { resetUnauthorizedHandled } from '@/api/request'
 import { getUIPrefs } from '@/common/api/userConfig'
 import { useTabsStore } from '@/common/stores/tabs'
@@ -151,7 +151,11 @@ export const useAuthStore = defineStore('auth', () => {
     persist()
   }
 
-  function logout(reason?: 'account_disabled' | 'api_401') {
+  async function logout(reason?: 'account_disabled' | 'api_401') {
+    // 通知后端从在线追踪器中移除（不阻塞退出流程，失败静默）
+    if (token.value) {
+      try { await logoutApi() } catch { /* 忽略网络错误 */ }
+    }
     loggedIn.value = false
     currentAccount.value = ''
     displayName.value = ''

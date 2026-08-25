@@ -14,7 +14,8 @@ const columns: DataTableColumn<OnlineUserDto>[] = [
   { prop: 'displayName', label: '显示名称', minWidth: 120, formatter: (row) => row.displayName || '—', sortable: true },
   { prop: 'ip', label: 'IP 地址', width: 150, sortable: true },
   { prop: 'loginTime', label: '登录时间', width: 170, dateFormatter: formatDate, sortable: true },
-  { prop: 'lastSeen', label: '最后活跃', width: 260, custom: true, sortable: true },
+  { prop: 'lastActive', label: '最后活跃', width: 260, custom: true, sortable: true },
+  { prop: 'lastHeartbeat', label: '最后心跳', width: 170, dateFormatter: formatDate, sortable: true },
 ]
 
 async function loadData() {
@@ -44,8 +45,8 @@ function toggleAutoRefresh() {
 }
 
 /** 距离最后活跃的时间描述 */
-function lastSeenAgo(lastSeen: string): string {
-  const diff = Math.floor((Date.now() - new Date(lastSeen).getTime()) / 1000)
+function lastActiveAgo(lastActive: string): string {
+  const diff = Math.floor((Date.now() - new Date(lastActive).getTime()) / 1000)
   if (diff < 60) return `${diff} 秒前`
   const m = Math.floor(diff / 60)
   if (m < 60) return `${m} 分钟前`
@@ -75,7 +76,7 @@ onUnmounted(stopAutoRefresh)
       <template #filters>
         <span class="title">在线用户</span>
         <el-tag type="success" size="small" class="count-tag">{{ list.length }} 人在线</el-tag>
-        <span class="hint">心跳超过 6 分钟无响应自动移出</span>
+        <span class="hint">登录即在线，退出登录即离线</span>
       </template>
       <template #toolbar>
         <el-button
@@ -86,9 +87,9 @@ onUnmounted(stopAutoRefresh)
           {{ autoRefresh ? '自动刷新中' : '自动刷新已停' }}
         </el-button>
       </template>
-      <template #cell-lastSeen="{ row }">
-        <span>{{ formatDate(row.lastSeen) }}</span>
-        <el-tag size="small" type="success" style="margin-left: 6px">{{ lastSeenAgo(row.lastSeen) }}</el-tag>
+      <template #cell-lastActive="{ row }">
+        <span>{{ formatDate(row.lastActive) }}</span>
+        <el-tag size="small" type="success" style="margin-left: 6px">{{ lastActiveAgo(row.lastActive) }}</el-tag>
       </template>
     </CommonDataTable>
   </div>

@@ -28,7 +28,13 @@ export function verifyLogin(account: string, password: string) {
   return httpPost<LoginVerifyResult>('/api/Common/Login/VerifyLogin', { account, password })
 }
 
-/** 心跳检查：前端轮询当前登录账号是否仍处于启用状态 */
-export function checkAuthStatus() {
-  return httpGet<{ enabled: boolean }>('/api/Common/Login/CheckStatus')
+/** 心跳检查：前端轮询当前登录账号是否仍处于启用状态。lastActivity 为用户最后真实操作时间（ISO 8601） */
+export function checkAuthStatus(lastActivity?: string) {
+  const query = lastActivity ? `?lastActivity=${encodeURIComponent(lastActivity)}` : ''
+  return httpGet<{ enabled: boolean }>(`/api/Common/Login/CheckStatus${query}`)
+}
+
+/** 退出登录：通知后端从在线追踪器中移除当前用户 */
+export function logoutApi() {
+  return httpPost<{ ok: boolean }>('/api/Common/Login/Logout')
 }

@@ -2,6 +2,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace ConvenientSystem;
 
@@ -282,12 +283,32 @@ public sealed class MainForm : Form
                     // 文件操作委托共享服务（BrowserForm 独立窗口也使用同一逻辑）
                     HostFileService.TryHandleMessage(root, _webView.CoreWebView2!, this);
                     break;
+
             }
         }
         catch (Exception ex)
         {
             // 消息格式异常/开窗失败时忽略，但记入诊断日志便于排查。
             LogHost($"MSG-FAIL ex={ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 检查主窗口当前是否已登录（localStorage 中存在有效 token）。
+    /// </summary>
+    private async Task<bool> CheckLoginAsync()
+    {
+        try
+        {
+            var core = _webView.CoreWebView2;
+            if (core is null) return false;
+            var json = await core.ExecuteScriptAsync(
+                "(() => { try { const s = localStorage.getItem('auth_state_v1'); if (!s) return false; const o = JSON.parse(s); return !!(o && o.token); } catch { return false; } })()");
+            return json == "true";
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -387,13 +408,11 @@ public sealed class MainForm : Form
     {
         if (_trayMenu is null) return;
 
-        // 保存菜单树供悬浮按钮使用：JsonElement 是 JsonDocument 的视图引用，
-        // 父 JsonDocument 释放后访问会抛 ObjectDisposedException，
-        // 因此必须 Clone() 一份脱离原 JsonDocument 生命周期的深拷贝。
-        var clonedTree = itemsEl?.Clone();
-        _lastMenuTree = clonedTree;
-        if (_floatingBtn is not null) _floatingBtn.MenuTree = clonedTree;
-        if (_launcher is not null) _launcher.SetMenuTree(clonedTree);
+        // 克隆菜单树供悬浮按钮/启动器使用（脱离原 JsonDocument 生命周期）。
+        var mergedTree = CloneMenuTree(itemsEl);
+        _lastMenuTree = mergedTree;
+        if (_floatingBtn is not null) _floatingBtn.MenuTree = mergedTree;
+        if (_launcher is not null) _launcher.SetMenuTree(mergedTree);
 
         // ═══════ 托盘菜单 ═══════
         _trayMenu.Items.Clear();
@@ -401,7 +420,6 @@ public sealed class MainForm : Form
         var showMainItem = new ToolStripMenuItem("打开主界面");
         showMainItem.Click += (_, _) => ActivateMainWindow();
         _trayMenu.Items.Add(showMainItem);
-        _trayMenu.Items.Add(new ToolStripSeparator());
 
         int pageCount = BuildPageItems(_trayMenu, itemsEl);
         if (pageCount == 0)
@@ -441,6 +459,26 @@ public sealed class MainForm : Form
         _trayMenu.Items.Add(entryEditorItem);
 
         AddCommonMenuItems(_trayMenu);
+    }
+
+    /// <summary>
+    /// 克隆前端上报的菜单树，供悬浮按钮/启动器使用。
+    /// 返回的 JsonElement 已 Clone()，脱离原 JsonDocument 生命周期。
+    /// </summary>
+    private static JsonElement? CloneMenuTree(JsonElement? itemsEl)
+    {
+        var arr = new JsonArray();
+        if (itemsEl is { ValueKind: JsonValueKind.Array } existing)
+        {
+            foreach (var item in existing.EnumerateArray())
+            {
+                var node = JsonNode.Parse(item.GetRawText());
+                if (node is not null) arr.Add(node);
+            }
+        }
+
+        using var doc = JsonDocument.Parse(arr.ToJsonString());
+        return doc.RootElement.Clone();
     }
 
     /// <summary>从 JSON 菜单树构建页面菜单项并添加到目标菜单，返回添加的页面项数量。</summary>
@@ -556,10 +594,25 @@ public sealed class MainForm : Form
     /// 内部路由则打开本机应用地址的对应 hash 路由。共享同一 WebView2 环境（登录态/Cookie 一致）。
     /// 窗口标题固定为配置的菜单名，不随网页标题变化。
     /// 同一页面只允许打开一个窗口，已有窗口时直接激活并前置。
+    /// 内部页面打开前会先检查登录态，未登录时激活主窗口并跳转到登录页，不打开独立窗口。
     /// </summary>
     private async void OpenPageWindow(string page, string title, bool external = false)
     {
         if (_env is null) return;
+
+        // 内部页面需要先登录；外部链接直接打开。
+        if (!external && !page.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !page.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            var isLoggedIn = await CheckLoginAsync();
+            if (!isLoggedIn)
+            {
+                ActivateMainWindow();
+                MessageBox.Show(this, "请先登录后再打开页面。", "未登录", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // 尝试让主窗口前端跳转到登录页（若已加载）
+                try { _webView.CoreWebView2?.Navigate(_startUrl); } catch { /* 忽略 */ }
+                return;
+            }
+        }
 
         // 若该页面已有窗口且未释放，直接激活并前置，不重复打开。
         if (_openPageWindows.TryGetValue(page, out var existing) && !existing.IsDisposed)

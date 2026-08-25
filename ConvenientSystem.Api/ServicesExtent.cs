@@ -51,7 +51,6 @@ namespace ConvenientSystem.Api
             AddEmailInfrastructure(services);
             AddLotteryServices(services);
             AddWebMonitorServices(services);
-            AddHostMonitorServices(services);
             AddAuditInfrastructure(services);
             AddWebhookInfrastructure(services);
             AddBusinessServices(services);
@@ -255,13 +254,6 @@ namespace ConvenientSystem.Api
             services.AddSingleton<WebMonitorStartupCompensator>();
         }
 
-        /// <summary>主机资源监控：定时巡检探测 Job + 启动补偿（注册每分钟巡检任务）</summary>
-        private static void AddHostMonitorServices(IServiceCollection services)
-        {
-            services.AddSingleton<HostMonitorCheckJob>();
-            services.AddSingleton<HostMonitorStartupCompensator>();
-        }
-
         /// <summary>业务服务：控制器只注入接口，具体实现集中在此登记。</summary>
         private static void AddBusinessServices(IServiceCollection services)
         {
@@ -318,9 +310,6 @@ namespace ConvenientSystem.Api
             // 网站/API 监控
             services.AddSingleton<IWebMonitorService, WebMonitorService>();
 
-            // 主机资源监控
-            services.AddSingleton<IHostMonitorService, HostMonitorService>();
-
             // SQL 查询工具（Schema/Script/Execute 均依赖 IDataSourceService 解析数据源）
             services.AddSingleton<IDataSourceService, DataSourceService>();
             services.AddSingleton<ISqlExecuteService, SqlExecuteService>();
@@ -344,6 +333,9 @@ namespace ConvenientSystem.Api
 
             // Web 前端版本包管理（桌面客户端更新）
             services.AddSingleton<IWebPackageService, WebPackageService>();
+
+            // 桌面安装包自更新
+            services.AddSingleton<IDesktopUpdateService, DesktopUpdateService>();
         }
     }
 }

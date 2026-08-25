@@ -276,7 +276,15 @@ api.interceptors.response.use(undefined, (error: AxiosError) => {
     }
 
     // 其它非 2xx：业务错误
-    const detail = (body.message as string) || (body.title as string) || `HTTP ${status}`
+    let detail = (body.message as string) || (body.title as string) || `HTTP ${status}`
+    // 模型验证错误：把 errors 字段拼出来，方便定位具体字段
+    if (status === 400 && body.errors && typeof body.errors === 'object') {
+      const errs = body.errors as Record<string, string[]>
+      const lines = Object.entries(errs)
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join('; ') : v}`)
+        .join(' | ')
+      if (lines) detail = `${detail} (${lines})`
+    }
     if (!silent) ElMessage.error({ message: detail, appendTo: fullscreenElement() })
     throw new ApiError(`${detail}，接口地址：${url}`, body)
   }

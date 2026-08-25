@@ -57,12 +57,13 @@ namespace ConvenientSystem.Api.Controllers.Common
         }
 
         /// <summary>
-        /// 心跳检查：前端已登录用户每 30 秒轮询一次。
+        /// 心跳检查：前端已登录用户每 10 秒轮询一次。
         /// - 返回 { enabled: true } 表示账号仍有效，同时更新在线足迹。
         /// - 返回 { enabled: false } 表示账号已被停用，前端收到后应展示提示并退出登录。
+        /// - lastActivity 参数为前端记录的用户最后真实操作时间（ISO 8601），用于更新 LastActive。
         /// </summary>
         [HttpGet]
-        public async Task<ActionResult<LoginStatusDto>> CheckStatus()
+        public async Task<ActionResult<LoginStatusDto>> CheckStatus([FromQuery] string? lastActivity = null)
         {
             // 未登录直接返回 401（前端已登录的情况下不会出现）。
             if (User?.Identity?.IsAuthenticated != true) return Unauthorized();
@@ -78,10 +79,30 @@ namespace ConvenientSystem.Api.Controllers.Common
                 var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
                 var account = User.FindFirst(ConvenientSystem.Shared.Common.Security.JwtHelper.AccountClaim)?.Value ?? string.Empty;
                 var displayName = User.FindFirst(ConvenientSystem.Shared.Common.Security.JwtHelper.DisplayNameClaim)?.Value;
-                _tracker.Track(userId.Value, account, displayName, ip);
+
+                DateTime? lastActiveAt = null;
+                if (!string.IsNullOrWhiteSpace(lastActivity)
+                    && DateTime.TryParse(lastActivity, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
+                    lastActiveAt = parsed;
+
+                _tracker.Track(userId.Value, account, displayName, ip, lastActiveAt);
             }
 
             return Ok(status);
+        }
+
+        /// <summary>
+        /// 退出登录：从在线追踪器中移除当前用户。
+        /// </summary>
+        [HttpPost]
+        public ActionResult Logout()
+        {
+            if (User?.Identity?.IsAuthenticated == true && CurrentUserId.HasValue)
+            {
+                _tracker.Remove(CurrentUserId.Value);
+                _sessionStore.Remove(CurrentUserId.Value);
+            }
+            return Ok(new { ok = true });
         }
     }
 }

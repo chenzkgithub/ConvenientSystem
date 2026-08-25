@@ -59,10 +59,13 @@ const tableConfig = {
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let disabledNotified = false
 
+// 记录用户最后真实操作时间，心跳时上报给后端用于更新 LastActive
+let lastActivityAt = new Date().toISOString()
+
 async function doHeartbeat() {
   if (!auth.loggedIn) return
   try {
-    const res = await checkAuthStatus()
+    const res = await checkAuthStatus(lastActivityAt)
     if (!res.enabled && !disabledNotified) {
       disabledNotified = true
       ElMessage({ message: '您的账号已被管理员停用，即将退出登录', type: 'error', duration: 3000 })
@@ -116,6 +119,7 @@ function onIdleActivity() {
   const now = Date.now()
   if (now - idleThrottle < 1000) return
   idleThrottle = now
+  lastActivityAt = new Date().toISOString()
   resetIdleTimer()
 }
 
@@ -132,26 +136,34 @@ onMounted(async () => {
     window.addEventListener(evt, onIdleActivity, { passive: true })
   }
 
-  // 公开页面路由：所有上下文都注册（ListEnabled 为匿名接口），保证深链可直达
-  try {
-    const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
-    if (pages) registerPublicRoutes(pages)
-  } catch { /* 后端不可用时降级，不影响正常登录流程 */ }
+  // 公开上下文：只注册公开页面路由，菜单、锁屏、登录态全不参与
+  if (IS_PUBLIC_CONTEXT) {
+    try {
+      const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
+      if (pages) registerPublicRoutes(pages)
+    } catch { /* 后端不可用时降级 */ }
+    return
+  }
 
-  // 公开上下文止步于此：菜单、锁屏、登录态全不参与，不碰任何需认证的接口
-  if (IS_PUBLIC_CONTEXT) return
-
-  // 纯净窗口：无主框架（MainLayout 不渲染），菜单路由需在此自行注册，
-  // 否则目标内部页面会命中 placeholder；锁屏由主窗口/原生窗口统一接管。
+  // 纯净窗口：直接加载菜单注册路由，跳过公开页面 API（独立窗口只打开内部页面，
+  // 不需要公开路由；且 registerPublicRoutes 的重导航会与 registerMenuRoutes 的
+  // 重导航产生时序冲突，导致首次打开命中 placeholder 后无法切换到目标页面）。
+  // 锁屏由主窗口/原生窗口统一接管。
   if (IS_STANDALONE) {
-    if (!loggedIn.value) return
+    // 与主窗口同源（localStorage 共享），正常情况下 loggedIn 应为 true；
+    // 但偶发时序差异可能导致 auth store 尚未读到持久化数据，仍尝试加载菜单（内部含缓存兜底）。
     if (!menuStore.loaded) await menuStore.load()
     registerMenuRoutes(menuStore.menus)
     return
   }
 
-  // 主窗口：菜单由 MainLayout 负责加载，此处只处理锁屏配置。
-  // 未登录时不拉取：/Lock/AppConfig 需要认证，此时必然 401，
+  // 主窗口：注册公开页面路由（保证深链可直达），菜单由 MainLayout 负责加载。
+  try {
+    const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
+    if (pages) registerPublicRoutes(pages)
+  } catch { /* 后端不可用时降级，不影响正常登录流程 */ }
+
+  // 未登录时不拉取锁屏配置：/Lock/AppConfig 需要认证，此时必然 401，
   // 拿不到用户的真实开关反而会污染状态，配置改由登录成功后读取。
   if (loggedIn.value) {
     // 先拉配置：功能关闭时 loadConfig 会清掉从 localStorage 还原的历史锁屏状态；

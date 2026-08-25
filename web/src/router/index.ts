@@ -33,6 +33,20 @@ const LOTTERY_SUMMARY_ROUTE: RouteRecordRaw = {
   component: () => import('@/common/views/LotteryResultSummaryView.vue'),
 }
 
+const BUILD_MANAGER_ROUTE: RouteRecordRaw = {
+  // 本地构建与发布工具：支持浏览器直接访问 http://127.0.0.1:51942/build-manager
+  path: '/build-manager',
+  name: 'build-manager',
+  component: () => import('@/common/views/BuildManagerView.vue'),
+}
+
+const UNIVERSAL_BUILD_ROUTE: RouteRecordRaw = {
+  // 通用构建发布工具
+  path: '/universal-build',
+  name: 'universal-build',
+  component: () => import('@/common/views/UniversalBuildView.vue'),
+}
+
 const PLACEHOLDER_ROUTE: RouteRecordRaw = {
   // 未实现的菜单路由统一显示“开发中”占位
   path: '/:pathMatch(.*)*',
@@ -43,7 +57,7 @@ const PLACEHOLDER_ROUTE: RouteRecordRaw = {
 export const router = createRouter({
   // hash 模式：由 Kestrel 根提供 index.html，客户端路由无需服务端 fallback
   history: createWebHashHistory(),
-  routes: [HOME_ROUTE, EXTERNAL_ROUTE, LOCK_SCREEN_ROUTE, LOTTERY_SUMMARY_ROUTE, PLACEHOLDER_ROUTE],
+  routes: [HOME_ROUTE, EXTERNAL_ROUTE, LOCK_SCREEN_ROUTE, LOTTERY_SUMMARY_ROUTE, BUILD_MANAGER_ROUTE, UNIVERSAL_BUILD_ROUTE, PLACEHOLDER_ROUTE],
 })
 
 // 捕获路由懒加载失败：chunk 丢失或网络中断时弹提示，留在当前页面

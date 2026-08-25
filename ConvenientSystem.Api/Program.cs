@@ -155,7 +155,6 @@ internal static class Program
         Compensate<EmailStartupCompensator>(app, c => c.Compensate(), "邮件启动补偿失败");
         Compensate<LotteryStartupCompensator>(app, c => c.Compensate(), "大乐透启动补偿失败");
         Compensate<WebMonitorStartupCompensator>(app, c => c.Compensate(), "网站监控启动补偿失败");
-        Compensate<HostMonitorStartupCompensator>(app, c => c.Compensate(), "主机监控启动补偿失败");
     }
 
     private static void Compensate<T>(WebApplication app, Action<T> action, string failMessage) where T : notnull

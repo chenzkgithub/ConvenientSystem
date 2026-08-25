@@ -28,6 +28,9 @@ internal sealed class ReverseProxyMiddleware
         "Server", "Date",  // 由本机 Kestrel 自动填充
     };
 
+    // 配置了内网考勤数据库连接串时，考勤路径由本地控制器处理，不转发到云。
+    private readonly bool _hasLocalAttendance;
+
     public ReverseProxyMiddleware(
         RequestDelegate next,
         IHttpClientFactory httpClientFactory,
@@ -38,12 +41,37 @@ internal sealed class ReverseProxyMiddleware
         var url = (configuration["AppSettings:RemoteServerUrl"] ?? string.Empty).Trim();
         _remoteBaseUrl = !string.IsNullOrEmpty(url) ? $"http://{url.TrimEnd('/')}" : string.Empty;
         _httpClient = httpClientFactory.CreateClient("ReverseProxy");
+        // 当配置了 YhSystemDb 时，考勤请求走本地控制器
+        _hasLocalAttendance = !string.IsNullOrWhiteSpace(configuration.GetConnectionString("YhSystemDb"));
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
         // 未配置远程地址 → 本地模式，直接走本机控制器。
         if (string.IsNullOrEmpty(_remoteBaseUrl))
+        {
+            await _next(context);
+            return;
+        }
+
+        // 考勤路径走本地控制器（当配置了内网数据库时）
+        if (_hasLocalAttendance &&
+            context.Request.Path.StartsWithSegments("/api/YunHan/Attendance", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context);
+            return;
+        }
+
+        // 本机监控路径始终由本地控制器处理，不转发到云
+        if (context.Request.Path.StartsWithSegments("/api/Common/Monitor", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context);
+            return;
+        }
+
+        // 本地构建与发布控制器不走反向代理
+        if (context.Request.Path.StartsWithSegments("/api/Common/Build", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/UniversalBuild", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;

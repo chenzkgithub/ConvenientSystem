@@ -145,6 +145,9 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? DisplayName { get; set; }
         public string Ip { get; set; } = string.Empty;
         public DateTime LoginTime { get; set; }
-        public DateTime LastSeen { get; set; }
+        /// <summary>最后真实操作时间。</summary>
+        public DateTime LastActive { get; set; }
+        /// <summary>最后心跳时间（页面开着就更新）。</summary>
+        public DateTime LastHeartbeat { get; set; }
     }
 }

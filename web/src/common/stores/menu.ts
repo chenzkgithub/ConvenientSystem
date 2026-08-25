@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import { getMenus } from '@/common/api/menu'
 import type { MenuNode } from '@/common/types'
 
+const CACHE_KEY = 'menu_tree_cache_v1'
+
 /** 菜单树（来自后端 menus.xml / GetMenus），供侧栏与首页共享 */
 export const useMenuStore = defineStore('menu', () => {
   const menus = ref<MenuNode[]>([])
@@ -12,9 +14,24 @@ export const useMenuStore = defineStore('menu', () => {
     try {
       const data = await getMenus()
       menus.value = Array.isArray(data) ? data : []
+      // API 成功时写入缓存，供独立窗口（standalone）API 失败时兜底
+      if (menus.value.length > 0) {
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify(menus.value)) } catch { /* 配额不足忽略 */ }
+      }
     } catch (e) {
       console.error('菜单加载失败', e)
-      menus.value = []
+      // API 失败时尝试从缓存恢复（独立窗口场景：与主窗口同源 localStorage 共享，
+      // 但 API 调用可能因时序/认证等原因失败，用缓存兜底避免全部页面显示"开发中"）
+      try {
+        const raw = localStorage.getItem(CACHE_KEY)
+        if (raw) {
+          const cached = JSON.parse(raw)
+          if (Array.isArray(cached) && cached.length > 0) {
+            menus.value = cached
+            console.info('菜单从缓存恢复')
+          }
+        }
+      } catch { /* 缓存读取失败保持空 */ }
     }
     loaded.value = true
   }

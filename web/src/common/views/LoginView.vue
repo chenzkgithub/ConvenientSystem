@@ -5,10 +5,12 @@ import { useAuthStore } from '@/common/stores/auth'
 import { useLockStore } from '@/common/stores/lock'
 import { checkEmailExists, sendRegisterCode, registerAccount } from '@/common/api/register'
 import CommonDialog from '@/common/components/CommonDialog.vue'
+import { useAppVersion } from '@/common/composables/useAppVersion'
 import loginBg from '@/assets/login-bg.jpg'
 
 const auth = useAuthStore()
 const lock = useLockStore()
+const { data: appVersion, fetch: fetchVersion } = useAppVersion()
 
 // ===== 账号格式：仅允许字母、数字、中文、_-.@（支持邮箱作为账号） =====
 const ACCOUNT_RE = /^[a-zA-Z0-9\u4e00-\u9fa5_.@-]+$/
@@ -39,6 +41,9 @@ onMounted(async () => {
   if (auth.disabledReason === null && !account.value) {
     password.value = ''
   }
+
+  // 拉取当前前端版本号（登录页展示）
+  await fetchVersion()
 })
 
 async function doLogin() {
@@ -244,8 +249,11 @@ async function doRegister() {
         </div>
       </div>
 
-      <!-- 底部版权 -->
-      <div class="brand-footer">ConvenientSystem &copy; {{ new Date().getFullYear() }}</div>
+      <!-- 底部版权 + 版本号 -->
+      <div class="brand-footer">
+        <span>ConvenientSystem &copy; {{ new Date().getFullYear() }}</span>
+        <span v-if="appVersion" class="brand-version">前端 v{{ appVersion.version }}</span>
+      </div>
     </div>
 
     <!-- ===== 右侧登录表单区（向日葵背景图） ===== -->
@@ -405,7 +413,8 @@ async function doRegister() {
 }
 .feature-item span { color: rgba(255,255,255,0.75); font-size: 14px; }
 
-.brand-footer { position: absolute; bottom: 20px; left: 48px; color: rgba(255,255,255,0.25); font-size: 12px; z-index: 1; }
+.brand-footer { position: absolute; bottom: 20px; left: 48px; color: rgba(255,255,255,0.25); font-size: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; }
+.brand-version { opacity: 0.6; }
 
 /* ===== 右侧登录表单区（向日葵背景图） ===== */
 .login-form-area {

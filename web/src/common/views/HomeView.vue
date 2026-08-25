@@ -43,7 +43,6 @@ const canViewEmail = computed(() => auth.menuCodes.includes('email-log'))
 const canViewAudit = computed(() => auth.menuCodes.includes('audit-log'))
 const canViewLottery = computed(() => auth.menuCodes.includes('lottery'))
 const canViewWebMonitor = computed(() => auth.menuCodes.includes('web-monitor'))
-const canViewHostMonitor = computed(() => auth.menuCodes.includes('host-monitor'))
 
 // ===== 搜索 =====
 const keyword = ref('')
@@ -252,23 +251,18 @@ interface MonitorHealth {
   failedTargets: MonitorHealthFailedItem[]
 }
 const webHealth = ref<MonitorHealth | null>(null)
-const hostHealth = ref<MonitorHealth | null>(null)
-const hasMonitor = computed(() => canViewWebMonitor.value || canViewHostMonitor.value)
+const hasMonitor = computed(() => canViewWebMonitor.value)
 
 async function loadMonitorHealth() {
   if (canViewWebMonitor.value) {
     try { webHealth.value = await httpGet<MonitorHealth>('/api/Common/WebMonitor/Health') } catch { /* 静默 */ }
   }
-  if (canViewHostMonitor.value) {
-    try { hostHealth.value = await httpGet<MonitorHealth>('/api/Common/HostMonitor/Health') } catch { /* 静默 */ }
-  }
 }
 
-// 监控分组展示（网站监控 / 主机监控，按权限裁剪）
+// 监控分组展示（网站监控，按权限裁剪）
 const monitorGroups = computed(() => {
   const list: { label: string; health: MonitorHealth }[] = []
   if (canViewWebMonitor.value && webHealth.value) list.push({ label: '网站监控', health: webHealth.value })
-  if (canViewHostMonitor.value && hostHealth.value) list.push({ label: '主机监控', health: hostHealth.value })
   return list
 })
 
@@ -526,9 +520,12 @@ function getGroupIcon(title: string): unknown {
             <div class="online-avatar">{{ (u.displayName || u.account || '?').slice(0, 1).toUpperCase() }}</div>
             <div class="online-info">
               <div class="online-name">{{ u.displayName || u.account }}</div>
-              <div class="online-meta">{{ relTime(u.lastSeen) }} · {{ u.ip }}</div>
+              <div class="online-meta">{{ relTime(u.lastActive) }} · {{ u.ip }}</div>
             </div>
-            <div class="online-login-time">登录 {{ formatDate(u.loginTime) }}</div>
+            <div class="online-login-time">
+              <div>活跃 {{ formatDate(u.lastActive) }}</div>
+              <div>登录 {{ formatDate(u.loginTime) }}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -996,6 +993,8 @@ function getGroupIcon(title: string): unknown {
   color: var(--text-sub);
   flex-shrink: 0;
   white-space: nowrap;
+  text-align: right;
+  line-height: 1.6;
 }
 
 /* 活动日志 */

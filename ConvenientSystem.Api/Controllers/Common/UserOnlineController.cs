@@ -30,7 +30,8 @@ namespace ConvenientSystem.Api.Controllers.Common
                 DisplayName = e.DisplayName,
                 Ip = e.Ip,
                 LoginTime = e.LoginTime,
-                LastSeen = e.LastSeen,
+                LastActive = e.LastActive,
+                LastHeartbeat = e.LastHeartbeat,
             }).ToList());
         }
     }

@@ -3,14 +3,12 @@ using System.Collections.Concurrent;
 namespace ConvenientSystem.Api
 {
     /// <summary>
-    /// 在线用户追踪器（单例）：以心跳 CheckStatus 调用为基础，记录最近活跃的已登录用户。
-    /// 同一账号多次登录以最新活跃时间覆盖；超过 <see cref="TimeoutMinutes"/> 分钟未活跃自动视为离线。
+    /// 在线用户追踪器（单例）：以心跳 CheckStatus 调用为基础，记录已登录用户。
+    /// 登录即在线，退出登录即离线；同一账号多次登录以最新记录覆盖。
+    /// LastHeartbeat 反映心跳时间（页面开着就更新），LastActive 反映真实操作时间。
     /// </summary>
     public class OnlineUserTracker
     {
-        /// <summary>超过此时间无心跳则视为离线。</summary>
-        public const int TimeoutMinutes = 6;
-
         private readonly ConcurrentDictionary<Guid, OnlineEntry> _sessions = new();
 
         public sealed record OnlineEntry(
@@ -19,24 +17,41 @@ namespace ConvenientSystem.Api
             string? DisplayName,
             string Ip,
             DateTime LoginTime,
-            DateTime LastSeen);
+            DateTime LastHeartbeat,
+            DateTime LastActive);
 
-        /// <summary>更新（或新增）用户的在线活跃记录。</summary>
-        public void Track(Guid userId, string account, string? displayName, string ip)
+        /// <summary>更新（或新增）用户的在线记录。lastActiveAt 为前端传来的真实操作时间。</summary>
+        public void Track(Guid userId, string account, string? displayName, string ip, DateTime? lastActiveAt = null)
         {
             _sessions.AddOrUpdate(
                 userId,
-                _ => new OnlineEntry(userId, account, displayName, ip, DateTime.Now, DateTime.Now),
-                (_, old) => old with { LastSeen = DateTime.Now, Ip = ip });
+                _ => new OnlineEntry(userId, account, displayName, ip, DateTime.Now, DateTime.Now, lastActiveAt ?? DateTime.Now),
+                (_, old) =>
+                {
+                    var newActive = lastActiveAt.HasValue && lastActiveAt.Value > old.LastActive
+                        ? lastActiveAt.Value
+                        : old.LastActive;
+                    return old with { LastHeartbeat = DateTime.Now, LastActive = newActive, Ip = ip };
+                });
         }
 
         /// <summary>用户注销时主动移除。</summary>
         public void Remove(Guid userId) => _sessions.TryRemove(userId, out _);
 
-        /// <summary>返回最近 <see cref="TimeoutMinutes"/> 分钟内有心跳的在线用户，按最后活跃时间倒序。</summary>
+        /// <summary>返回所有已登录且未注销的用户，按最后活跃时间倒序。</summary>
         public IList<OnlineEntry> GetOnline()
             => [.. _sessions.Values
-                .Where(e => e.LastSeen >= DateTime.Now.AddMinutes(-TimeoutMinutes))
-                .OrderByDescending(e => e.LastSeen)];
+                .OrderByDescending(e => e.LastActive)];
+
+        /// <summary>清理心跳超过指定分钟数的记录（用于服务重启后或僵尸会话清理）。</summary>
+        public void CleanupStale(int staleMinutes)
+        {
+            var cutoff = DateTime.Now.AddMinutes(-staleMinutes);
+            foreach (var kv in _sessions)
+            {
+                if (kv.Value.LastHeartbeat < cutoff)
+                    _sessions.TryRemove(kv.Key, out _);
+            }
+        }
     }
 }

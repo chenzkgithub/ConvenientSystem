@@ -1,9 +1,15 @@
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http.Features;
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using FreeSql;
+using ConvenientSystem.Service.YunHan;
+using ConvenientSystem.Desktop;
 
 namespace ConvenientSystem;
 
@@ -71,9 +77,9 @@ internal static class Program
         // 这样每次启动都能保持项目目录干净，无需手动执行 dotnet clean。
         CleanBuildArtifacts();
 
-        // ========== Web 前端版本检查 ==========
-        // 首次安装（wwwroot 为空）→ 静默下载初始版本
-        // 已有版本 → 检查服务器版本，有新版本则弹窗让用户选择是否更新
+        // ========== 版本检查 ==========
+        // 1. 首次安装（wwwroot 为空）→ 静默下载初始 Web 版本
+        // 2. 已有版本 → 先检查桌面程序更新（弹窗），再静默检查 Web 前端更新
         var wwwrootDir = Path.Combine(AppContext.BaseDirectory, "wwwroot");
         var config = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -81,13 +87,51 @@ internal static class Program
             .Build();
         var remoteUrl = (config["AppSettings:RemoteServerUrl"] ?? string.Empty).Trim();
         var remoteBaseUrl = !string.IsNullOrEmpty(remoteUrl) ? $"http://{remoteUrl.TrimEnd('/')}" : string.Empty;
+        // 桌面版本号：以 appsettings.json 中的 DesktopVersion 为准，但安装包升级后
+        // installer 默认不会覆盖已存在的 appsettings.json（避免丢失用户配置），
+        // 因此需要和程序集版本取较高者，并回写 appsettings.json 使其保持同步。
+        var desktopVersion = ResolveDesktopVersion(config, AppContext.BaseDirectory);
 
         if (!string.IsNullOrEmpty(remoteBaseUrl))
         {
             if (!File.Exists(Path.Combine(wwwrootDir, "index.html")))
+            {
                 WebUpdateService.DownloadInitialAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+            }
             else
-                WebUpdateService.CheckAndShowDialogAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+            {
+                // 先检查桌面程序是否有更新
+                var desktopUpdate = DesktopUpdateService.CheckAsync(remoteBaseUrl, desktopVersion).GetAwaiter().GetResult();
+                if (desktopUpdate != null)
+                {
+                    // 同时获取 Web 更新信息，用于统一对话框展示
+                    var webUpdate = WebUpdateService.PeekAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+                    var mode = webUpdate != null ? UpdateDialogMode.DesktopAndWeb : UpdateDialogMode.DesktopOnly;
+
+                    using var dialog = new UpdateDialog(
+                        mode,
+                        desktopVersion,
+                        desktopUpdate.Version,
+                        desktopUpdate.Description,
+                        async progress =>
+                        {
+                            var setupPath = await DesktopUpdateService.DownloadAsync(remoteBaseUrl, desktopUpdate, progress);
+                            progress?.Report((98, "正在启动安装程序..."));
+                            DesktopUpdateService.LaunchInstaller(setupPath);
+                            progress?.Report((100, "即将退出并安装新版本"));
+                            // 短暂延迟让用户看到完成提示，然后退出当前进程
+                            await Task.Delay(800);
+                            Environment.Exit(0);
+                        },
+                        webUpdate);
+
+                    Application.Run(dialog);
+                    // 如果用户点击"以后再说"，继续下面的 Web 静默更新
+                }
+
+                // 没有桌面更新或用户跳过时，静默检查 Web 前端更新
+                WebUpdateService.SilentUpdateAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+            }
         }
 
         var app = BuildWebApp(args);
@@ -154,11 +198,16 @@ internal static class Program
     }
 
     /// <summary>
-    /// 构建并配置 ASP.NET Core 应用（瘦客户端：静态文件 + 反向代理，不注册控制器、不连数据库）。
+    /// 构建并配置 ASP.NET Core 应用（瘦客户端：静态文件 + 反向代理）。
+    /// 当配置了 YhSystemDb 连接串时，额外注册考勤控制器直连内网数据库。
     /// </summary>
     private static WebApplication BuildWebApp(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+
+        // 允许桌面端反向代理大文件上传（安装包/前端包），与远程 API 的 510MB 限制对齐
+        builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 600 * 1024 * 1024);
+        builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 600_000_000);
 
         // wwwroot 指向 exe 同级目录（非嵌入静态资源），由版本管理服务下载更新
         builder.Environment.WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -168,6 +217,41 @@ internal static class Program
         {
             client.Timeout = TimeSpan.FromMinutes(5);
         });
+
+        // ========== 本地监控服务（始终注册，无数据库依赖） ==========
+        builder.Services.AddSingleton<LocalMonitorService>();
+        builder.Services.AddSingleton<LocalBuildService>();
+        builder.Services.AddSingleton<LocalPublishService>();
+        builder.Services.AddSingleton<RemoteBuildService>();
+        builder.Services.AddSingleton<UniversalBuildService>();
+        builder.Services.AddControllers()
+            .AddJsonOptions(options =>
+            {
+                // 枚举使用字符串序列化/反序列化，适配前端传入的 'Web'/'Api' 等字符串
+                options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+            });
+
+        // ========== 本地考勤查询：当配置了内网数据库连接串时注册控制器 ==========
+        var yhConnStr = builder.Configuration.GetConnectionString("YhSystemDb");
+        if (!string.IsNullOrWhiteSpace(yhConnStr))
+        {
+            // 注册 IFreeSql（直连内网 SQL Server，关闭自动建表）
+            builder.Services.AddSingleton<IFreeSql>(sp =>
+            {
+                var fsql = new FreeSqlBuilder()
+                    .UseConnectionString(FreeSql.DataType.SqlServer, yhConnStr)
+                    .UseAutoSyncStructure(false)
+                    .Build();
+                fsql.Aop.CurdAfter += (s, e) =>
+                {
+                    var logger = sp.GetRequiredService<ILogger<IFreeSql>>();
+                    logger.LogDebug("FreeSql(内网考勤) SQL执行：\n{Sql}\n耗时{Elapsed}ms", e.Sql, e.ElapsedMilliseconds);
+                };
+                return fsql;
+            });
+
+            builder.Services.AddSingleton<IAttendanceService, AttendanceService>();
+        }
 
         var app = builder.Build();
 
@@ -192,7 +276,11 @@ internal static class Program
         });
 
         // ========== 反向代理中间件：将 API 请求转发到独立的 API 服务 ==========
+        // 考勤路径（/api/YunHan/Attendance/*）由本地控制器处理，不转发。
         app.UseMiddleware<ReverseProxyMiddleware>();
+
+        // 注册控制器路由（MonitorController 始终可发现；AttendanceController 仅当 YhSystemDb 配置时有效）
+        app.MapControllers();
 
         return app;
     }
@@ -219,6 +307,91 @@ internal static class Program
             try { Directory.Delete(targetPath, recursive: true); }
             catch { /* 文件被占用或删除失败时静默忽略，不影响启动 */ }
         }
+    }
+
+    /// <summary>
+    /// 解析当前桌面程序的真实版本号。
+    /// 安装包升级时 Inno Setup 默认不会覆盖已存在的 appsettings.json，
+    /// 因此将文件中的 DesktopVersion 与程序集版本取较高者，并回写文件保持同步。
+    /// </summary>
+    private static string ResolveDesktopVersion(IConfigurationRoot config, string baseDir)
+    {
+        var fileVersion = (config["AppSettings:DesktopVersion"] ?? string.Empty).Trim();
+        var assemblyVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+
+        var effectiveVersion = IsHigherVersion(assemblyVersion, fileVersion) ? assemblyVersion : fileVersion;
+
+        // 如果文件中的版本低于程序集版本，回写 appsettings.json（保留其他用户配置）
+        if (!string.Equals(fileVersion, effectiveVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var configPath = Path.Combine(baseDir, "appsettings.json");
+                if (File.Exists(configPath))
+                {
+                    var json = File.ReadAllText(configPath);
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    var options = new JsonSerializerOptions { WriteIndented = true };
+                    using var stream = new MemoryStream();
+                    using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+                    writer.WriteStartObject();
+
+                    foreach (var property in root.EnumerateObject())
+                    {
+                        if (property.NameEquals("AppSettings"))
+                        {
+                            writer.WritePropertyName("AppSettings");
+                            writer.WriteStartObject();
+                            foreach (var appSetting in property.Value.EnumerateObject())
+                            {
+                                if (appSetting.NameEquals("DesktopVersion"))
+                                {
+                                    writer.WritePropertyName("DesktopVersion");
+                                    writer.WriteStringValue(effectiveVersion);
+                                }
+                                else
+                                {
+                                    appSetting.WriteTo(writer);
+                                }
+                            }
+                            writer.WriteEndObject();
+                        }
+                        else
+                        {
+                            property.WriteTo(writer);
+                        }
+                    }
+                    writer.WriteEndObject();
+                    writer.Flush();
+
+                    File.WriteAllBytes(configPath, stream.ToArray());
+                }
+            }
+            catch
+            {
+                // 写文件失败（如权限不足）不影响启动，effectiveVersion 已取到正确值
+            }
+        }
+
+        return effectiveVersion;
+    }
+
+    /// <summary>语义版本比较：判断 a 是否高于 b。</summary>
+    private static bool IsHigherVersion(string a, string b)
+    {
+        if (string.IsNullOrEmpty(b)) return true;
+        var aParts = a.Split('.', '-').Select(s => int.TryParse(s, out var n) ? n : 0).ToArray();
+        var bParts = b.Split('.', '-').Select(s => int.TryParse(s, out var n) ? n : 0).ToArray();
+        for (int i = 0; i < Math.Max(aParts.Length, bParts.Length); i++)
+        {
+            var av = i < aParts.Length ? aParts[i] : 0;
+            var bv = i < bParts.Length ? bParts[i] : 0;
+            if (av > bv) return true;
+            if (av < bv) return false;
+        }
+        return false;
     }
 
     /// <summary>

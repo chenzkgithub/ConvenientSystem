@@ -349,6 +349,13 @@ body {
   letter-spacing: 1px;
   text-transform: uppercase;
 }
+.brand-ver {
+  font-size: 10px;
+  opacity: 0.6;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 4px;
+}
 
 /* 侧边栏菜单（覆盖 Element Plus 默认样式，胶囊高亮） */
 .layout-aside .el-menu {

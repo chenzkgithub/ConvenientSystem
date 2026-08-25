@@ -16,6 +16,7 @@ import { useTabsStore } from '@/common/stores/tabs'
 import { useThemeStore } from '@/common/stores/theme'
 import { useRecentStore } from '@/common/stores/recent'
 import { useUserPrefs } from '@/common/composables/useUserPrefs'
+import { useAppVersion } from '@/common/composables/useAppVersion'
 import {
   resolveMenuTarget,
   filterVisibleMenus,
@@ -34,6 +35,7 @@ const auth = useAuthStore()
 const tabsStore = useTabsStore()
 const themeStore = useThemeStore()
 const recentStore = useRecentStore()
+const { data: appVersion, fetch: fetchVersion } = useAppVersion()
 
 // ===== 侧栏折叠状态 =====
 const SIDEBAR_COLLAPSE_KEY = 'UI.SidebarCollapsed'
@@ -447,6 +449,8 @@ watch(
 
 onMounted(async () => {
   if (!menuStore.loaded) menuStore.load()
+  // 拉取当前前端版本号（侧栏展示）
+  await fetchVersion()
   // 登录后从数据库加载 UI 偏好并同步各 store
   if (auth.loggedIn && Object.keys(auth.uiPrefs).length === 0) {
     await auth.loadUIPrefs()
@@ -485,7 +489,7 @@ function formatRecentTime(ts: number): string {
         </div>
         <div class="brand-text">
           <span class="brand-name">ConvenientSystem</span>
-          <span class="brand-sub">Convenient</span>
+          <span class="brand-sub">Convenient<span v-if="appVersion" class="brand-ver"> v{{ appVersion.version }}</span></span>
         </div>
       </div>
       <div class="aside-search">
