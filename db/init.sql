@@ -237,7 +237,6 @@ BEGIN
     -- 构建发布（一级菜单）
     (61, NULL, N'构建发布', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
     (59, 61, N'Web版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
-    (62, 61, N'构建与发布', N'/build-manager', 1, 1, 0, 1, 1, N'build-manager', N'/src/common/views/BuildManagerView.vue', 2, 1),
     (60, 61, N'通用构建发布', N'/universal-build', 1, 1, 0, 1, 1, N'universal-build', N'/src/common/views/UniversalBuildView.vue', 3, 1),
     -- 常用工具（外链）
     (29, NULL, N'常用工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 6, 0),
@@ -1292,8 +1291,7 @@ BEGIN
     (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37),
     (38, N'web-package',      N'Web版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
     (39, N'desktop-package',  N'桌面安装包', N'/src/common/views/WebPackageView.vue',        N'/web-package',      39),
-    (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40),
-    (41, N'build-manager',     N'构建与发布', N'/src/common/views/BuildManagerView.vue',     N'/build-manager',     41);
+    (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40);
     SET IDENTITY_INSERT dbo.SysView OFF;
 END
 GO
@@ -1404,9 +1402,7 @@ BEGIN
     (76, 39, N'desktop-package:delete',   N'删除安装包', 3),
     -- 通用构建发布
     (77, 40, N'universal-build:execute',  N'执行构建', 1),
-    -- 构建与发布
-    (78, 41, N'build-manager:execute',  N'执行构建', 1),
-    (79, 41, N'build-manager:publish', N'发布到服务器', 2);
+
     SET IDENTITY_INSERT dbo.SysViewPermission OFF;
 END
 GO

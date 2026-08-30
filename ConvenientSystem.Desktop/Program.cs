@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Hosting.Server;
+﻿using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http.Features;
 using System.Diagnostics;
@@ -220,10 +220,9 @@ internal static class Program
 
         // ========== 本地监控服务（始终注册，无数据库依赖） ==========
         builder.Services.AddSingleton<LocalMonitorService>();
-        builder.Services.AddSingleton<LocalBuildService>();
-        builder.Services.AddSingleton<LocalPublishService>();
-        builder.Services.AddSingleton<RemoteBuildService>();
         builder.Services.AddSingleton<UniversalBuildService>();
+        builder.Services.AddSingleton<DeployService>();
+        builder.Services.AddSingleton<UniversalScheduleService>();
         builder.Services.AddControllers()
             .AddJsonOptions(options =>
             {

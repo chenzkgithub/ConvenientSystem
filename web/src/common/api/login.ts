@@ -34,7 +34,8 @@ export function checkAuthStatus(lastActivity?: string) {
   return httpGet<{ enabled: boolean }>(`/api/Common/Login/CheckStatus${query}`)
 }
 
-/** 退出登录：通知后端从在线追踪器中移除当前用户 */
+/** 退出登录：通知后端从在线追踪器中移除当前用户
+ *  使用 silent 模式：JWT 已失效时 401 不触发页面刷新，退出流程由 auth.logout() 本地完成 */
 export function logoutApi() {
-  return httpPost<{ ok: boolean }>('/api/Common/Login/Logout')
+  return httpPost<{ ok: boolean }>('/api/Common/Login/Logout', undefined, undefined, { silent: true })
 }

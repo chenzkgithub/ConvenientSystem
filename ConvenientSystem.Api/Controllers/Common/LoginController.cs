@@ -42,6 +42,9 @@ namespace ConvenientSystem.Api.Controllers.Common
             if (result.Ok && result.Token != null && result.UserId != Guid.Empty)
             {
                 var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+                // 先移除旧记录（可能因 Logout 未成功执行而残留），再创建新记录，
+                // 确保 LoginTime 为本次登录时间而非旧会话时间。
+                _tracker.Remove(result.UserId);
                 _tracker.Track(result.UserId,
                     result.Account ?? request?.account ?? string.Empty,
                     result.DisplayName,
