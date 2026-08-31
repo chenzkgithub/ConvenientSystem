@@ -660,6 +660,55 @@ const changesUnstaged = ref<GitChangeFile[]>([])
 const checkedUnstaged = ref<string[]>([])
 /** 已勾选的已暂存文件路径（批量取消暂存用） */
 const checkedStaged = ref<string[]>([])
+/** Shift 多选锚点路径（未暂存区） */
+let lastClickedUnstaged: string | null = null
+/** Shift 多选锚点路径（已暂存区） */
+let lastClickedStaged: string | null = null
+
+/**
+ * 文件行点击处理：支持 Shift 连续范围选、Ctrl 单独加减选，普通点击预览 diff。
+ * @param f       被点击的文件
+ * @param staged  是否在已暂存区
+ * @param e       鼠标事件
+ */
+function onFileItemClick(f: GitChangeFile, staged: boolean, e: MouseEvent) {
+  const list = staged ? filteredStaged.value : filteredUnstaged.value
+  const checked = staged ? checkedStaged : checkedUnstaged
+  const lastClicked = staged ? lastClickedStaged : lastClickedUnstaged
+
+  if (e.shiftKey && lastClicked) {
+    // Shift+点击：计算从锚点到当前的范围，全部选中
+    const anchorIdx = list.findIndex(x => x.path === lastClicked)
+    const curIdx    = list.findIndex(x => x.path === f.path)
+    if (anchorIdx >= 0 && curIdx >= 0) {
+      const lo = Math.min(anchorIdx, curIdx)
+      const hi = Math.max(anchorIdx, curIdx)
+      const rangePaths = list.slice(lo, hi + 1).map(x => x.path)
+      // 合并到已勾选（不去除已有勾选）
+      const merged = Array.from(new Set([...checked.value, ...rangePaths]))
+      checked.value = merged
+    }
+    // Shift 选范围不更新锚点，保持连续 Shift 扩展
+    return
+  }
+
+  if (e.ctrlKey || e.metaKey) {
+    // Ctrl+点击：加选或取消单项
+    if (checked.value.includes(f.path)) {
+      checked.value = checked.value.filter(p => p !== f.path)
+    } else {
+      checked.value = [...checked.value, f.path]
+    }
+    if (staged) lastClickedStaged = f.path
+    else        lastClickedUnstaged = f.path
+    return
+  }
+
+  // 普通点击：预览 diff，更新锚点
+  if (staged) lastClickedStaged = f.path
+  else        lastClickedUnstaged = f.path
+  previewDiff(f, staged)
+}
 /** 当前选中预览 diff 的文件 */
 const changesSelected = ref<{ file: GitChangeFile; staged: boolean } | null>(null)
 const changesDiff = ref<GitFileDiff | null>(null)
@@ -807,6 +856,29 @@ function startHistoryHResize(e: MouseEvent) {
   const startW = historyListWidth.value
   const onMove = (ev: MouseEvent) => {
     historyListWidth.value = Math.max(200, Math.min(900, startW + ev.clientX - startX))
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+/** 提交详情面板内文件列表宽度（px） */
+const detailFilesWidth = ref(Number(localStorage.getItem('git-detail-files-w')) || 220)
+watch(detailFilesWidth, v => localStorage.setItem('git-detail-files-w', String(v)))
+
+function startDetailHResize(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = detailFilesWidth.value
+  const onMove = (ev: MouseEvent) => {
+    detailFilesWidth.value = Math.max(120, Math.min(600, startW + ev.clientX - startX))
   }
   const onUp = () => {
     document.removeEventListener('mousemove', onMove)
@@ -1648,13 +1720,15 @@ async function addConfig() {
           </el-button>
         </div>
 
-        <!-- 操作按钮（运行中禁用其余操作，避免并发导致取消目标混乱） -->
+        <!-- 操作按鈕（运行中禁用其余操作，避免并发导致取消目标混乱） -->
         <div class="action-bar">
           <el-button type="primary" :disabled="!current?.isRepo || !!runningOp" :loading="actionLoading === 'git pull'" @click="pullCurrent">
             <el-icon><Download /></el-icon>&nbsp;拉取
+            <span v-if="current?.behind > 0" class="action-btn-badge">{{ current.behind }}</span>
           </el-button>
           <el-button :disabled="!current?.isRepo || !!runningOp" :loading="actionLoading === 'git push'" @click="pushCurrent">
             <el-icon><Upload /></el-icon>&nbsp;推送
+            <span v-if="current?.ahead > 0" class="action-btn-badge">{{ current.ahead }}</span>
           </el-button>
           <el-button :disabled="!current?.isRepo || !!runningOp" @click="openMergeDialog">
             <el-icon><Connection /></el-icon>&nbsp;合并
@@ -1756,8 +1830,8 @@ async function addConfig() {
                       v-for="f in filteredStaged"
                       :key="'s-' + f.path"
                       class="change-item"
-                      :class="{ selected: changesSelected?.file.path === f.path && changesSelected?.staged, conflict: f.isConflict }"
-                      @click="previewDiff(f, true)"
+                      :class="{ selected: changesSelected?.file.path === f.path && changesSelected?.staged, conflict: f.isConflict, checked: checkedStaged.includes(f.path) }"
+                      @click="onFileItemClick(f, true, $event)"
                       @contextmenu="showContextMenu($event, [
                         { icon: '−', label: '取消暂存此文件', action: () => stageFile(f, false) },
                       ])"
@@ -1803,8 +1877,8 @@ async function addConfig() {
                       v-for="f in filteredUnstaged"
                       :key="'u-' + f.path"
                       class="change-item"
-                      :class="{ selected: changesSelected?.file.path === f.path && !changesSelected?.staged, conflict: f.isConflict }"
-                      @click="previewDiff(f, false)"
+                      :class="{ selected: changesSelected?.file.path === f.path && !changesSelected?.staged, conflict: f.isConflict, checked: checkedUnstaged.includes(f.path) }"
+                      @click="onFileItemClick(f, false, $event)"
                       @contextmenu="showContextMenu($event, [
                         { icon: '+', label: '暂存此文件', action: () => stageFile(f, true) },
                         { icon: '✕', label: '放弃此文件改动', divider: true, danger: true, action: () => discardChanges(f) },
@@ -2043,7 +2117,7 @@ async function addConfig() {
                     <el-icon class="header-icon" title="关闭详情" @click="selectedHash = ''; selectedDetail = null"><CircleClose /></el-icon>
                   </div>
                   <div class="detail-content">
-                    <div class="detail-files">
+                    <div class="detail-files" :style="{ width: detailFilesWidth + 'px' }">
                       <div
                         v-for="f in selectedDetail.files"
                         :key="f.path"
@@ -2058,6 +2132,8 @@ async function addConfig() {
                       </div>
                       <div v-if="selectedDetail.files.length === 0" class="history-more">无文件变更</div>
                     </div>
+                    <!-- 详情面板内左右拖拽把手 -->
+                    <div class="detail-col-resizer" @mousedown="startDetailHResize"></div>
                     <div class="detail-diffs">
                       <div v-for="d in selectedDetail.diffs" v-show="expandedDiffs.has(d.path)" :key="d.path" class="diff-block">
                         <div class="diff-path" :title="d.path">{{ d.path }}</div>
@@ -3104,11 +3180,26 @@ async function addConfig() {
 
 /* 左：文件列表；右：展开的 diff */
 .detail-files {
-  width: 320px;
+  /* width 由 :style 动态绑定 */
   flex-shrink: 0;
   overflow-y: auto;
-  border-right: 1px solid #e4e7ed;
+  border-right: none;  /* 由拖拽条替代边框 */
   padding: 6px 0;
+}
+
+.detail-col-resizer {
+  width: 5px;
+  flex-shrink: 0;
+  background: transparent;
+  border-left: 1px solid #e4e7ed;
+  cursor: col-resize;
+  transition: background 0.15s;
+}
+
+.detail-col-resizer:hover,
+.detail-col-resizer:active {
+  background: #409eff33;
+  border-left-color: #409eff;
 }
 
 .detail-file {
@@ -3526,6 +3617,33 @@ async function addConfig() {
   display: flex;
   gap: 2px;
   justify-content: flex-end;
+}
+
+/* 拉取/推送按钮上的数量角标 */
+.action-btn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.35);
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* 已勾选行高亮（Shift/Ctrl 多选） */
+.change-item.checked {
+  background: #e8f4ff;
+}
+
+.change-item.checked:hover {
+  background: #d4eaff;
 }
 
 /* ===== 文件状态徽章（仿 Sourcetree）===== */
