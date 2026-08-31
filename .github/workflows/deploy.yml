@@ -1,0 +1,192 @@
+name: Deploy to Production
+
+# ============================================================
+# ConvenientSystem Docker 部署流水线
+# GitHub 免费托管 Runner 构建 → SSH 部署到服务器
+# 服务器: 123.56.68.132 (/opt/convenient/)
+# ============================================================
+
+on:
+  # 手动触发（GitHub 网页 → Actions → Run workflow）
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: '跳过构建，仅重启容器（调试用）'
+        type: boolean
+        default: false
+
+  # 推送到 main 分支自动部署（不需要可注释掉下面两行）
+  # push:
+  #   branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ============================================================
+      # ① Checkout 代码
+      # ============================================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # ② 安装 .NET 10 SDK
+      # ============================================================
+      - name: Setup .NET
+        if: ${{ !inputs.skip_build }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # ============================================================
+      # ③ 安装 Node.js
+      # ============================================================
+      - name: Setup Node.js
+        if: ${{ !inputs.skip_build }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      # ============================================================
+      # ④ 构建 API（框架依赖模式，非自包含）
+      #    产物输出到 ./api/ 目录
+      # ============================================================
+      - name: Build API
+        if: ${{ !inputs.skip_build }}
+        run: |
+          dotnet publish ConvenientSystem.Api/ConvenientSystem.Api.csproj \
+            -c Release \
+            -r linux-x64 \
+            --no-self-contained \
+            -o ./api/
+          echo "✅ API 构建完成"
+          ls -la ./api/ | head -10
+
+      # ============================================================
+      # ⑤ 构建前端（Vite 输出到 ConvenientSystem.Desktop/wwwroot/）
+      #    然后复制到 web/wwwroot/ 供 Dockerfile.web 使用
+      # ============================================================
+      - name: Build Frontend
+        if: ${{ !inputs.skip_build }}
+        run: |
+          cd web
+          npm ci
+          npm run build
+          # Vite 配置 outDir = ../ConvenientSystem.Desktop/wwwroot/
+          # 复制到 web/wwwroot/ 供 Dockerfile.web 打包
+          mkdir -p ../web/wwwroot
+          cp -r ../ConvenientSystem.Desktop/wwwroot/* ../web/wwwroot/
+          echo "✅ 前端构建完成"
+          ls ../web/wwwroot/ | head -10
+
+      # ============================================================
+      # ⑥ 打包部署文件
+      #    包含：API 产物 + 前端产物 + Docker 配置文件
+      # ============================================================
+      - name: Package deployment files
+        if: ${{ !inputs.skip_build }}
+        run: |
+          # 打包 API 产物
+          tar -czf api.tar.gz -C api .
+          
+          # 打包前端产物
+          tar -czf web.tar.gz -C web/wwwroot .
+          
+          # 打包 Docker 配置文件（Dockerfile 等可能更新）
+          tar -czf docker-config.tar.gz \
+            Dockerfile \
+            Dockerfile.web \
+            docker-compose.yml \
+            nginx/nginx.conf \
+            docker/init-db.sh \
+            db/init.sql
+          
+          echo "✅ 打包完成"
+          ls -lh *.tar.gz
+
+      # ============================================================
+      # ⑦ 上传到服务器
+      # ============================================================
+      - name: Upload to server
+        if: ${{ !inputs.skip_build }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "api.tar.gz,web.tar.gz,docker-config.tar.gz"
+          target: "/tmp/convenient-deploy/"
+          timeout: 120
+
+      # ============================================================
+      # ⑧ 远程部署：解压 → 重建镜像 → 重启容器
+      # ============================================================
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          command_timeout: 180
+          script: |
+            set -e
+            DEPLOY_DIR="/opt/convenient"
+            TMP_DIR="/tmp/convenient-deploy"
+            
+            echo "=== 1. 解压部署文件 ==="
+            if [ -f "$TMP_DIR/api.tar.gz" ]; then
+              mkdir -p $DEPLOY_DIR/api
+              rm -rf $DEPLOY_DIR/api/*
+              tar -xzf $TMP_DIR/api.tar.gz -C $DEPLOY_DIR/api/
+              echo "  API 文件解压完成"
+            fi
+            
+            if [ -f "$TMP_DIR/web.tar.gz" ]; then
+              mkdir -p $DEPLOY_DIR/web/wwwroot
+              rm -rf $DEPLOY_DIR/web/wwwroot/*
+              tar -xzf $TMP_DIR/web.tar.gz -C $DEPLOY_DIR/web/wwwroot/
+              echo "  前端文件解压完成"
+            fi
+            
+            if [ -f "$TMP_DIR/docker-config.tar.gz" ]; then
+              cd $DEPLOY_DIR
+              tar -xzf $TMP_DIR/docker-config.tar.gz
+              echo "  Docker 配置文件更新完成"
+            fi
+            
+            echo "=== 2. 重建 Docker 镜像 ==="
+            cd $DEPLOY_DIR
+            docker compose build --no-cache api web
+            echo "  镜像重建完成"
+            
+            echo "=== 3. 重启容器（SQL Server 不重启）==="
+            docker compose up -d api web
+            sleep 8
+            
+            echo "=== 4. 验证容器状态 ==="
+            docker ps --format 'table {{.Names}}\t{{.Status}}' | grep convenient
+            
+            echo "=== 5. 健康检查 ==="
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:51943/ || echo "000")
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+              echo "  ✅ API 健康检查通过 (HTTP $HTTP_CODE)"
+            else
+              echo "  ⚠️ API 返回 HTTP $HTTP_CODE，请检查日志"
+              docker logs convenient-api --tail 10
+            fi
+            
+            echo "=== 6. 清理临时文件 ==="
+            rm -rf $TMP_DIR
+            echo "  临时文件已清理"
+            
+            echo ""
+            echo "=========================================="
+            echo "  ✅ 部署完成！"
+            echo "  时间: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "=========================================="

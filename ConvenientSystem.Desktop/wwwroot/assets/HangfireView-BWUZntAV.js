@@ -1,0 +1,1 @@
+import{d as e,c as a,e as r,b as s,z as n}from"./index-DFyRv3wd.js";const c={class:"hangfire-container"},o="/hangfire",t=e({__name:"HangfireView",setup(i){return(f,_)=>(s(),a("div",c,[r("iframe",{src:o,frameborder:"0",class:"hangfire-iframe"})]))}}),m=n(t,[["__scopeId","data-v-720a0a6a"]]);export{m as default};

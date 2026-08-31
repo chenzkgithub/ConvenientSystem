@@ -1,0 +1,38 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# IDE
+**/.vs/
+**/.vscode/
+.qoder/
+
+# Desktop client build (not needed in Docker)
+ConvenientSystem.Desktop/bin/
+ConvenientSystem.Desktop/obj/
+
+# Node modules (will be npm install'd in Docker)
+web/node_modules/
+web/tsconfig.tsbuildinfo
+
+# User files
+*.user
+*.suo
+
+# Git
+.git/
+.gitignore
+
+# Temp build outputs (cleaned up, not needed)
+
+# Exception: pre-built publish directory (for local-build Docker deployment)
+!api/
+
+# Docs (not needed in Docker image)
+*.md
+# Exception: Python knowledge base is imported by web build
+!python/Python知识库.md
+
+# Python (not needed, except knowledge base)
+
+

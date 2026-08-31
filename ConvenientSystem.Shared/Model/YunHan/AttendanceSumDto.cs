@@ -8,6 +8,8 @@
         public string avatar { get; set; }
         [JsonPropertyName("ddUserId")]
         public string DDUserId { get; set; }
+        /// <summary>企业 corpId（钉钉 URL Scheme 跳转联系人详情页用）</summary>
+        public string corpId { get; set; }
         public string UserName { get; set; }
         public int? employeeStatus { get; set; }
         

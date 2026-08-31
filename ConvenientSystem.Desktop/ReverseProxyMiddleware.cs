@@ -70,8 +70,10 @@ internal sealed class ReverseProxyMiddleware
         }
 
         // 本地构建与发布控制器不走反向代理
+        // Git 代码管理工作台操作本机仓库（git 命令在本机执行），同样必须走本地控制器
         if (context.Request.Path.StartsWithSegments("/api/Common/Build", StringComparison.OrdinalIgnoreCase)
-            || context.Request.Path.StartsWithSegments("/api/Common/UniversalBuild", StringComparison.OrdinalIgnoreCase))
+            || context.Request.Path.StartsWithSegments("/api/Common/UniversalBuild", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/Git", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;

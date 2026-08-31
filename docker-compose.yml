@@ -1,0 +1,80 @@
+services:
+  # ========== SQL Server Express ==========
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: convenient-sqlserver
+    restart: always
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Express
+      - MSSQL_SA_PASSWORD=Czk@SqlServer2026
+      - MSSQL_MEMORY_LIMIT_MB=1024
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "export PATH=$$PATH:/opt/mssql-tools18/bin:/opt/mssql-tools/bin && sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ========== Database Initialization (one-time) ==========
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: convenient-db-init
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      - SA_PASSWORD=Czk@SqlServer2026
+      - DB_HOST=sqlserver
+    volumes:
+      - ./db/init.sql:/init.sql
+      - ./docker/init-db.sh:/init-db.sh
+    entrypoint: /bin/bash
+    command: /init-db.sh
+    restart: "no"
+
+  # ========== API ==========
+  api:
+    build: .
+    container_name: convenient-api
+    restart: always
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DOTNET_PRINT_TELEMETRY_MESSAGES=false
+      - Database__Type=SqlServer
+      - ConnectionStrings__ConvenientSystemDb=Server=sqlserver;Database=ConvenientSystem;User Id=root;Password=root;Encrypt=False;TrustServerCertificate=True;Connection Timeout=30;
+      - ConnectionStrings__YhSystemDb=
+      - AppSettings__ServicePort=51943
+      - WEB_PACKAGE_DIR=/data/web-packages
+      - DESKTOP_PACKAGE_DIR=/data/desktop-packages
+    ports:
+      - "51943:51943"
+    volumes:
+      - api-logs:/app/logs
+      - web-packages:/data/web-packages
+      - desktop-packages:/data/desktop-packages
+
+  # ========== Nginx (Frontend + Reverse Proxy) ==========
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: convenient-web
+    restart: always
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+
+volumes:
+  sqlserver-data:
+  api-logs:
+  web-packages:
+  desktop-packages:

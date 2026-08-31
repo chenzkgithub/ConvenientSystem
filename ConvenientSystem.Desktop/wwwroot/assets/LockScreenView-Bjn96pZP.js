@@ -1,0 +1,1 @@
+import{d as a,i as n,n as c,s as t,b as r,ad as s}from"./index-DFyRv3wd.js";const f=a({__name:"LockScreenView",setup(u){const e=t(!1);function o(){e.value=!0}return(l,_)=>e.value?c("",!0):(r(),n(s,{key:0,onUnlocked:o}))}});export{f as default};

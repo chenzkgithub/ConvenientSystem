@@ -275,6 +275,15 @@ async function openDailyRanking() {
   }
 }
 
+// ========== 钉钉跳转 ==========
+/** 返回钉钉 PC 客户端联系人详情页 URL Scheme */
+function dingTalkUrl(row: AttendanceRow): string | null {
+  if (!row.ddUserId) return null
+  return row.corpId
+    ? `dingtalk://dingtalkclient/page/contacts?corpId=${row.corpId}&userId=${row.ddUserId}`
+    : `dingtalk://dingtalkclient/page/contacts?userId=${row.ddUserId}`
+}
+
 // ========== 初始化 ==========
 onMounted(async () => {
   setDefaultMonth()
@@ -328,7 +337,7 @@ onMounted(async () => {
 
       <!-- 汇总表 -->
       <div class="right-table">
-        <div class="table-summary">当前共 <strong>{{ sumList.length }}</strong> 条人员数据</div>
+        <div class="table-summary">当前共 <strong>{{ sumList.length }}</strong> 条人员数据（双击行查看每日明细）</div>
         <el-table
           :data="sumList"
           height="100%"
@@ -336,6 +345,8 @@ onMounted(async () => {
           stripe
           highlight-current-row
           :default-sort="{ prop: 'overtimeDuration', order: 'descending' }"
+          style="cursor: pointer"
+          @row-dblclick="(row: AttendanceRow) => openDetail(row.userName, '', row.ddUserId ?? '')"
         >
           <el-table-column label="排名" width="70" fixed>
             <template #default="{ $index }">{{ $index + 1 }}</template>
@@ -354,9 +365,15 @@ onMounted(async () => {
               />
             </template>
           </el-table-column>
-          <el-table-column label="姓名" width="110">
+          <el-table-column label="姓名" width="120">
             <template #default="{ row }">
-              <span class="link-name" @click="openDetail(row.userName, '', row.ddUserId ?? '')">{{ row.userName }}</span>
+              <a
+                v-if="dingTalkUrl(row)"
+                :href="dingTalkUrl(row)!"
+                class="dd-name-link"
+                @click.stop
+              >{{ row.userName }}</a>
+              <span v-else>{{ row.userName }}</span>
             </template>
           </el-table-column>
           <el-table-column label="部门" min-width="140">
@@ -429,7 +446,10 @@ onMounted(async () => {
         />
       </div>
       <div class="dialog-table-wrap" v-loading="rankingLoading">
-      <el-table :data="rankingList" border stripe height="100%" highlight-current-row>
+      <el-table :data="rankingList" border stripe height="100%" highlight-current-row
+        style="cursor: pointer"
+        @row-dblclick="(row: AttendanceRow) => openDetail(row.userName, row.deptId ?? '', row.ddUserId ?? '')"
+      >
         <el-table-column label="排名" width="70">
           <template #default="{ row, $index }">{{ row.index ?? $index + 1 }}</template>
         </el-table-column>
@@ -447,9 +467,15 @@ onMounted(async () => {
             />
           </template>
         </el-table-column>
-        <el-table-column label="姓名" width="110">
+        <el-table-column label="姓名" width="120">
           <template #default="{ row }">
-            <span class="link-name" @click="openDetail(row.userName, row.deptId ?? '', row.ddUserId ?? '')">{{ row.userName }}</span>
+            <a
+              v-if="dingTalkUrl(row)"
+              :href="dingTalkUrl(row)!"
+              class="dd-name-link"
+              @click.stop
+            >{{ row.userName }}</a>
+            <span v-else>{{ row.userName }}</span>
           </template>
         </el-table-column>
         <el-table-column label="部门" min-width="200">

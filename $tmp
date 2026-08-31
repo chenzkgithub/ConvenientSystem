@@ -1,0 +1,7 @@
+﻿Import-Module Posh-SSH
+$pwd = 'Czk15179458981'
+$sec = ConvertTo-SecureString $pwd -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential('root', $sec)
+$ssh = New-SSHSession -ComputerName '123.56.68.132' -Credential $cred -AcceptKey
+Remove-SSHSession -SessionId $ssh.SessionId | Out-Null
+Write-Host 'ok'

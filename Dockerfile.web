@@ -1,0 +1,11 @@
+# Simple nginx image with pre-built static files
+# Frontend is built locally (npm run build) before docker compose up
+FROM nginx:alpine
+
+# Copy pre-built frontend
+COPY web/wwwroot /usr/share/nginx/html
+
+# Copy nginx config
+COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80

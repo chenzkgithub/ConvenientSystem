@@ -38,6 +38,8 @@ export interface RequestDto {
 export interface AttendanceRow {
   avatar?: string
   ddUserId?: string
+  /** 企业 corpId（钉钉 URL Scheme 跳转联系人详情页用） */
+  corpId?: string
   userName: string
   deptName?: string
   /** 部门全称（如"南昌分公司-运营部-拼多多组"） */

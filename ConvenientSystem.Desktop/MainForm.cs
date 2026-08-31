@@ -375,6 +375,16 @@ public sealed class MainForm : Form
                 _launcher?.RefreshResults();
             },
             RefreshIndexAction = () => _fileIndex?.ForceRebuild(),
+            CloseAllWindowsAction = () =>
+            {
+                var windows = _openPageWindows.Values.ToList();
+                foreach (var win in windows) win.Close();
+                _openPageWindows.Clear();
+            },
+            RestartAction = RestartApp,
+            LogoutAction = LogoutApp,
+            ExitAction = ExitApp,
+            HasOpenWindowsFunc = () => _openPageWindows.Count > 0,
         };
         _floatingBtn.PositionAtScreenCorner();
         _floatingBtn.Show();

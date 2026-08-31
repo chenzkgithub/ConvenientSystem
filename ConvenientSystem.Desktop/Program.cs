@@ -223,6 +223,7 @@ internal static class Program
         builder.Services.AddSingleton<UniversalBuildService>();
         builder.Services.AddSingleton<DeployService>();
         builder.Services.AddSingleton<UniversalScheduleService>();
+        builder.Services.AddSingleton<GitService>();
         builder.Services.AddControllers()
             .AddJsonOptions(options =>
             {

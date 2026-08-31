@@ -1,0 +1,1 @@
+import{M as n}from"./index-DFyRv3wd.js";function i(t){return n("/api/Common/AuditLog/List",t)}function r(t){return n("/api/Common/AuditLog/Trend",{days:t})}function u(t){return n("/api/Common/AuditLog/LoginTrend",{days:t})}export{u as a,r as g,i as l};

@@ -154,6 +154,7 @@ namespace ConvenientSystem.Service.YunHan
                 {
                     avatar = t.Max(t.Value.Item2.avatar),
                     DDUserId = t.Max(t.Value.Item2.DDUserId),
+                    corpId = t.Max(t.Value.Item2.corpId),
                     employeeStatus = t.Max(t.Value.Item2.EmployeeStatus),
                     UserName = t.Value.Item2.UserName,
                     deptId = t.Value.Item3.full_code,

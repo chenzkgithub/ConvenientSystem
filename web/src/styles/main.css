@@ -1046,6 +1046,18 @@ body {
   cursor: pointer;
 }
 
+/* 考勤表姓名超链接：点击唤起钉钉客户端 */
+.dd-name-link {
+  color: var(--brand);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dd-name-link:hover {
+  text-decoration: underline;
+}
+
 .avatar-cell {
   cursor: zoom-in;
 }

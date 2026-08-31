@@ -52,6 +52,31 @@ public sealed class FloatingButton : Form
     [Browsable(false)]
     public Action? RefreshIndexAction { get; set; }
 
+    /// <summary>关闭所有弹窗回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? CloseAllWindowsAction { get; set; }
+
+    /// <summary>重启应用回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? RestartAction { get; set; }
+
+    /// <summary>退出登录回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? LogoutAction { get; set; }
+
+    /// <summary>退出程序回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? ExitAction { get; set; }
+
+    /// <summary>查询当前是否有已打开的弹窗（供菜单 Enabled 动态判断）。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Func<bool>? HasOpenWindowsFunc { get; set; }
+
     // 程序图标
     private readonly Image? _appIcon;
     private readonly int _iconSize;
@@ -219,6 +244,28 @@ public sealed class FloatingButton : Form
         var closeItem = new ToolStripMenuItem("关闭悬浮按钮");
         closeItem.Click += (_, _) => Hide();
         _selfMenu.Items.Add(closeItem);
+
+        _selfMenu.Items.Add(new ToolStripSeparator());
+
+        var closeAllItem = new ToolStripMenuItem("关闭所有弹窗");
+        closeAllItem.Click += (_, _) => CloseAllWindowsAction?.Invoke();
+        _selfMenu.Opening += (_, _) =>
+        {
+            closeAllItem.Enabled = HasOpenWindowsFunc?.Invoke() ?? false;
+        };
+        _selfMenu.Items.Add(closeAllItem);
+
+        var restartItem = new ToolStripMenuItem("重启");
+        restartItem.Click += (_, _) => RestartAction?.Invoke();
+        _selfMenu.Items.Add(restartItem);
+
+        var logoutItem = new ToolStripMenuItem("退出登录");
+        logoutItem.Click += (_, _) => LogoutAction?.Invoke();
+        _selfMenu.Items.Add(logoutItem);
+
+        var exitItem = new ToolStripMenuItem("退出程序");
+        exitItem.Click += (_, _) => ExitAction?.Invoke();
+        _selfMenu.Items.Add(exitItem);
     }
 
     protected override CreateParams CreateParams
