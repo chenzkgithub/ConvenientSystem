@@ -61,6 +61,8 @@ bld/
 # 前端构建产物（npm run build 生成，不入版本控制）
 ConvenientSystem.Desktop/wwwroot/assets/
 ConvenientSystem.Desktop/wwwroot/index.html
+exe/wwwroot/assets/
+exe/wwwroot/index.html
 
 # Visual Studio 2017 auto generated files
 Generated\ Files/
