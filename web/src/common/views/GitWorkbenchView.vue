@@ -372,7 +372,7 @@ interface LogLine {
 
 const logLines = ref<LogLine[]>([])
 const logTerminalRef = ref<HTMLDivElement>()
-const activeTab = ref<'log' | 'changes' | 'history' | 'knowledge'>('log')
+const activeTab = ref<'log' | 'changes' | 'history' | 'knowledge' | 'terminal'>('log')
 
 // ============================ 运行中操作（取消用） ============================
 
@@ -459,6 +459,126 @@ async function copyLog() {
     return
   }
   await copyText(text, '日志已复制')
+}
+
+// ============================ 终端页签 ============================
+
+const TERMINAL_HISTORY_KEY = 'git-terminal-history'
+function loadTerminalHistory(): string[] {
+  try { return JSON.parse(localStorage.getItem(TERMINAL_HISTORY_KEY) ?? '[]') } catch { return [] }
+}
+
+/** 命令输入框内容（不含 git 前缀） */
+const terminalInput = ref('')
+/** 终端输出行 */
+const terminalLines = ref<LogLine[]>([])
+/** 终端运行中 */
+const terminalRunning = ref(false)
+/** 命令历史（最近50条） */
+const terminalHistory = ref<string[]>(loadTerminalHistory())
+/** 历史浏览指针（-1 表示未浏览） */
+let terminalHistoryIdx = -1
+/** 快捷提示列表是否展开 */
+const terminalSuggestVisible = ref(false)
+/** 当前匹配的知识库快捷提示 */
+const terminalSuggestions = computed(() => {
+  const kw = terminalInput.value.trim().toLowerCase()
+  if (!kw) return gitCommands.slice(0, 8)
+  return gitCommands.filter(c =>
+    c.command.toLowerCase().includes(kw) ||
+    c.desc.toLowerCase().includes(kw)
+  ).slice(0, 10)
+})
+const terminalOutputRef = ref<HTMLDivElement>()
+
+function terminalScrollBottom() {
+  void nextTick(() => {
+    const el = terminalOutputRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+watch(() => terminalLines.value.length, terminalScrollBottom)
+
+function saveTerminalHistory(cmd: string) {
+  const list = terminalHistory.value.filter(c => c !== cmd)
+  list.unshift(cmd)
+  terminalHistory.value = list.slice(0, 50)
+  localStorage.setItem(TERMINAL_HISTORY_KEY, JSON.stringify(terminalHistory.value))
+}
+
+function applySuggestion(cmd: string) {
+  // 知识库命令带 git 前缀，去掉前缀填入输入框
+  terminalInput.value = cmd.startsWith('git ') ? cmd.slice(4) : cmd
+  terminalSuggestVisible.value = false
+}
+
+async function runTerminalCommand() {
+  const sub = terminalInput.value.trim()
+  if (!sub) return
+  if (!currentPath.value) { ElMessage.warning('请先在左侧选择仓库'); return }
+  const fullCmd = sub.startsWith('git ') ? sub : `git ${sub}`
+  terminalSuggestVisible.value = false
+  terminalLines.value.push({ kind: 'cmd', text: `$ ${fullCmd}` })
+  saveTerminalHistory(sub)
+  terminalHistoryIdx = -1
+  terminalInput.value = ''
+  terminalRunning.value = true
+  try {
+    const result = await gitExec({ path: currentPath.value, command: fullCmd })
+    const text = (result.output || '').replace(/\r\n/g, '\n').trimEnd()
+    if (text) {
+      for (const line of text.split('\n'))
+        terminalLines.value.push({ kind: result.success ? 'out' : 'err', text: line })
+    } else {
+      terminalLines.value.push({ kind: 'out', text: result.success ? '（命令成功，无输出）' : `（退出码 ${result.exitCode}）` })
+    }
+  } catch {
+    terminalLines.value.push({ kind: 'err', text: '✗ 请求异常（后端不可用）' })
+  } finally {
+    terminalRunning.value = false
+  }
+}
+
+function onTerminalKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    if (terminalSuggestVisible.value && terminalSuggestions.value.length > 0) {
+      applySuggestion(terminalSuggestions.value[0].command)
+    } else {
+      void runTerminalCommand()
+    }
+    return
+  }
+  if (e.key === 'Escape') {
+    terminalSuggestVisible.value = false
+    return
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    terminalSuggestVisible.value = false
+    const hist = terminalHistory.value
+    if (hist.length === 0) return
+    terminalHistoryIdx = Math.min(terminalHistoryIdx + 1, hist.length - 1)
+    terminalInput.value = hist[terminalHistoryIdx]
+    return
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    terminalSuggestVisible.value = false
+    terminalHistoryIdx = Math.max(terminalHistoryIdx - 1, -1)
+    terminalInput.value = terminalHistoryIdx >= 0 ? terminalHistory.value[terminalHistoryIdx] : ''
+    return
+  }
+}
+
+function onTerminalInput() {
+  terminalHistoryIdx = -1
+  terminalSuggestVisible.value = terminalInput.value.trim().length > 0 || true
+}
+
+function clearTerminal() {
+  terminalLines.value = []
 }
 
 async function copyText(text: string, tip = '已复制') {
@@ -1757,10 +1877,14 @@ async function addConfig() {
             <div class="tab-btn" :class="{ active: activeTab === 'knowledge' }" @click="activeTab = 'knowledge'">
               命令知识库<span class="tab-count">{{ gitCommands.length }}</span>
             </div>
+            <div class="tab-btn" :class="{ active: activeTab === 'terminal' }" @click="activeTab = 'terminal'">终端</div>
             <span class="tab-spacer"></span>
             <template v-if="activeTab === 'log'">
               <el-icon class="header-icon" title="复制日志" @click="copyLog"><CopyDocument /></el-icon>
               <el-icon class="header-icon danger" title="清空日志" @click="clearLog"><Delete /></el-icon>
+            </template>
+            <template v-if="activeTab === 'terminal'">
+              <el-icon class="header-icon danger" title="清空终端" @click="clearTerminal"><Delete /></el-icon>
             </template>
           </div>
 
@@ -2189,6 +2313,59 @@ async function addConfig() {
                 </div>
               </div>
               <el-empty v-if="filteredCommands.length === 0" description="没有匹配的命令" :image-size="60" />
+            </div>
+          </div>
+
+          <!-- 终端页签 -->
+          <div v-show="activeTab === 'terminal'" class="terminal-pane">
+            <div class="terminal-path-bar">
+              <el-icon><FolderOpened /></el-icon>
+              <span class="terminal-path-text">{{ currentPath || '未选择仓库' }}</span>
+            </div>
+            <!-- 输出区 -->
+            <div ref="terminalOutputRef" class="terminal-output">
+              <div
+                v-for="(line, i) in terminalLines"
+                :key="i"
+                :class="['terminal-line', 'tl-' + line.kind]"
+              >{{ line.text }}</div>
+              <div v-if="terminalLines.length === 0" class="terminal-empty">输入 git 子命令并回车执行，支持上下键翻历史</div>
+            </div>
+            <!-- 输入区 -->
+            <div class="terminal-input-wrap">
+              <span class="terminal-prefix">git</span>
+              <div class="terminal-suggest-wrap">
+                <!-- 快捷提示 -->
+                <div v-show="terminalSuggestVisible && terminalSuggestions.length > 0" class="terminal-suggest-list">
+                  <div
+                    v-for="s in terminalSuggestions"
+                    :key="s.command"
+                    class="terminal-suggest-item"
+                    :class="{ danger: s.danger }"
+                    @mousedown.prevent="applySuggestion(s.command)"
+                  >
+                    <code class="tsi-cmd">{{ s.command.startsWith('git ') ? s.command.slice(4) : s.command }}</code>
+                    <span class="tsi-desc">{{ s.desc }}</span>
+                  </div>
+                </div>
+                <input
+                  v-model="terminalInput"
+                  class="terminal-input"
+                  placeholder="输入命令，如 log --oneline -10"
+                  :disabled="terminalRunning"
+                  @keydown="onTerminalKeydown"
+                  @input="onTerminalInput"
+                  @focus="terminalSuggestVisible = true"
+                  @blur="terminalSuggestVisible = false"
+                />
+              </div>
+              <el-button
+                type="primary"
+                :loading="terminalRunning"
+                :disabled="!terminalInput.trim() || !currentPath"
+                class="terminal-run-btn"
+                @click="runTerminalCommand"
+              >执行</el-button>
             </div>
           </div>
         </div>
@@ -3827,6 +4004,175 @@ async function addConfig() {
 /* ===== 历史搜索框 ===== */
 .history-search {
   width: 200px;
+  flex-shrink: 0;
+}
+
+/* ===== 终端页签 ===== */
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1b27;
+  color: #cdd6f4;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.terminal-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: #12131e;
+  color: #6c7086;
+  font-size: 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #2a2b3d;
+  overflow: hidden;
+}
+
+.terminal-path-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.terminal-empty {
+  color: #585b70;
+  font-style: italic;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.terminal-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.55;
+}
+
+.tl-cmd  { color: #89dceb; font-weight: 700; }
+.tl-out  { color: #cdd6f4; }
+.tl-err  { color: #f38ba8; }
+.tl-ok   { color: #a6e3a1; }
+.tl-warn { color: #f9e2af; }
+
+.terminal-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 10px;
+  background: #12131e;
+  border-top: 1px solid #2a2b3d;
+  flex-shrink: 0;
+}
+
+.terminal-prefix {
+  padding: 0 8px;
+  color: #a6e3a1;
+  font-weight: 700;
+  background: #1e1f2e;
+  border: 1px solid #2a2b3d;
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  height: 32px;
+  line-height: 32px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.terminal-suggest-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.terminal-input {
+  width: 100%;
+  height: 32px;
+  background: #1e1f2e;
+  border: 1px solid #2a2b3d;
+  border-radius: 0;
+  color: #cdd6f4;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.terminal-input:focus {
+  border-color: #89b4fa;
+}
+
+.terminal-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.terminal-suggest-list {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: #1e1f30;
+  border: 1px solid #3a3b55;
+  border-radius: 6px 6px 0 0;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.4);
+}
+
+.terminal-suggest-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #2a2b3d;
+  transition: background 0.15s;
+}
+
+.terminal-suggest-item:last-child { border-bottom: none; }
+
+.terminal-suggest-item:hover {
+  background: #2a2b42;
+}
+
+.tsi-cmd {
+  color: #89dceb;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 130px;
+}
+
+.tsi-desc {
+  color: #6c7086;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--el-font-family, sans-serif);
+}
+
+.terminal-suggest-item.danger .tsi-cmd { color: #f38ba8; }
+
+.terminal-run-btn {
+  border-radius: 0 4px 4px 0 !important;
   flex-shrink: 0;
 }
 </style>
