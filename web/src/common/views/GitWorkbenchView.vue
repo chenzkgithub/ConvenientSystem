@@ -163,6 +163,36 @@ async function refreshCurrent() {
   void loadMergeState()
 }
 
+// ============================ 实时监听（轮询 + 焦点回归） ============================
+
+/** 工作区轮询定时器 */
+let changesPollingTimer: ReturnType<typeof setInterval> | null = null
+const CHANGES_POLL_INTERVAL = 8000
+
+function startChangesPolling() {
+  if (changesPollingTimer) return
+  changesPollingTimer = setInterval(() => {
+    if (activeTab.value === 'changes' && currentPath.value && !changesLoading.value) {
+      void reloadChanges()
+      void refreshCurrent()
+    }
+  }, CHANGES_POLL_INTERVAL)
+}
+
+function stopChangesPolling() {
+  if (changesPollingTimer) {
+    clearInterval(changesPollingTimer)
+    changesPollingTimer = null
+  }
+}
+
+/** 窗口获得焦点时立即刷新改动和仓库状态 */
+function onWindowFocus() {
+  if (!currentPath.value) return
+  void refreshCurrent()
+  if (activeTab.value === 'changes') void reloadChanges()
+}
+
 onMounted(async () => {
   await loadRepos()
   if (repos.value.length > 0 && !currentPath.value) {
@@ -171,11 +201,14 @@ onMounted(async () => {
   void checkEnv()
   document.addEventListener('keydown', onGlobalKeydown)
   document.addEventListener('click', onDocumentClick)
+  window.addEventListener('focus', onWindowFocus)
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
   document.removeEventListener('click', onDocumentClick)
+  window.removeEventListener('focus', onWindowFocus)
+  stopChangesPolling()
 })
 
 // ============================ 添加 / 移除仓库 ============================
@@ -372,7 +405,7 @@ interface LogLine {
 
 const logLines = ref<LogLine[]>([])
 const logTerminalRef = ref<HTMLDivElement>()
-const activeTab = ref<'log' | 'changes' | 'history' | 'knowledge' | 'terminal'>('log')
+const activeTab = ref<'log' | 'changes' | 'history' | 'knowledge' | 'terminal'>('changes')
 
 // ============================ 运行中操作（取消用） ============================
 
@@ -445,7 +478,12 @@ watch(() => logLines.value.length, scrollToLogBottom)
 watch(activeTab, (tab) => {
   if (tab === 'log') scrollToLogBottom()
   if (tab === 'history' && (historyDirty.value || historyEntries.value.length === 0)) reloadHistory()
-  if (tab === 'changes' && (changesDirty.value || changesStaged.value.length + changesUnstaged.value.length === 0)) reloadChanges()
+  if (tab === 'changes') {
+    if (changesDirty.value || changesStaged.value.length + changesUnstaged.value.length === 0) reloadChanges()
+    startChangesPolling()
+  } else {
+    stopChangesPolling()
+  }
 })
 
 function clearLog() {
@@ -1740,7 +1778,7 @@ async function addConfig() {
               ])"
             >
               <!-- 改动数角标 -->
-              <span v-if="repo.isRepo && repo.changes > 0" class="repo-changes-badge">{{ repo.changes }}</span>
+              
               <div class="repo-item-top">
                 <span class="repo-name">{{ repo.name }}</span>
                 <el-icon
@@ -1840,53 +1878,143 @@ async function addConfig() {
           </el-button>
         </div>
 
-        <!-- 操作按鈕（运行中禁用其余操作，避免并发导致取消目标混乱） -->
-        <div class="action-bar">
-          <el-button type="primary" :disabled="!current?.isRepo || !!runningOp" :loading="actionLoading === 'git pull'" @click="pullCurrent">
-            <el-icon><Download /></el-icon>&nbsp;拉取
-            <span v-if="current?.behind > 0" class="action-btn-badge">{{ current.behind }}</span>
-          </el-button>
-          <el-button :disabled="!current?.isRepo || !!runningOp" :loading="actionLoading === 'git push'" @click="pushCurrent">
-            <el-icon><Upload /></el-icon>&nbsp;推送
-            <span v-if="current?.ahead > 0" class="action-btn-badge">{{ current.ahead }}</span>
-          </el-button>
-          <el-button :disabled="!current?.isRepo || !!runningOp" @click="openMergeDialog">
-            <el-icon><Connection /></el-icon>&nbsp;合并
-          </el-button>
-          <el-button :disabled="!current?.isRepo || !!runningOp" @click="openBranchDrawer">
-            <el-icon><Switch /></el-icon>&nbsp;分支管理
-          </el-button>
-          <el-button v-if="runningOp" type="warning" plain :title="runningOp.label" @click="cancelCurrent">
-            <el-icon><CircleClose /></el-icon>&nbsp;取消操作
-          </el-button>
+        <!-- Sourcetree 风格工具栏 -->
+        <div class="sourcetree-toolbar">
+          <!-- 拉取 -->
+          <button
+            class="toolbar-btn"
+            :class="{ 'toolbar-btn--loading': actionLoading === 'git pull' }"
+            :disabled="!current?.isRepo || !!runningOp"
+            title="拉取（git pull）"
+            @click="pullCurrent"
+          >
+            <span class="toolbar-btn-icon">&#x2193;</span>
+            <span class="toolbar-btn-label">拉取</span>
+            <span v-if="current?.behind > 0" class="toolbar-btn-badge">{{ current.behind }}</span>
+          </button>
+          <!-- 推送 -->
+          <button
+            class="toolbar-btn"
+            :class="{ 'toolbar-btn--loading': actionLoading === 'git push' }"
+            :disabled="!current?.isRepo || !!runningOp"
+            title="推送（git push）"
+            @click="pushCurrent"
+          >
+            <span class="toolbar-btn-icon">&#x2191;</span>
+            <span class="toolbar-btn-label">推送</span>
+            <span v-if="current?.ahead > 0" class="toolbar-btn-badge">{{ current.ahead }}</span>
+          </button>
+          <div class="toolbar-sep"></div>
+          <!-- 分支管理 -->
+          <button
+            class="toolbar-btn"
+            :disabled="!current?.isRepo || !!runningOp"
+            title="分支管理"
+            @click="openBranchDrawer"
+          >
+            <span class="toolbar-btn-icon">&#x2387;</span>
+            <span class="toolbar-btn-label">分支</span>
+          </button>
+          <!-- 合并 -->
+          <button
+            class="toolbar-btn"
+            :disabled="!current?.isRepo || !!runningOp"
+            title="合并分支"
+            @click="openMergeDialog"
+          >
+            <span class="toolbar-btn-icon">&#x21d4;</span>
+            <span class="toolbar-btn-label">合并</span>
+          </button>
+          <div class="toolbar-sep"></div>
+          <!-- 储藏 -->
+          <button
+            class="toolbar-btn"
+            :disabled="!current?.isRepo || !!runningOp"
+            title="储藏改动（git stash）"
+            @click="stashMsgInput = ''; stashMsgDialogVisible = true"
+          >
+            <span class="toolbar-btn-icon">&#x2693;</span>
+            <span class="toolbar-btn-label">储藏</span>
+          </button>
+          <!-- 放弃 -->
+          <button
+            class="toolbar-btn toolbar-btn--danger"
+            :disabled="!current?.isRepo || !!runningOp || changesUnstaged.length === 0"
+            title="放弃所有未暂存改动"
+            @click="discardChanges(null)"
+          >
+            <span class="toolbar-btn-icon">&#x21a9;</span>
+            <span class="toolbar-btn-label">放弃</span>
+          </button>
+          <div class="toolbar-spacer"></div>
+
+          <!-- 右侧页签图标按钮 -->
+          <div class="toolbar-tab-group">
+            <button
+              class="toolbar-tab-btn"
+              :class="{ active: activeTab === 'log' }"
+              title="操作日志"
+              @click="activeTab = 'log'"
+            >
+              <span class="ttb-icon">&#x2261;</span>
+              <span class="ttb-label">日志</span>
+            </button>
+            <button
+              class="toolbar-tab-btn"
+              :class="{ active: activeTab === 'changes' }"
+              title="工作区改动"
+              @click="activeTab = 'changes'"
+            >
+              <span class="ttb-icon">&#x270e;</span>
+              <span class="ttb-label">改动</span>
+              <span
+                v-if="changesUnstaged.length > 0"
+                class="ttb-badge"
+              >{{ changesUnstaged.length }}</span>
+            </button>
+            <button
+              class="toolbar-tab-btn"
+              :class="{ active: activeTab === 'history' }"
+              title="提交历史"
+              @click="activeTab = 'history'"
+            >
+              <span class="ttb-icon">&#x25f7;</span>
+              <span class="ttb-label">历史</span>
+            </button>
+            <button
+              class="toolbar-tab-btn"
+              :class="{ active: activeTab === 'knowledge' }"
+              title="命令知识库"
+              @click="activeTab = 'knowledge'"
+            >
+              <span class="ttb-icon">&#x1f4d6;</span>
+              <span class="ttb-label">知识库</span>
+            </button>
+            <button
+              class="toolbar-tab-btn"
+              :class="{ active: activeTab === 'terminal' }"
+              title="终端"
+              @click="activeTab = 'terminal'"
+            >
+              <span class="ttb-icon">&gt;_</span>
+              <span class="ttb-label">终端</span>
+            </button>
+          </div>
+
+          <!-- 取消操作 -->
+          <button
+            v-if="runningOp"
+            class="toolbar-btn toolbar-btn--cancel"
+            :title="runningOp.label"
+            @click="cancelCurrent"
+          >
+            <span class="toolbar-btn-icon">&#x2715;</span>
+            <span class="toolbar-btn-label">取消</span>
+          </button>
         </div>
 
         <!-- 主区页签：操作日志 / 命令知识库 -->
         <div class="main-tabs">
-          <div class="tab-header">
-            <div class="tab-btn" :class="{ active: activeTab === 'log' }" @click="activeTab = 'log'">操作日志</div>
-            <div class="tab-btn" :class="{ active: activeTab === 'changes' }" @click="activeTab = 'changes'">
-              工作区改动<span
-                v-if="changesUnstaged.length + changesStaged.length > 0"
-                class="tab-count dirty-count"
-              >{{ changesUnstaged.length + changesStaged.length }}</span>
-            </div>
-            <div class="tab-btn" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'">
-              提交历史<span v-if="historyEntries.length > 0" class="tab-count">{{ historyEntries.length }}</span>
-            </div>
-            <div class="tab-btn" :class="{ active: activeTab === 'knowledge' }" @click="activeTab = 'knowledge'">
-              命令知识库<span class="tab-count">{{ gitCommands.length }}</span>
-            </div>
-            <div class="tab-btn" :class="{ active: activeTab === 'terminal' }" @click="activeTab = 'terminal'">终端</div>
-            <span class="tab-spacer"></span>
-            <template v-if="activeTab === 'log'">
-              <el-icon class="header-icon" title="复制日志" @click="copyLog"><CopyDocument /></el-icon>
-              <el-icon class="header-icon danger" title="清空日志" @click="clearLog"><Delete /></el-icon>
-            </template>
-            <template v-if="activeTab === 'terminal'">
-              <el-icon class="header-icon danger" title="清空终端" @click="clearTerminal"><Delete /></el-icon>
-            </template>
-          </div>
 
           <!-- 操作日志终端 -->
           <div v-show="activeTab === 'log'" ref="logTerminalRef" class="log-terminal">
@@ -2064,6 +2192,7 @@ async function addConfig() {
 
             <!-- 底部提交栏 -->
             <div class="commit-bar">
+              <!-- 第一行：提交说明输入框 + 历史下拉 -->
               <div class="commit-input-wrap">
                 <el-input
                   v-model="commitMessage"
@@ -2080,7 +2209,7 @@ async function addConfig() {
                   class="commit-history-btn"
                   @command="(msg: string) => commitMessage = msg"
                 >
-                  <el-button size="small" title="提交消息历史">⤵</el-button>
+                  <el-button size="small" title="提交消息历史">&#x2935;</el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item v-for="(msg, i) in commitMsgHistory" :key="i" :command="msg">
@@ -2090,28 +2219,28 @@ async function addConfig() {
                   </template>
                 </el-dropdown>
               </div>
-              <div class="commit-actions">
-                <el-checkbox v-model="commitPush" :disabled="committing">提交并推送</el-checkbox>
+              <!-- 第二行：checkbox + 储藏按钮 + 主提交按钮 -->
+              <div class="commit-actions-row">
+                <el-checkbox v-model="commitPush" :disabled="committing">提交后推送</el-checkbox>
+                <span class="commit-actions-spacer"></span>
                 <el-button
                   size="small"
                   :disabled="changesUnstaged.length === 0 && changesStaged.length === 0 || !!runningOp"
                   @click="stashMsgInput = ''; stashMsgDialogVisible = true"
                   title="储藏当前未提交改动"
-                >⚓ 储藏</el-button>
+                >&#x2693; 储藏</el-button>
                 <el-button
                   size="small"
                   :disabled="!currentPath"
                   @click="loadStashList(); stashDrawerVisible = true"
                   title="浏览储藏列表"
-                >≡ 储藏列表</el-button>
+                >&#x2261; 列表</el-button>
                 <el-button
                   type="primary"
                   :loading="committing"
                   :disabled="!commitMessage.trim() || changesStaged.length === 0 || !!runningOp"
                   @click="commitStaged"
-                >
-                  提交（{{ changesStaged.length }} 个文件）
-                </el-button>
+                >提交 {{ changesStaged.length }} 个文件</el-button>
               </div>
             </div>
 
@@ -2813,6 +2942,171 @@ async function addConfig() {
   color: #909399;
 }
 
+/* ============================ Sourcetree 风格工具栏 ============================ */
+
+.sourcetree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  background: #f5f7fa;
+  border-bottom: 1px solid #e4e7ed;
+  flex-shrink: 0;
+}
+
+.toolbar-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+  color: #303133;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: #e6ecf6;
+}
+
+.toolbar-btn:active:not(:disabled) {
+  background: #d0ddf6;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toolbar-btn--loading {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.toolbar-btn--danger .toolbar-btn-icon,
+.toolbar-btn--danger .toolbar-btn-label {
+  color: #f56c6c;
+}
+
+.toolbar-btn--cancel .toolbar-btn-icon,
+.toolbar-btn--cancel .toolbar-btn-label {
+  color: #e6a23c;
+}
+
+.toolbar-btn-icon {
+  font-size: 18px;
+  line-height: 1;
+  margin-bottom: 2px;
+  color: #409eff;
+}
+
+.toolbar-btn--danger .toolbar-btn-icon { color: #f56c6c; }
+.toolbar-btn--cancel .toolbar-btn-icon { color: #e6a23c; }
+
+.toolbar-btn-label {
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: #606266;
+}
+
+.toolbar-btn-badge {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 30px;
+  background: #dcdfe6;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+/* ============================ 工具栏页签图标按钮 ============================ */
+
+.toolbar-tab-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid #dcdfe6;
+}
+
+.toolbar-tab-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  color: #606266;
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.toolbar-tab-btn:hover {
+  background: #e6ecf6;
+}
+
+.toolbar-tab-btn.active {
+  background: #409eff;
+  color: #fff;
+}
+
+.ttb-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.ttb-label {
+  font-size: 10px;
+  line-height: 1;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.ttb-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  padding: 0 3px;
+}
+
 .action-bar {
   display: flex;
 }
@@ -2855,42 +3149,7 @@ async function addConfig() {
   overflow: hidden;
 }
 
-.tab-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.tab-btn {
-  padding: 11px 14px;
-  font-size: 14px;
-  color: #606266;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  user-select: none;
-}
-
-.tab-btn:hover {
-  color: #409eff;
-}
-
-.tab-btn.active {
-  color: #409eff;
-  font-weight: 600;
-  border-bottom-color: #409eff;
-}
-
-.tab-count {
-  margin-left: 4px;
-  font-size: 11px;
-  background: #f0f2f5;
-  border-radius: 8px;
-  padding: 1px 6px;
-  color: #909399;
-}
+/* .tab-header/.tab-btn 已移除，页签改为工具栏右侧图标按钮 */
 
 .tab-spacer {
   flex: 1;
@@ -2928,11 +3187,7 @@ async function addConfig() {
   text-align: center;
 }
 
-/* 页签角标有改动时红点提示 */
-.tab-count.dirty-count {
-  background: #fdecea;
-  color: #f56c6c;
-}
+/* .tab-count.dirty-count 已移除，角标改为 .ttb-badge */
 
 /* ============================ 全屏模式 ============================ */
 
@@ -3134,22 +3389,25 @@ async function addConfig() {
 /* 底部提交栏 */
 .commit-bar {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid #e4e7ed;
+  flex-shrink: 0;
 }
 
 .commit-input {
   flex: 1;
 }
 
-.commit-actions {
+.commit-actions-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+}
+
+.commit-actions-spacer {
+  flex: 1;
 }
 
 /* ============================ 提交历史 ============================ */
