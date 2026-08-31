@@ -7,9 +7,9 @@ import {
 import {
   addGitRepo, discoverGitRepos, getGitBranches, getGitChanges, getGitCommitDetail, getGitConfigList, getGitEnv, getGitFileDiff, getGitLog,
   getGitMergeState, getGitRepos, getGitStatus, gitCancel, gitCheckout, gitClone, gitCommitChanges, gitConfigSet, gitDiscard,
-  gitExec, gitMerge, gitPull, gitPush, gitStage, removeGitRepo,
+  gitExec, gitMerge, gitPull, gitPush, gitStage, gitStash, getGitStashList, gitStashPop, gitStashDrop, removeGitRepo,
   type GitBranch, type GitChangeFile, type GitCommandResult, type GitCommitDetail, type GitConfigItem, type GitDiffFile,
-  type GitDiscoveredRepo, type GitEnv, type GitFileDiff, type GitLogEntry, type GitMergeState, type GitRepoStatus,
+  type GitDiscoveredRepo, type GitEnv, type GitFileDiff, type GitLogEntry, type GitMergeState, type GitRepoStatus, type GitStashEntry,
 } from '@/common/api/git'
 import { openOutputFolder, selectFolder } from '@/common/api/universalBuild'
 import { GIT_CATEGORY_ALL, gitCategories, gitCommands, type GitCommandEntry } from '@/common/data/gitCommands'
@@ -70,6 +70,23 @@ function onGlobalKeydown(e: KeyboardEvent) {
     changesFullscreen.value = false
     historyFullscreen.value = false
     contextMenu.value.visible = false
+    return
+  }
+  // Ctrl+Enter：提交已暂存改动
+  if (e.ctrlKey && !e.shiftKey && e.key === 'Enter') {
+    if (activeTab.value === 'changes' && commitMessage.value.trim() && changesStaged.value.length > 0 && !committing.value && !runningOp.value) {
+      e.preventDefault()
+      void commitStaged()
+    }
+    return
+  }
+  // Ctrl+Shift+A：暂存所有未暂存文件
+  if (e.ctrlKey && e.shiftKey && e.key === 'A') {
+    if (activeTab.value === 'changes' && changesUnstaged.value.length > 0 && !runningOp.value) {
+      e.preventDefault()
+      void stageFile(null, true)
+    }
+    return
   }
 }
 
@@ -597,6 +614,19 @@ async function loadBranches() {
 /** 切换分支；远程分支由 git switch 自动创建本地跟踪分支 */
 async function switchBranch(branch: GitBranch) {
   if (branch.isCurrent) return
+  // 切换前检查未暂存/未提交改动
+  const dirty = changesUnstaged.value.length + changesStaged.value.length
+  if (dirty > 0) {
+    try {
+      await ElMessageBox.confirm(
+        `当前工作区有 ${dirty} 个未提交文件改动，切换分支后这些改动会保留在工作区（已跟踪文件可能产生冲突）。建议先储藏或提交改动再切换。`,
+        '工作区有未提交改动',
+        { type: 'warning', confirmButtonText: '仍要切换', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
   const result = await runAction(`git switch ${branch.name}`, (opId) =>
     gitCheckout({ path: currentPath.value, branch: branch.name, newBranch: '', opId }))
   // 切换成功后刷新分支列表的"当前"标记（runAction 内已刷新仓库状态）
@@ -638,13 +668,92 @@ const commitMessage = ref('')
 const commitPush = ref(false)
 const committing = ref(false)
 
+/** 提交消息历史（最近 10 条，存 localStorage） */
+const COMMIT_MSG_HISTORY_KEY = 'git-commit-msg-history'
+function loadCommitMsgHistory(): string[] {
+  try { return JSON.parse(localStorage.getItem(COMMIT_MSG_HISTORY_KEY) ?? '[]') } catch { return [] }
+}
+const commitMsgHistory = ref<string[]>(loadCommitMsgHistory())
+function saveCommitMsg(msg: string) {
+  const list = commitMsgHistory.value.filter(m => m !== msg)
+  list.unshift(msg)
+  commitMsgHistory.value = list.slice(0, 10)
+  localStorage.setItem(COMMIT_MSG_HISTORY_KEY, JSON.stringify(commitMsgHistory.value))
+}
+
+/** Stash 储藏状态 */
+const stashLoading = ref(false)
+const stashList = ref<GitStashEntry[]>([])
+const stashDrawerVisible = ref(false)
+const stashMsgInput = ref('')
+const stashMsgDialogVisible = ref(false)
+
+async function loadStashList() {
+  if (!currentPath.value) return
+  stashLoading.value = true
+  try { stashList.value = await getGitStashList({ path: currentPath.value }) }
+  catch { stashList.value = [] }
+  finally { stashLoading.value = false }
+}
+
+async function doStash() {
+  if (!currentPath.value) return
+  stashMsgDialogVisible.value = false
+  const result = await gitStash({ path: currentPath.value, message: stashMsgInput.value.trim() })
+  stashMsgInput.value = ''
+  if (result.success) {
+    appendLog('ok', `✓ 已储藏改动`)
+    ElMessage.success('已储藏改动')
+    await reloadChanges()
+    void refreshCurrent()
+  } else {
+    appendLog('err', `✗ 储藏失败: ${result.output}`)
+    ElMessage.error('储藏失败')
+  }
+}
+
+async function doStashPop(index: number) {
+  if (!currentPath.value) return
+  const result = await gitStashPop({ path: currentPath.value, index })
+  if (result.success) {
+    appendLog('ok', `✓ 已应用 stash@{${index}}`)
+    ElMessage.success('已应用储藏')
+    stashDrawerVisible.value = false
+    await reloadChanges()
+    void refreshCurrent()
+    await loadStashList()
+  } else {
+    appendLog('err', `✗ 应用储藏失败: ${result.output}`)
+    ElMessage.error('应用储藏失败')
+  }
+}
+
+async function doStashDrop(index: number) {
+  try {
+    await ElMessageBox.confirm(`确认删除 stash@{${index}}？此操作不可撤销。`, '删除储藏',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+  } catch { return }
+  if (!currentPath.value) return
+  const result = await gitStashDrop({ path: currentPath.value, index })
+  if (result.success) {
+    ElMessage.success('已删除储藏')
+    await loadStashList()
+  } else {
+    ElMessage.error('删除储藏失败')
+  }
+}
+
 // ---------- 拖拽分割 ----------
 /** 左侧文件列表宽度（px） */
-const changesListWidth = ref(380)
+const changesListWidth = ref(Number(localStorage.getItem('git-changes-list-w')) || 380)
 /** 未暂存区占整个左侧面板的高度百分比（0-100） */
-const unstageHeightPct = ref(50)
+const unstageHeightPct = ref(Number(localStorage.getItem('git-unstage-pct')) || 50)
 /** 提交历史左侧（提交列表）宽度（px） */
-const historyListWidth = ref(560)
+const historyListWidth = ref(Number(localStorage.getItem('git-history-list-w')) || 560)
+
+watch(changesListWidth, v => localStorage.setItem('git-changes-list-w', String(v)))
+watch(unstageHeightPct, v => localStorage.setItem('git-unstage-pct', String(v)))
+watch(historyListWidth, v => localStorage.setItem('git-history-list-w', String(v)))
 
 function startHResize(e: MouseEvent) {
   e.preventDefault()
@@ -923,6 +1032,7 @@ async function commitStaged() {
     if (result.success) {
       appendLog('ok', `✓ 提交完成${commitPush.value ? '，已推送' : ''}`)
       ElMessage.success(`提交完成${commitPush.value ? '，已推送' : ''}`)
+      saveCommitMsg(message)
       commitMessage.value = ''
       await reloadChanges()
       void refreshCurrent()
@@ -997,6 +1107,7 @@ const historyLoadingMore = ref(false)
 /** 历史已过期（切仓库/本地操作完成），下次进入页签时重载 */
 const historyDirty = ref(false)
 const historyBranch = ref('')
+const historyKeyword = ref('')
 const historyBranches = ref<GitBranch[]>([])
 const historyEntries = ref<GitLogEntry[]>([])
 const historyRows = ref<CommitRow[]>([])
@@ -1106,6 +1217,7 @@ async function loadHistoryPage(append: boolean) {
     const page = await getGitLog({
       path: currentPath.value,
       branch: historyBranch.value,
+      keyword: historyKeyword.value.trim() || undefined,
       skip: historyEntries.value.length,
       take: HISTORY_PAGE_SIZE,
     })
@@ -1175,15 +1287,50 @@ function toggleDiff(path: string) {
   expandedDiffs.value = new Set(s)
 }
 
+/** diff 行计算结果（含行号） */
+export interface DiffLine {
+  text: string
+  cls: string
+  lineOld: number | null
+  lineNew: number | null
+}
+
 /** diff 行按行缓存（避免模板每次渲染重复 split 大文本） */
-const diffLinesCache = new WeakMap<GitDiffFile, string[]>()
-function diffLines(d: GitDiffFile): string[] {
+const diffLinesCache = new WeakMap<GitDiffFile, DiffLine[]>()
+function diffLines(d: GitDiffFile): DiffLine[] {
   let lines = diffLinesCache.get(d)
   if (!lines) {
-    lines = d.diff.split('\n')
+    lines = parseDiffLines(d.diff)
     diffLinesCache.set(d, lines)
   }
   return lines
+}
+
+function parseDiffLines(raw: string): DiffLine[] {
+  const result: DiffLine[] = []
+  let oldLine = 0
+  let newLine = 0
+  for (const text of raw.split('\n')) {
+    const cls = diffLineClass(text)
+    if (cls === 'dl-hunk') {
+      // @@ -a,b +c,d @@ 提取起始行号
+      const m = text.match(/^@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?/)
+      if (m) { oldLine = parseInt(m[1]) - 1; newLine = parseInt(m[2]) - 1 }
+      result.push({ text, cls, lineOld: null, lineNew: null })
+    } else if (cls === 'dl-add') {
+      newLine++
+      result.push({ text, cls, lineOld: null, lineNew: newLine })
+    } else if (cls === 'dl-del') {
+      oldLine++
+      result.push({ text, cls, lineOld: oldLine, lineNew: null })
+    } else if (cls === 'dl-ctx') {
+      oldLine++; newLine++
+      result.push({ text, cls, lineOld: oldLine, lineNew: newLine })
+    } else {
+      result.push({ text, cls, lineOld: null, lineNew: null })
+    }
+  }
+  return result
 }
 
 /** refs 标签配色：HEAD 绿 / tag 橙 / 远程灰 / 本地分支蓝 */
@@ -1400,6 +1547,8 @@ async function addConfig() {
                 { icon: '🗑️', label: '移除仓库', divider: true, danger: true, action: () => { selectRepo(repo.path); nextTick(removeRepoConfirm) } },
               ])"
             >
+              <!-- 改动数角标 -->
+              <span v-if="repo.isRepo && repo.changes > 0" class="repo-changes-badge">{{ repo.changes }}</span>
               <div class="repo-item-top">
                 <span class="repo-name">{{ repo.name }}</span>
                 <el-icon
@@ -1695,12 +1844,19 @@ async function addConfig() {
                     <el-tag v-else size="small" type="warning" effect="plain">未暂存</el-tag>
                   </div>
                   <div v-loading="changesDiffLoading" class="changes-preview-body">
-                    <pre v-if="changesDiff && changesDiff.diff" class="diff-text"><span
-                      v-for="(line, li) in changesDiff.diff.split('\n')"
-                      :key="li"
-                      :class="diffLineClass(line)"
-                    >{{ line }}
-</span></pre>
+                    <template v-if="changesDiff && changesDiff.diff">
+                      <div class="diff-table">
+                        <div
+                          v-for="(dl, li) in parseDiffLines(changesDiff.diff)"
+                          :key="li"
+                          :class="['diff-row', dl.cls]"
+                        >
+                          <span class="diff-ln old">{{ dl.lineOld ?? '' }}</span>
+                          <span class="diff-ln new">{{ dl.lineNew ?? '' }}</span>
+                          <span class="diff-code">{{ dl.text }}</span>
+                        </div>
+                      </div>
+                    </template>
                     <div v-else class="changes-empty">无差异内容</div>
                   </div>
                 </template>
@@ -1710,17 +1866,46 @@ async function addConfig() {
 
             <!-- 底部提交栏 -->
             <div class="commit-bar">
-              <el-input
-                v-model="commitMessage"
-                type="textarea"
-                :rows="2"
-                placeholder="提交说明（必填，如：修复登录失败问题）"
-                maxlength="200"
-                resize="none"
-                class="commit-input"
-              />
+              <div class="commit-input-wrap">
+                <el-input
+                  v-model="commitMessage"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="提交说明（必填，如：修复登录失败问题）"
+                  maxlength="200"
+                  resize="none"
+                  class="commit-input"
+                />
+                <el-dropdown
+                  v-if="commitMsgHistory.length > 0"
+                  trigger="click"
+                  class="commit-history-btn"
+                  @command="(msg: string) => commitMessage = msg"
+                >
+                  <el-button size="small" title="提交消息历史">⤵</el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item v-for="(msg, i) in commitMsgHistory" :key="i" :command="msg">
+                        <span class="commit-history-item">{{ msg }}</span>
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
               <div class="commit-actions">
                 <el-checkbox v-model="commitPush" :disabled="committing">提交并推送</el-checkbox>
+                <el-button
+                  size="small"
+                  :disabled="changesUnstaged.length === 0 && changesStaged.length === 0 || !!runningOp"
+                  @click="stashMsgInput = ''; stashMsgDialogVisible = true"
+                  title="储藏当前未提交改动"
+                >⚓ 储藏</el-button>
+                <el-button
+                  size="small"
+                  :disabled="!currentPath"
+                  @click="loadStashList(); stashDrawerVisible = true"
+                  title="浏览储藏列表"
+                >≡ 储藏列表</el-button>
                 <el-button
                   type="primary"
                   :loading="committing"
@@ -1731,6 +1916,34 @@ async function addConfig() {
                 </el-button>
               </div>
             </div>
+
+            <!-- Stash 说明输入弹窗 -->
+            <el-dialog v-model="stashMsgDialogVisible" title="储藏改动" width="400px" :append-to-body="true">
+              <el-input v-model="stashMsgInput" placeholder="储藏说明（空则自动生成）" maxlength="100" clearable />
+              <template #footer>
+                <el-button @click="stashMsgDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="doStash">确认储藏</el-button>
+              </template>
+            </el-dialog>
+
+            <!-- Stash 列表抄屉 -->
+            <el-drawer v-model="stashDrawerVisible" title="储藏列表" size="380px" :append-to-body="true">
+              <div v-loading="stashLoading" class="stash-list">
+                <div v-if="stashList.length === 0 && !stashLoading" class="changes-empty">暂无储藏</div>
+                <div v-for="s in stashList" :key="s.index" class="stash-item">
+                  <div class="stash-item-head">
+                    <span class="stash-index">stash@{{ '{' + s.index + '}' }}</span>
+                    <span v-if="s.branch" class="stash-branch">{{ s.branch }}</span>
+                  </div>
+                  <div class="stash-item-msg">{{ s.message }}</div>
+                  <div class="stash-item-date">{{ s.date }}</div>
+                  <div class="stash-item-actions">
+                    <el-button size="small" type="primary" @click="doStashPop(s.index)">应用</el-button>
+                    <el-button size="small" type="danger" @click="doStashDrop(s.index)">删除</el-button>
+                  </div>
+                </div>
+              </div>
+            </el-drawer>
           </div>
 
           <!-- 提交历史（Sourcetree 式：分支图形 + 行 + 底部详情） -->
@@ -1746,6 +1959,17 @@ async function addConfig() {
               >
                 <el-option v-for="b in historyBranches" :key="b.name" :label="b.name + (b.isRemote ? '（远程）' : '')" :value="b.name" />
               </el-select>
+              <el-input
+                v-model="historyKeyword"
+                placeholder="搜索提交消息..."
+                clearable
+                size="small"
+                class="history-search"
+                @change="reloadHistory"
+                @clear="reloadHistory"
+              >
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
               <span class="history-count">已加载 {{ historyEntries.length }} 条</span>
               <span class="tab-spacer"></span>
               <el-icon class="header-icon" title="刷新历史" @click="reloadHistory"><Refresh /></el-icon>
@@ -1837,12 +2061,17 @@ async function addConfig() {
                     <div class="detail-diffs">
                       <div v-for="d in selectedDetail.diffs" v-show="expandedDiffs.has(d.path)" :key="d.path" class="diff-block">
                         <div class="diff-path" :title="d.path">{{ d.path }}</div>
-                        <pre class="diff-text"><span
-                          v-for="(line, li) in diffLines(d)"
-                          :key="li"
-                          :class="diffLineClass(line)"
-                        >{{ line }}
-</span></pre>
+                        <div class="diff-table">
+                          <div
+                            v-for="(dl, li) in diffLines(d)"
+                            :key="li"
+                            :class="['diff-row', dl.cls]"
+                          >
+                            <span class="diff-ln old">{{ dl.lineOld ?? '' }}</span>
+                            <span class="diff-ln new">{{ dl.lineNew ?? '' }}</span>
+                            <span class="diff-code">{{ dl.text }}</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2139,6 +2368,7 @@ async function addConfig() {
 }
 
 .repo-item {
+  position: relative;
   padding: 10px 12px;
   border-radius: 6px;
   cursor: pointer;
@@ -3321,6 +3551,166 @@ async function addConfig() {
 .fb-conflict  { background: #c0392b; }
 .fb-untracked { background: #909399; }
 .fb-default   { background: #b0b8c5; }
+
+/* ===== 仓库列表改动数角标 ===== */
+.repo-changes-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e6a23c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* ===== diff 行号表格 ===== */
+.diff-table {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  background: #1e1e2e;
+  border-radius: 0 0 4px 4px;
+}
+
+.diff-row {
+  display: flex;
+  align-items: stretch;
+  min-height: 20px;
+}
+
+.diff-row:hover {
+  filter: brightness(1.08);
+}
+
+.diff-ln {
+  display: inline-block;
+  min-width: 40px;
+  padding: 0 6px;
+  color: #636e8a;
+  text-align: right;
+  user-select: none;
+  flex-shrink: 0;
+  border-right: 1px solid #2d2d44;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.diff-code {
+  flex: 1;
+  padding: 0 8px;
+  white-space: pre;
+  overflow: hidden;
+  color: #cdd6f4;
+  line-height: 20px;
+}
+
+/* diff 行混入配色 */
+.diff-row.dl-add  { background: #1a3d2b; }
+.diff-row.dl-add .diff-code { color: #a6e3a1; }
+.diff-row.dl-add .diff-ln   { background: #15332200; color: #52a472; }
+.diff-row.dl-del  { background: #3d1a1a; }
+.diff-row.dl-del .diff-code { color: #f38ba8; }
+.diff-row.dl-del .diff-ln   { background: #33151500; color: #a45252; }
+.diff-row.dl-hunk { background: #1a2a40; }
+.diff-row.dl-hunk .diff-code { color: #89b4fa; font-style: italic; }
+.diff-row.dl-meta { background: #111122; }
+.diff-row.dl-meta .diff-code { color: #585b70; font-style: italic; }
+.diff-row.dl-ctx  { background: transparent; }
+
+/* ===== 提交栏输入包裹 ===== */
+.commit-input-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.commit-input-wrap .commit-input { flex: 1; }
+
+.commit-history-btn {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.commit-history-item {
+  display: block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* ===== Stash 列表抄屉 ===== */
+.stash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.stash-item {
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fafafa;
+}
+
+.stash-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.stash-index {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  color: #409eff;
+  font-weight: 600;
+}
+
+.stash-branch {
+  font-size: 11px;
+  color: #909399;
+  background: #f0f2f5;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.stash-item-msg {
+  font-size: 13px;
+  color: #303133;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.stash-item-date {
+  font-size: 11px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+
+.stash-item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ===== 历史搜索框 ===== */
+.history-search {
+  width: 200px;
+  flex-shrink: 0;
+}
 </style>
 
 <!-- 右键菜单使用 Teleport 脱离组件根节点，scoped 样式水印不到，需用全局样式 -->

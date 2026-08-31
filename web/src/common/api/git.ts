@@ -154,6 +154,8 @@ export interface GitLogRequest {
   path: string
   /** 筛选分支（空 = 当前 HEAD 全部历史） */
   branch?: string
+  /** 提交消息关键词搜索（空 = 不过滤） */
+  keyword?: string
   skip?: number
   take?: number
 }
@@ -316,6 +318,35 @@ export function gitDiscard(request: { path: string; filePath?: string | null; in
 /** 单文件 diff 预览（已暂存/工作区，未跟踪合成 + 行） */
 export function getGitFileDiff(request: { path: string; filePath: string; staged: boolean }) {
   return httpPost<GitFileDiff>('/api/Common/Git/FileDiff', request, undefined, LOCAL_TIMEOUT_MS)
+}
+
+// ==================== Stash 储藏 ====================
+
+export interface GitStashEntry {
+  index: number
+  message: string
+  date: string
+  branch: string
+}
+
+/** 储藏当前未提交改动 */
+export function gitStash(request: { path: string; message?: string }) {
+  return httpPost<{ success: boolean; output: string; exitCode: number }>('/api/Common/Git/Stash', request)
+}
+
+/** 获取 Stash 列表 */
+export function getGitStashList(request: { path: string }) {
+  return httpPost<GitStashEntry[]>('/api/Common/Git/StashList', request, undefined, LOCAL_TIMEOUT_MS)
+}
+
+/** 应用指定 Stash（pop） */
+export function gitStashPop(request: { path: string; index: number }) {
+  return httpPost<{ success: boolean; output: string; exitCode: number }>('/api/Common/Git/StashPop', request)
+}
+
+/** 删除指定 Stash（drop） */
+export function gitStashDrop(request: { path: string; index: number }) {
+  return httpPost<{ success: boolean; output: string; exitCode: number }>('/api/Common/Git/StashDrop', request)
 }
 
 // ==================== 环境检测与配置管理 ====================

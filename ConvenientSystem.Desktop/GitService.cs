@@ -219,6 +219,8 @@ public sealed class GitLogRequest
     public string Path { get; set; } = string.Empty;
     /// <summary>筛选分支（空 = 当前 HEAD 全部历史）。</summary>
     public string Branch { get; set; } = string.Empty;
+    /// <summary>提交消息/作者关键词搜索（空 = 不过滤）。</summary>
+    public string Keyword { get; set; } = string.Empty;
     /// <summary>跳过条数（分页，滚到底自动累加）。</summary>
     public int Skip { get; set; }
     /// <summary>本页条数（默认 50，上限 200）。</summary>
@@ -311,6 +313,31 @@ public sealed class GitDiscardRequest
     public string? FilePath { get; set; }
     /// <summary>未跟踪文件也一并删除（单文件时由状态自动判定，此参数仅“全部放弃”用）。</summary>
     public bool IncludeUntracked { get; set; } = true;
+}
+
+/// <summary>Stash 储藏请求（推入时可附说明）。</summary>
+public sealed class GitStashRequest
+{
+    public string Path { get; set; } = string.Empty;
+    /// <summary>储藏说明（空则用 WIP 默认说明）。</summary>
+    public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>Stash 应用/删除请求。</summary>
+public sealed class GitStashIndexRequest
+{
+    public string Path { get; set; } = string.Empty;
+    /// <summary>stash 索引（stash@{N} 中的 N）。</summary>
+    public int Index { get; set; }
+}
+
+/// <summary>Stash 列表条目。</summary>
+public sealed class GitStashEntryDto
+{
+    public int Index { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string Date { get; set; } = string.Empty;
+    public string Branch { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -530,11 +557,13 @@ public sealed class GitService
     /// <summary>
     /// 提交历史（新→旧）：含父提交列表（前端画分支线）与指向各提交的 refs 装饰。
     /// branch 为空时取当前 HEAD 历史；skip/take 分页，take 上限 200。
+    /// keyword 非空时传给 --grep 按提交消息过滤（大小写不敏感）。
     /// 字段用不可见分隔符（\x1f 字段 / \x1e 记录）切分，稳定解析含空格的说明。
     /// </summary>
-    public IReadOnlyList<GitLogEntryDto> GetLog(string path, string branch, int skip, int take)
+    public IReadOnlyList<GitLogEntryDto> GetLog(string path, string branch, string keyword, int skip, int take)
     {
         branch = branch?.Trim() ?? string.Empty;
+        keyword = keyword?.Trim() ?? string.Empty;
         if (skip < 0) skip = 0;
         if (take <= 0) take = 50;
         if (take > LogMaxTake) take = LogMaxTake;
@@ -543,11 +572,17 @@ public sealed class GitService
         {
             "log",
             $"--skip={skip}",
-            // -n 不支持 -n=N 等号形式，用 --max-count
             $"--max-count={take}",
             "--date=format:%Y-%m-%d %H:%M",
             "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%ad%x1f%s%x1f%d%x1e",
         };
+        if (keyword.Length > 0)
+        {
+            if (keyword.StartsWith('-') || keyword.Any(c => c == '\x00'))
+                throw new ArgumentException("关键词包含非法字符");
+            args.Add($"--grep={keyword}");
+            args.Add("--regexp-ignore-case");
+        }
         if (branch.Length > 0)
         {
             if (branch.StartsWith('-') || branch.Any(char.IsWhiteSpace))
@@ -589,6 +624,71 @@ public sealed class GitService
             list.Add(entry);
         }
         return list;
+    }
+
+    // ============================ Stash 储藏 ============================
+
+    /// <summary>储藏当前未提交改动（git stash push）。</summary>
+    public GitCommandResultDto Stash(string path, string message)
+    {
+        message = message?.Trim() ?? string.Empty;
+        var args = new List<string> { "stash", "push", "--include-untracked" };
+        if (message.Length > 0) { args.Add("-m"); args.Add(message); }
+        var result = RunGit(path, LocalTimeoutMs, null, args.ToArray());
+        return new GitCommandResultDto { Success = result.ExitCode == 0, Output = result.Output.Trim(), ExitCode = result.ExitCode };
+    }
+
+    /// <summary>返回 Stash 列表条目（git stash list）。</summary>
+    public IReadOnlyList<GitStashEntryDto> GetStashList(string path)
+    {
+        var result = RunGit(path, LocalTimeoutMs, null, "stash", "list",
+            "--pretty=format:%gd%x1f%s%x1f%ci%x1e");
+        var list = new List<GitStashEntryDto>();
+        if (result.ExitCode != 0) return list;
+        foreach (var record in result.Output.Split('\x1e'))
+        {
+            var fields = record.Trim('\n', '\r').Split('\x1f');
+            if (fields.Length < 2) continue;
+            // stash@{0} 提取索引
+            var refStr = fields[0].Trim(); // 如 stash@{0}
+            if (!System.Text.RegularExpressions.Regex.IsMatch(refStr, @"^stash@\{\d+\}$")) continue;
+            var idx = int.Parse(refStr[7..^1]);
+            var msg = fields[1].Trim();
+            // 提取分支名：格式为 "WIP on branchName: ..."
+            var branch = string.Empty;
+            var wipMatch = System.Text.RegularExpressions.Regex.Match(msg, @"^(?:WIP on|On) ([^:]+):");
+            if (wipMatch.Success) branch = wipMatch.Groups[1].Value.Trim();
+            // 自定义说明：去掉前缀
+            if (msg.StartsWith("WIP on ") || msg.StartsWith("On "))
+            {
+                var colon = msg.IndexOf(':');
+                if (colon >= 0) msg = msg[(colon + 1)..].Trim();
+            }
+            list.Add(new GitStashEntryDto
+            {
+                Index = idx,
+                Message = msg,
+                Date = fields.Length > 2 ? fields[2].Trim() : string.Empty,
+                Branch = branch,
+            });
+        }
+        return list;
+    }
+
+    /// <summary>应用指定 Stash（git stash pop）。</summary>
+    public GitCommandResultDto StashPop(string path, int index)
+    {
+        if (index < 0) throw new ArgumentException("无效的 stash 索引");
+        var result = RunGit(path, LocalTimeoutMs, null, "stash", "pop", $"stash@{{{index}}}");
+        return new GitCommandResultDto { Success = result.ExitCode == 0, Output = result.Output.Trim(), ExitCode = result.ExitCode };
+    }
+
+    /// <summary>删除指定 Stash（git stash drop）。</summary>
+    public GitCommandResultDto StashDrop(string path, int index)
+    {
+        if (index < 0) throw new ArgumentException("无效的 stash 索引");
+        var result = RunGit(path, LocalTimeoutMs, null, "stash", "drop", $"stash@{{{index}}}");
+        return new GitCommandResultDto { Success = result.ExitCode == 0, Output = result.Output.Trim(), ExitCode = result.ExitCode };
     }
 
     /// <summary>

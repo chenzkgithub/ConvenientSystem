@@ -141,7 +141,7 @@ public class GitController : ControllerBase
     [Route("Log")]
     public IActionResult Log([FromBody] GitLogRequest request)
     {
-        try { return Ok(_gitService.GetLog(request.Path, request.Branch, request.Skip, request.Take)); }
+        try { return Ok(_gitService.GetLog(request.Path, request.Branch, request.Keyword, request.Skip, request.Take)); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (Exception ex) { return BadRequest(new { message = "获取历史失败: " + ex.Message }); }
     }
@@ -221,6 +221,44 @@ public class GitController : ControllerBase
     [HttpPost]
     [Route("Env")]
     public GitEnvDto Env() => _gitService.GetEnv();
+
+    /// <summary>将当前未提交改动储藏（git stash push）。</summary>
+    [HttpPost]
+    [Route("Stash")]
+    public IActionResult Stash([FromBody] GitStashRequest request)
+    {
+        try { return Ok(_gitService.Stash(request.Path, request.Message)); }
+        catch (Exception ex) { return BadRequest(new { message = "储藏失败: " + ex.Message }); }
+    }
+
+    /// <summary>获取 Stash 列表。</summary>
+    [HttpPost]
+    [Route("StashList")]
+    public IActionResult StashList([FromBody] GitPathRequest request)
+    {
+        try { return Ok(_gitService.GetStashList(request.Path)); }
+        catch (Exception ex) { return BadRequest(new { message = "获取储藏列表失败: " + ex.Message }); }
+    }
+
+    /// <summary>应用指定 Stash（git stash pop）。</summary>
+    [HttpPost]
+    [Route("StashPop")]
+    public IActionResult StashPop([FromBody] GitStashIndexRequest request)
+    {
+        try { return Ok(_gitService.StashPop(request.Path, request.Index)); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (Exception ex) { return BadRequest(new { message = "应用储藏失败: " + ex.Message }); }
+    }
+
+    /// <summary>删除指定 Stash（git stash drop）。</summary>
+    [HttpPost]
+    [Route("StashDrop")]
+    public IActionResult StashDrop([FromBody] GitStashIndexRequest request)
+    {
+        try { return Ok(_gitService.StashDrop(request.Path, request.Index)); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (Exception ex) { return BadRequest(new { message = "删除储藏失败: " + ex.Message }); }
+    }
 
     /// <summary>读取全局 git 配置列表。</summary>
     [HttpPost]
