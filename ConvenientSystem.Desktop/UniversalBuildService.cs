@@ -27,6 +27,7 @@ public enum UniversalBuildType
 public enum UniversalBuildStatus
 {
     Pending,
+    Waiting,
     Running,
     Success,
     Failed,
@@ -52,6 +53,8 @@ public sealed class UniversalBuildRequest
     public string ProjectDir { get; set; } = string.Empty;
     public string? OutputDir { get; set; }
     public string Name { get; set; } = string.Empty;
+    /// <summary>构建前先执行 git pull --ff-only 拉取远端最新代码。</summary>
+    public bool PrePull { get; set; }
 }
 
 /// <summary>通用构建任务 DTO。</summary>
@@ -64,12 +67,28 @@ public sealed class UniversalBuildJobDto
     public string ProjectDir { get; set; } = string.Empty;
     public string OutputDir { get; set; } = string.Empty;
     public int Progress { get; set; }
+    /// <summary>排队位置（仅 Waiting 状态有值，按启动顺序 1 起）。</summary>
+    public int? QueuePosition { get; set; }
     public string Log { get; set; } = string.Empty;
     public int? ExitCode { get; set; }
     /// <summary>构建产物总大小（字节，构建成功后统计；失败/未构建为 null）。</summary>
     public long? ArtifactSize { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime? CompletedTime { get; set; }
+}
+
+/// <summary>产物目录占用统计条目。</summary>
+public sealed class ArtifactUsageItem
+{
+    public string Path { get; set; } = string.Empty;
+    /// <summary>目录是否存在。</summary>
+    public bool Exists { get; set; }
+    /// <summary>总大小（字节）。</summary>
+    public long SizeBytes { get; set; }
+    /// <summary>文件数（含子目录）。</summary>
+    public int FileCount { get; set; }
+    /// <summary>最近一次产物修改时间。</summary>
+    public DateTime? LastWriteTime { get; set; }
 }
 
 /// <summary>通用构建任务内部模型。</summary>
@@ -82,6 +101,10 @@ public sealed class UniversalBuildJob
     public string OutputDir { get; set; } = string.Empty;
     public UniversalBuildStatus Status { get; set; } = UniversalBuildStatus.Pending;
     public int Progress { get; set; }
+    /// <summary>最近命中的阶段锚点进度（日志关键字触发），插值起点。</summary>
+    public int ProgressAnchor { get; set; }
+    /// <summary>进入当前锚点的时间（Running 开始时初始化），插值时间基准。</summary>
+    public DateTime AnchorTime { get; set; }
     public StringBuilder Log { get; set; } = new();
     public int? ExitCode { get; set; }
     /// <summary>构建产物总大小（字节，构建成功后统计）。</summary>
@@ -89,6 +112,8 @@ public sealed class UniversalBuildJob
     public DateTime StartTime { get; set; }
     public DateTime? CompletedTime { get; set; }
     public CancellationTokenSource? Cts { get; set; }
+    /// <summary>构建前先执行 git pull --ff-only 拉取远端最新代码。</summary>
+    public bool PrePull { get; set; }
 }
 
 /// <summary>通用本地构建服务：支持 Web/Node/C#/Java/Maven/Gradle/Installer。</summary>
@@ -383,8 +408,9 @@ public sealed class UniversalBuildService
             OutputDir = !string.IsNullOrWhiteSpace(request.OutputDir)
                 ? request.OutputDir
                 : GetDefaultOutputDir(request.Type, request.Name),
-            Status = UniversalBuildStatus.Running,
+            Status = UniversalBuildStatus.Waiting,
             StartTime = DateTime.Now,
+            PrePull = request.PrePull,
         };
 
         if (!_jobs.TryAdd(job.Id, job))
@@ -399,7 +425,21 @@ public sealed class UniversalBuildService
     /// <summary>获取任务进度。</summary>
     public UniversalBuildJobDto? GetProgress(string id)
     {
-        return _jobs.TryGetValue(id, out var job) ? ToDto(job) : null;
+        if (!_jobs.TryGetValue(id, out var job)) return null;
+        var dto = ToDto(job);
+        dto.QueuePosition = GetQueuePosition(job);
+        return dto;
+    }
+
+    /// <summary>排队位置：Waiting 任务按启动顺序编号（1 起），其余状态为 null。</summary>
+    private int? GetQueuePosition(UniversalBuildJob job)
+    {
+        if (job.Status != UniversalBuildStatus.Waiting) return null;
+        var ordered = _jobs.Values
+            .Where(j => j.Status == UniversalBuildStatus.Waiting)
+            .OrderBy(j => j.StartTime)
+            .ToList();
+        return ordered.IndexOf(job) + 1;
     }
 
     /// <summary>获取所有任务。</summary>
@@ -426,10 +466,17 @@ public sealed class UniversalBuildService
 
             job.Status = UniversalBuildStatus.Running;
             job.Cts = new CancellationTokenSource();
+            job.AnchorTime = DateTime.Now;
             AppendLog(job, $">> 任务开始：{job.Name}");
             AppendLog(job, $">> 项目目录：{job.ProjectDir}");
             AppendLog(job, $">> 输出目录：{job.OutputDir}");
             AppendLog(job, string.Empty);
+
+            // 构建前拉取远端最新代码（--ff-only：本地有分叉提交时失败而非产生 merge）
+            if (job.PrePull)
+            {
+                await RunGitPullAsync(job);
+            }
 
             Directory.CreateDirectory(job.OutputDir);
 
@@ -524,6 +571,41 @@ public sealed class UniversalBuildService
             job.CompletedTime = DateTime.Now;
             _concurrency.Release();
         }
+    }
+
+    /// <summary>构建前执行 git pull --ff-only 拉取远端最新代码；失败则抛异常中止构建（避免打包旧代码）。</summary>
+    private async Task RunGitPullAsync(UniversalBuildJob job)
+    {
+        AppendLog(job, ">> 拉取远端最新代码：git pull --ff-only");
+        var psi = new ProcessStartInfo("git")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            WorkingDirectory = job.ProjectDir,
+        };
+        // 中文文件名正常显示；凭证缺失时快速失败，绝不挂起等待终端输入
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("core.quotepath=false");
+        psi.ArgumentList.Add("pull");
+        psi.ArgumentList.Add("--ff-only");
+        psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("无法启动 git，请确认已安装并加入 PATH");
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) AppendLog(job, e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) AppendLog(job, e.Data); };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        // 不响应取消令牌：GIT_TERMINAL_PROMPT=0 保证不会挂起等输入，取消会在随后的构建命令生效
+        await process.WaitForExitAsync(CancellationToken.None);
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git pull 失败（退出码 {process.ExitCode}），已中止构建，请处理本地提交/冲突后重试");
+        AppendLog(job, ">> 拉取完成");
+        AppendLog(job, string.Empty);
     }
 
     private static (string fileName, string arguments, string workingDir) GetCommandInfo(UniversalBuildJob job)
@@ -747,6 +829,12 @@ public sealed class UniversalBuildService
                 break;
         }
 
+        // 命中更高阶段锚点：记录值与时间，供 ToDto 按耗时平滑插值到下一锚点
+        if (progress > job.ProgressAnchor)
+        {
+            job.ProgressAnchor = progress;
+            job.AnchorTime = DateTime.Now;
+        }
         job.Progress = progress;
     }
 
@@ -755,6 +843,49 @@ public sealed class UniversalBuildService
         lock (job.Log)
         {
             job.Log.AppendLine(line);
+        }
+    }
+
+    // ============================ 产物占用统计与清理 ============================
+
+    /// <summary>统计产物目录占用（大小/文件数/最后修改时间）。</summary>
+    public IReadOnlyList<ArtifactUsageItem> GetArtifactUsage(IReadOnlyList<string> dirs)
+    {
+        var list = new List<ArtifactUsageItem>();
+        foreach (var dir in dirs.Where(d => !string.IsNullOrWhiteSpace(d)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var item = new ArtifactUsageItem { Path = dir };
+            try
+            {
+                if (!Directory.Exists(dir)) { list.Add(item); continue; }
+                item.Exists = true;
+                var files = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).ToList();
+                item.FileCount = files.Count;
+                item.SizeBytes = files.Sum(f => new FileInfo(f).Length);
+                item.LastWriteTime = files.Count > 0
+                    ? files.Max(f => new FileInfo(f).LastWriteTime)
+                    : Directory.GetLastWriteTime(dir);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "统计产物占用失败: {Dir}", dir);
+            }
+            list.Add(item);
+        }
+        return list;
+    }
+
+    /// <summary>清空产物目录内容（保留目录本身，删除不可恢复）。</summary>
+    public void CleanArtifact(string dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) throw new ArgumentException("目录不能为空");
+        if (!Directory.Exists(dir)) throw new InvalidOperationException($"目录不存在: {dir}");
+        foreach (var entry in Directory.EnumerateFileSystemEntries(dir))
+        {
+            if (Directory.Exists(entry))
+                Directory.Delete(entry, true);
+            else
+                File.Delete(entry);
         }
     }
 
@@ -767,6 +898,56 @@ public sealed class UniversalBuildService
             safeName = safeName.Replace(c, '_');
         var typeDir = type.ToString().ToLowerInvariant();
         return Path.Combine(desktop, "UniversalBuild", "publish", typeDir, safeName);
+    }
+
+    /// <summary>各构建类型的进度阶段锚点与典型耗时（秒）：日志命中锚点后按耗时向下一锚点平滑插值。</summary>
+    private static readonly Dictionary<UniversalBuildType, (int Anchor, int Seconds)[]> StageTimelines = new()
+    {
+        [UniversalBuildType.Web] = new[] { (10, 90), (30, 150), (50, 120), (80, 60) },
+        [UniversalBuildType.Node] = new[] { (10, 90), (30, 150), (50, 120), (80, 60) },
+        [UniversalBuildType.DotNet] = new[] { (20, 40), (50, 150), (80, 60) },
+        [UniversalBuildType.JavaMaven] = new[] { (20, 90), (50, 150), (80, 60) },
+        [UniversalBuildType.JavaGradle] = new[] { (20, 60), (50, 150), (80, 60) },
+        [UniversalBuildType.Installer] = new[] { (50, 150), (80, 60) },
+    };
+
+    /// <summary>
+    /// 展示进度：Running 时在当前锚点与下一锚点间按耗时平滑推进（封顶下一锚点前 2，避免关键字未出现就越界），
+    /// 其余状态返回实际值。解决原阶段式进度在长耗时步骤（npm install 等）期间长时间停滞的问题。
+    /// </summary>
+    private static int ComputeDisplayProgress(UniversalBuildJob job)
+    {
+        if (job.Status != UniversalBuildStatus.Running) return job.Progress;
+        if (!StageTimelines.TryGetValue(job.Type, out var timeline) || timeline.Length == 0) return job.Progress;
+
+        var anchor = job.ProgressAnchor;
+        var since = job.AnchorTime == default ? job.StartTime : job.AnchorTime;
+        var elapsed = Math.Max(0, (DateTime.Now - since).TotalSeconds);
+
+        int from;
+        int to;
+        double seconds;
+        if (anchor < timeline[0].Anchor)
+        {
+            // 尚未命中任何阶段关键字：从 0 向首锚点缓慢爬升（预留 1.5 倍首段时长）
+            from = 0;
+            to = timeline[0].Anchor;
+            seconds = timeline[0].Seconds * 1.5;
+        }
+        else
+        {
+            var idx = 0;
+            while (idx + 1 < timeline.Length && anchor >= timeline[idx + 1].Anchor) idx++;
+            from = timeline[idx].Anchor;
+            to = idx + 1 < timeline.Length ? timeline[idx + 1].Anchor : 100;
+            seconds = timeline[idx].Seconds;
+        }
+
+        // 最多推进到下一锚点前 2，等真实关键字出现再跳锚
+        var cap = to - 2 > from ? to - 2 : to;
+        var ratio = Math.Min(1.0, elapsed / seconds);
+        var value = from + (to - from) * ratio;
+        return (int)Math.Clamp(value, from, cap);
     }
 
     private static UniversalBuildJobDto ToDto(UniversalBuildJob job)
@@ -785,7 +966,7 @@ public sealed class UniversalBuildService
             Status = job.Status,
             ProjectDir = job.ProjectDir,
             OutputDir = job.OutputDir,
-            Progress = job.Progress,
+            Progress = ComputeDisplayProgress(job),
             Log = logText,
             ExitCode = job.ExitCode,
             ArtifactSize = job.ArtifactSize,

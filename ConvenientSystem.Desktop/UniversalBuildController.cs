@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
 using Microsoft.AspNetCore.Mvc;
@@ -14,17 +14,20 @@ public class UniversalBuildController : ControllerBase
     private readonly UniversalBuildService _buildService;
     private readonly DeployService _deployService;
     private readonly UniversalScheduleService _scheduleService;
+    private readonly SshCredentialStore _credentialStore;
     private readonly ILogger<UniversalBuildController> _logger;
 
     public UniversalBuildController(
         UniversalBuildService buildService,
         DeployService deployService,
         UniversalScheduleService scheduleService,
+        SshCredentialStore credentialStore,
         ILogger<UniversalBuildController> logger)
     {
         _buildService = buildService;
         _deployService = deployService;
         _scheduleService = scheduleService;
+        _credentialStore = credentialStore;
         _logger = logger;
     }
 
@@ -93,6 +96,15 @@ public class UniversalBuildController : ControllerBase
     [Route("DeployProgress")]
     public DeployJobDto? DeployProgress([FromBody] DeployProgressRequest request)
         => _deployService.GetJob(request.Id);
+
+    /// <summary>手动回滚：把最近一次部署的 .old 备份换回正式目录并重启服务。</summary>
+    [HttpPost]
+    [Route("Rollback")]
+    public DeployJobDto Rollback([FromBody] RollbackRequest request)
+    {
+        var jobId = _deployService.StartRollback(request);
+        return _deployService.GetJob(jobId)!;
+    }
 
     /// <summary>取消部署任务：中断执行并自动还原部署前环境。</summary>
     [HttpPost]
@@ -179,6 +191,34 @@ public class UniversalBuildController : ControllerBase
     [Route("ScheduleRemove")]
     public IActionResult ScheduleRemove([FromQuery] string id)
         => _scheduleService.RemoveSchedule(id) ? Ok() : NotFound(new { message = "定时项不存在" });
+
+    /// <summary>读取已保存的 SSH 密码（本机接口，供部署弹窗回填与自动部署取用）。</summary>
+    [HttpPost]
+    [Route("GetSshCredential")]
+    public SshCredentialResult GetSshCredential([FromQuery] string host, [FromQuery] string userName)
+        => new() { Password = _credentialStore.Get(host, userName) };
+
+    /// <summary>删除已保存的 SSH 凭据。</summary>
+    [HttpPost]
+    [Route("RemoveSshCredential")]
+    public IActionResult RemoveSshCredential([FromQuery] string host, [FromQuery] string userName)
+        => _credentialStore.Remove(host, userName) ? Ok() : NotFound();
+
+    /// <summary>保存 SSH 凭据（DPAPI 加密后落盘本机，供下次部署与自动部署复用）。</summary>
+    [HttpPost]
+    [Route("SaveSshCredential")]
+    public IActionResult SaveSshCredential([FromBody] SshCredentialRequest request)
+    {
+        try
+        {
+            _credentialStore.Save(request.Host, request.UserName, request.Password);
+            return Ok();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 }
 
 public sealed class EnvironmentForTypeRequest
@@ -210,4 +250,17 @@ public sealed class DeployProgressRequest
 public sealed class DeployCancelRequest
 {
     public string Id { get; set; } = string.Empty;
+}
+
+public sealed class SshCredentialRequest
+{
+    public string Host { get; set; } = string.Empty;
+    public string UserName { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+}
+
+public sealed class SshCredentialResult
+{
+    /// <summary>未保存过或解密失败时为 null。</summary>
+    public string? Password { get; set; }
 }

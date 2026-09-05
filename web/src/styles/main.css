@@ -1046,16 +1046,24 @@ body {
   cursor: pointer;
 }
 
-/* 考勤表姓名超链接：点击唤起钉钉客户端 */
-.dd-name-link {
-  color: var(--brand);
-  font-weight: 500;
-  text-decoration: none;
-  cursor: pointer;
+/* 考勤表姓名单元格：姓名 + 钉钉聊天图标并排 */
+.name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.dd-name-link:hover {
-  text-decoration: underline;
+/* 钉钉聊天图标：hover 变色提示可点击 */
+.dd-chat-icon {
+  color: #c0c4cc;
+  cursor: pointer;
+  font-size: 16px;
+  flex-shrink: 0;
+  transition: color 0.2s;
+}
+
+.dd-chat-icon:hover {
+  color: var(--brand);
 }
 
 .avatar-cell {
@@ -1282,14 +1290,22 @@ body {
 }
 
 /* ============ 全局弹窗拖动/拉伸增强（实现在 common/dialogFlex.ts） ============ */
-/* 弹窗改为列布局：拉伸变小时内容在弹窗内部滚动，而非遮罩层滚动 */
+/* 弹窗遮罩层：flex 居中，弹窗始终在视口正中央（水平 + 垂直） */
 .el-overlay-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;   /* 外层容器不出现滚动条，滚动交给弹窗内部 */
 }
+/* 弹窗改为列布局：拉伸变小时内容在弹窗内部滚动，而非遮罩层滚动 */
 .el-dialog {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 100px);   /* 约束弹窗高度，内容过高时弹窗内部出现滚动条 */
+  /* flex 居中后不再依赖 margin-top: 15vh，重置 margin 避免偏移 */
+  margin: 0 !important;
+  /* 约束弹窗高度，内容过高时弹窗内部出现滚动条。
+     居中布局下弹窗上下各留 5vh 间距，故 max-height 取 90vh */
+  max-height: 90vh;
 }
 .el-dialog__body {
   flex: 1;

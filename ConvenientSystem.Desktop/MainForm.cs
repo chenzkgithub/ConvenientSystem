@@ -284,6 +284,16 @@ public sealed class MainForm : Form
                     HostFileService.TryHandleMessage(root, _webView.CoreWebView2!, this);
                     break;
 
+                case "scheme:open":
+                    // 前端请求打开外部协议链接（如 dingtalk://）：绕过 WebView2 外部协议策略，由宿主直接启动
+                    if (root.TryGetProperty("url", out var schemeUrlEl) &&
+                        schemeUrlEl.GetString() is { Length: > 0 } schemeUrl)
+                    {
+                        try { Process.Start(new ProcessStartInfo(schemeUrl) { UseShellExecute = true }); }
+                        catch (Exception ex) { LogHost($"SCHEME-OPEN FAIL: {ex.Message}"); }
+                    }
+                    break;
+
             }
         }
         catch (Exception ex)

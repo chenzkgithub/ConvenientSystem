@@ -1,9 +1,10 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   CircleCheck,
   CircleClose,
+  Monitor,
   Folder,
   FolderOpened,
   DocumentCopy,
@@ -15,12 +16,16 @@ import {
   Link,
   ArrowDown,
   RefreshRight,
+  RefreshLeft,
+  Download,
+  Upload,
   Clock,
   Collection,
   AlarmClock,
 } from '@element-plus/icons-vue'
 import {
   checkUniversalEnvironment,
+  checkUniversalEnvironmentForType,
   startUniversalBuild,
   getUniversalBuildProgress,
   cancelUniversalBuild,
@@ -28,6 +33,7 @@ import {
   startDeploy,
   getDeployProgress,
   cancelDeploy,
+  startRollback,
   checkSiteExists,
   getDeployHistory,
   getScheduleList,
@@ -43,8 +49,40 @@ import {
   type SiteExistsResult,
   type DeployHistoryItem,
   type ScheduleItem,
+  saveSshCredential,
+  getSshCredential,
 } from '@/common/api/universalBuild'
 import { selectFolder, openOutputFolder } from '@/common/api/universalBuild'
+
+/** 部署配置快照：手动部署成功启动时记录，构建成功后自动部署复用 */
+/** 部署模版：一套完整部署配置（不含密码），localStorage 持久化；弹窗填充与自动部署复用 */
+interface DeployTemplate {
+  id: string
+  name: string
+  targetOS: DeployTargetOS
+  siteName: string
+  serviceName: string
+  remoteDir: string
+  archiveName: string
+  deployPath: string
+  verifyHealth: boolean
+  keepDatabase: boolean
+  host: string
+  userName: string
+}
+
+interface DeployConfigSnapshot {
+  targetOS: DeployTargetOS
+  siteName: string
+  serviceName: string
+  remoteDir: string
+  archiveName: string
+  deployPath: string
+  verifyHealth: boolean
+  keepDatabase: boolean
+  host: string
+  userName: string
+}
 
 interface BuildCard {
   id: string
@@ -55,11 +93,25 @@ interface BuildCard {
   jobId: string | null
   status: UniversalBuildStatus | null
   progress: number
+  /** 排队位置（Waiting 时后端返回，1 起） */
+  queuePosition: number
   log: string
+  /** 构建前环境检测输出（前端生成，与后端构建日志拼接显示） */
+  preLog: string
   deployJobId: string | null
   deployStatus: DeployStatus | null
   deployLog: string
+  /** 部署整体进度（0-100），上传段为字节级真实进度 */
+  deployProgress: number
   outputDirCustom: boolean
+  /** 构建前先 git pull 拉取远端最新代码 */
+  prePull: boolean
+  /** 构建成功后自动用上次部署配置部署 */
+  autoDeploy: boolean
+  /** 上次成功启动部署的参数快照（自动部署用，不持久化） */
+  lastDeployConfig: DeployConfigSnapshot | null
+  /** 自动部署绑定的部署模版 id（空 = 用 lastDeployConfig 快照，随卡片持久化） */
+  deployTemplateId: string
   /** 构建产物总大小（字节，构建成功后由后端统计） */
   artifactSize: number | null
   /** 本次构建开始/结束时间戳（毫秒，进行中实时计时） */
@@ -99,6 +151,27 @@ function typeColor(type: UniversalBuildType) {
   return typeColorMap[type] || '#909399'
 }
 
+/** 构建类型短标签（用于任务名称前缀） */
+const typeShortLabelMap: Record<UniversalBuildType, string> = {
+  Web: 'Web', Node: 'Node', DotNet: 'DotNet',
+  JavaMaven: 'Maven', JavaGradle: 'Gradle', Installer: 'Installer',
+}
+
+/** 默认任务名称：类型前缀 + 序号 */
+function defaultCardName(type: UniversalBuildType, index: number) {
+  return `[${typeShortLabelMap[type] || type}] 构建任务 ${index}`
+}
+
+/** 去掉名称中的类型前缀（兼容 [Web] 新格式和 Web 旧格式） */
+function stripTypeName(name: string): string {
+  const m = name.match(/^\[([^\]]+)\]\s*(.+)$/)
+  if (m) return m[2]
+  for (const short of Object.values(typeShortLabelMap)) {
+    if (name.startsWith(short + ' ')) return name.slice(short.length + 1)
+  }
+  return name
+}
+
 /** 各环境检测命令映射，悬浮显示 */
 const envCommandMap: Record<string, string> = {
   node: 'cmd /c node --version',
@@ -112,7 +185,8 @@ const envCommandMap: Record<string, string> = {
 
 const envInfo = ref<UniversalEnvironmentInfo[]>([])
 const envLoading = ref(false)
-const envCollapse = ref<string[]>(['env'])  // 默认展开环境检测
+/** 环境检测弹窗：页面打开时默认弹出，工具栏可随时唤起 */
+const envVisible = ref(false)
 const cards = reactive<BuildCard[]>([])
 const selectedCardId = ref<string | null>(null)
 const logTerminalRef = ref<HTMLDivElement | null>(null)
@@ -123,18 +197,25 @@ function createCard(): BuildCard {
   const id = crypto.randomUUID()
   return {
     id,
-    name: `构建任务 ${cards.length + 1}`,
+    name: defaultCardName('Web', cards.length + 1),
     type: 'Web',
     projectDir: '',
     outputDir: '',
     jobId: null,
     status: null,
     progress: 0,
+    queuePosition: 0,
     log: '',
+    preLog: '',
     deployJobId: null,
     deployStatus: null,
     deployLog: '',
+    deployProgress: 0,
     outputDirCustom: false,
+    prePull: false,
+    autoDeploy: false,
+    lastDeployConfig: null,
+    deployTemplateId: '',
     artifactSize: null,
     startTime: null,
     endTime: null,
@@ -180,34 +261,10 @@ async function loadEnvironment() {
   }
 }
 
-function getEnv(type: string) {
-  return envInfo.value.find((x) => x.type === type)
-}
-
-function envStatusForCard(card: BuildCard) {
-  const required = getRequiredEnvTypes(card.type)
-  const missing = required
-    .map((t) => getEnv(t))
-    .filter((x): x is UniversalEnvironmentInfo => !!x && !x.installed)
-  return { ok: missing.length === 0, missing }
-}
-
-function getRequiredEnvTypes(type: UniversalBuildType): string[] {
-  switch (type) {
-    case 'Web':
-    case 'Node':
-      return ['node', 'npm']
-    case 'DotNet':
-      return ['dotnet']
-    case 'JavaMaven':
-      return ['java', 'mvn']
-    case 'JavaGradle':
-      return ['java', 'gradle']
-    case 'Installer':
-      return ['iscc']
-    default:
-      return []
-  }
+/** 工具栏唤起环境检测弹窗：每次打开都重新检测一次 */
+function openEnvDialog() {
+  envVisible.value = true
+  loadEnvironment()
 }
 
 async function pickProjectDir(card: BuildCard) {
@@ -259,6 +316,13 @@ async function updateDefaultOutputDir(card: BuildCard) {
 }
 
 async function onTypeChange(card: BuildCard) {
+  // 切换类型时自动更新名称中的类型前缀
+  const short = typeShortLabelMap[card.type] || card.type
+  const base = stripTypeName(card.name)
+  const idxMatch = /^构建任务\s*(\d+)$/.exec(base)
+  card.name = idxMatch
+    ? defaultCardName(card.type, parseInt(idxMatch[1]))
+    : `[${short}] ${base}`
   await updateDefaultOutputDir(card)
 }
 
@@ -267,6 +331,26 @@ async function onNameChange(card: BuildCard) {
   // 手动选择了输出目录的则不覆盖
   if (!card.outputDirCustom) {
     await updateDefaultOutputDir(card)
+  }
+}
+
+/** 构建前环境检测：结果写入 preLog（与后端构建日志拼接显示；缺失不拦截，由构建本身暴露问题） */
+async function logEnvironmentCheck(card: BuildCard) {
+  try {
+    const infos = await checkUniversalEnvironmentForType({ type: card.type })
+    if (infos.length === 0) return
+    const lines = ['', '===== 环境检测 =====']
+    for (const info of infos) {
+      lines.push(info.installed ? `✓ ${info.name} ${info.version}`.trim() : `❌ ${info.name} 未安装`)
+    }
+    const missing = infos.filter((x) => !x.installed)
+    if (missing.length > 0) {
+      lines.push(`⚠ 缺少 ${missing.map((x) => x.name).join('、')}，构建可能失败`)
+    }
+    lines.push('==================')
+    card.preLog = lines.join('\n')
+  } catch {
+    /* 检测接口失败不阻塞构建 */
   }
 }
 
@@ -280,10 +364,14 @@ async function startBuild(card: BuildCard) {
   card.status = 'Running'
   card.progress = 0
   card.log = ''
+  card.preLog = ''
   card.startTime = Date.now()
   card.endTime = null
   selectedCardId.value = card.id
   ensureTick()
+
+  // 构建前先做环境检测，把结果写到日志开头
+  await logEnvironmentCheck(card)
 
   try {
     const dto = await startUniversalBuild({
@@ -291,9 +379,11 @@ async function startBuild(card: BuildCard) {
       projectDir: card.projectDir.trim(),
       outputDir: card.outputDir.trim(),
       name: card.name.trim(),
+      prePull: card.prePull,
     })
     card.jobId = dto.id
-    card.status = dto.status === 'Failed' ? 'Failed' : 'Running'
+    // 后端并发已满时任务先排队（Waiting），获得构建槽位后才转 Running
+    card.status = dto.status || 'Running'
     card.outputDir = dto.outputDir
     card.log = dto.log || card.log
     startPolling()
@@ -308,7 +398,8 @@ let pollTimer: number | null = null
 function startPolling() {
   if (pollTimer) return
   pollTimer = window.setInterval(async () => {
-    const runningCards = cards.filter((c) => c.status === 'Running' && c.jobId)
+    // Waiting = 并发已满排队等待槽位，同样需要轮询直到转为 Running 或终态
+    const runningCards = cards.filter((c) => (c.status === 'Running' || c.status === 'Waiting') && c.jobId)
     if (runningCards.length === 0) {
       stopPolling()
       return
@@ -323,11 +414,17 @@ function startPolling() {
           card.log = dto.log
           card.outputDir = dto.outputDir
           card.progress = dto.progress
+          card.queuePosition = dto.queuePosition ?? 0
           card.artifactSize = dto.artifactSize ?? null
-          if (prevStatus === 'Running' && dto.status !== 'Running') {
+          const wasActive = prevStatus === 'Running' || prevStatus === 'Waiting'
+          if (wasActive && dto.status !== 'Running' && dto.status !== 'Waiting') {
             card.endTime = Date.now()
             notifyDone(dto.status === 'Success' ? '构建成功' : `构建${statusText(dto.status)}`, card.name, dto.status === 'Success' ? 'success' : 'error')
             stopTickIfIdle()
+            // 构建成功且卡片勾选“成功后自动部署”：用上次部署配置链式部署
+            if (dto.status === 'Success' && card.autoDeploy) {
+              autoDeployAfterBuild(card)
+            }
           }
         }
       } catch {
@@ -360,11 +457,13 @@ function selectCard(card: BuildCard) {
 }
 
 function isRunning(card: BuildCard) {
-  return card.status === 'Running'
+  return card.status === 'Running' || card.status === 'Waiting'
 }
 
 function statusText(status: UniversalBuildStatus | null) {
   switch (status) {
+    case 'Waiting':
+      return '排队中...'
     case 'Running':
       return '构建中...'
     case 'Success':
@@ -382,6 +481,8 @@ function statusText(status: UniversalBuildStatus | null) {
 
 function statusType(status: UniversalBuildStatus | null) {
   switch (status) {
+    case 'Waiting':
+      return 'info'
     case 'Running':
       return 'primary'
     case 'Success':
@@ -475,9 +576,42 @@ function logLineClass(line: string): string {
   return ''
 }
 
-/** 格式化日志为带颜色的 HTML：优先还原 ANSI 原生色，其次按结构化标记着色 */
+// ============================ 日志过滤 ============================
+
+/** 日志过滤：关键字（不区分大小写包含）+ 行类型（错误/警告/成功），可叠加 */
+const logFilter = ref('')
+const logFilterType = ref<'' | 'error' | 'warn' | 'success'>('')
+
+/** 按当前过滤条件筛选日志行（无过滤时原样返回） */
+function filterLogLines(lines: string[]): string[] {
+  const kw = logFilter.value.trim().toLowerCase()
+  const type = logFilterType.value
+  if (!kw && !type) return lines
+  return lines.filter((line) => {
+    if (type) {
+      const cls = logLineClass(line)
+      if (type === 'error' && cls !== 'log-error') return false
+      if (type === 'warn' && cls !== 'log-warn') return false
+      if (type === 'success' && cls !== 'log-success') return false
+    }
+    if (kw && !line.toLowerCase().includes(kw)) return false
+    return true
+  })
+}
+
+/** 过滤统计：当前标签页 显示行数/总行数（有过滤条件时展示） */
+const logFilterStat = computed(() => {
+  const card = selectedCard.value
+  if (!card) return null
+  const text = activeLogTab.value === 'build' ? ((card.preLog || '') + (card.log || '')) : (card.deployLog || '')
+  if (!text) return null
+  const lines = text.split('\n')
+  return { shown: filterLogLines(lines).length, total: lines.length }
+})
+
+/** 格式化日志为带颜色的 HTML（先按过滤条件筛行）：优先还原 ANSI 原生色，其次按结构化标记着色 */
 function formatLogHtml(log: string): string {
-  return log.split('\n').map(line => {
+  return filterLogLines(log.split('\n')).map(line => {
     if (line.includes('\u001b')) return ansiLineToHtml(line)
     const escaped = escapeHtml(line)
     const cls = logLineClass(line)
@@ -530,13 +664,23 @@ const deployForm = reactive({
   siteName: 'convenient',
   host: '123.56.68.132',
   userName: 'root',
-  // 密码不缓存：每次部署单独输入（仅记住主机/用户名等非敏感项）
+  // 密码走本机 DPAPI 加密存储：勾选“记住密码”时保存并在下次部署自动回填
   password: '',
+  rememberPassword: true,
   deployPath: '/opt/convenient',
   verifyHealth: true,
   keepDatabase: true,
 })
 const deployLoading = ref(false)
+/** 部署表单验证（el-form 自带）：必填字段显示红 *，未通过时错误信息显示在字段下方 */
+const deployFormRef = ref()
+const deployFormRules = {
+  outputDir: [{ required: true, message: '请选择部署目录', trigger: ['blur', 'change'] }],
+  siteName: [{ required: true, message: '请填写站点名称', trigger: ['blur', 'change'] }],
+  host: [{ required: true, message: '请填写服务器地址', trigger: ['blur', 'change'] }],
+  userName: [{ required: true, message: '请填写 SSH 用户名', trigger: ['blur', 'change'] }],
+  password: [{ required: true, message: '请填写 SSH 密码', trigger: ['blur', 'change'] }],
+}
 /** 部署目录是否只读：从卡片打开时只读，从工具栏打开可选 */
 const deployReadOnlyDir = ref(true)
 /** 站点存在性检查结果 */
@@ -554,7 +698,7 @@ function stripAnsiCodes(text: string): string {
 async function copyLog() {
   const card = selectedCard.value
   if (!card) return
-  const text = activeLogTab.value === 'build' ? card.log : card.deployLog
+  const text = activeLogTab.value === 'build' ? (card.preLog + card.log) : card.deployLog
   if (!text) {
     ElMessage.warning('暂无日志可复制')
     return
@@ -621,6 +765,23 @@ async function doCheckSiteExists() {
   }
 }
 
+/** 回填本机已保存的 SSH 密码（DPAPI 解密；仅在密码为空时填充，不覆盖手动输入） */
+async function fillSavedPassword() {
+  if (deployForm.password || !deployForm.host.trim() || !deployForm.userName.trim()) return
+  try {
+    const result = await getSshCredential(deployForm.host.trim(), deployForm.userName.trim())
+    if (result?.password) {
+      deployForm.password = result.password
+      // 回填后密码已就绪，补一次站点存在性检查
+      doCheckSiteExists()
+      // 程序赋值不触发验证，手动清掉密码字段的必填错误提示
+      deployFormRef.value?.clearValidate('password')
+    }
+  } catch {
+    /* 未保存过或后端不可用时静默，不影响手动输入 */
+  }
+}
+
 /** 打开部署弹窗（从构建卡片进入，部署目录只读） */
 function openDeployDialog(card: BuildCard) {
   deployForm.cardId = card.id
@@ -632,7 +793,10 @@ function openDeployDialog(card: BuildCard) {
   // archiveName 由 watch 联动，不需手动设值
   deployReadOnlyDir.value = true
   deployDialogVisible.value = true
+  // 表单被重新填充，清掉上一次遗留的验证错误提示
+  nextTick(() => deployFormRef.value?.clearValidate())
   doCheckSiteExists()
+  fillSavedPassword()
 }
 
 /** 打开部署弹窗（从工具栏进入，自由选择部署目录） */
@@ -646,13 +810,19 @@ function openDeployOnlyDialog() {
   // archiveName 由 watch 联动，不需手动设值
   deployReadOnlyDir.value = false
   deployDialogVisible.value = true
+  nextTick(() => deployFormRef.value?.clearValidate())
   doCheckSiteExists()
+  fillSavedPassword()
 }
+
+/** 模版填充中标志：填充期间跳过压缩包名/目标系统联动 watch，模版保存的值原样生效 */
+let applyingTemplate = false
 
 /** 压缩包名联动：站点名、服务名或目标系统变化时自动生成 {站点名}-{服务名}.{扩展名} */
 watch(
   () => [deployForm.siteName, deployForm.serviceName, deployForm.targetOS],
   () => {
+    if (applyingTemplate) return
     const site = (deployForm.siteName || 'convenient').trim()
     const svc = (deployForm.serviceName || defaultServiceName(deployForm.buildType, deployForm.targetOS)).trim()
     const ext = archiveExtension(deployForm.targetOS)
@@ -665,7 +835,7 @@ watch(
 watch(
   () => deployForm.targetOS,
   (newOS, oldOS) => {
-    if (newOS === oldOS) return
+    if (newOS === oldOS || applyingTemplate) return
     deployForm.deployPath = defaultDeployPath(newOS, deployForm.siteName)
     deployForm.serviceName = defaultServiceName(deployForm.buildType, newOS)
   },
@@ -674,11 +844,14 @@ watch(
 /** 站点信息变化时重新检查站点是否存在 */
 let siteCheckTimer: number | null = null
 watch(
-  () => [deployForm.siteName, deployForm.serviceName, deployForm.host],
+  () => [deployForm.siteName, deployForm.serviceName, deployForm.host, deployForm.userName],
   () => {
     if (siteCheckTimer) window.clearTimeout(siteCheckTimer)
     siteCheckTimer = window.setTimeout(() => {
-      if (deployDialogVisible.value) doCheckSiteExists()
+      if (deployDialogVisible.value) {
+        doCheckSiteExists()
+        fillSavedPassword()
+      }
     }, 500)
   },
 )
@@ -711,23 +884,10 @@ async function openDeployOutputDir() {
 
 /** 启动部署 */
 async function startDeployAction() {
-  if (!deployForm.host.trim()) {
-    ElMessage.warning('请填写服务器地址')
-    return
-  }
-  if (!deployForm.userName.trim()) {
-    ElMessage.warning('请填写 SSH 用户名')
-    return
-  }
-  if (!deployForm.password) {
-    ElMessage.warning('请填写 SSH 密码')
-    return
-  }
-
-  if (!deployForm.outputDir.trim()) {
-    ElMessage.warning('请选择部署目录')
-    return
-  }
+  // el-form 自带验证：必填项未填时红字提示在字段下方，全部通过才继续
+  if (!deployFormRef.value) return
+  const valid = await deployFormRef.value.validate().catch(() => false)
+  if (!valid) return
 
   // 找关联卡片，没有则创建临时卡片跟踪部署状态
   let card = cards.find(c => c.id === deployForm.cardId)
@@ -743,6 +903,7 @@ async function startDeployAction() {
   // 记录部署目标与计时（耗时显示、成功后“打开站点”用）
   card.deployStartTime = Date.now()
   card.deployEndTime = null
+  card.deployProgress = 0
   card.deployHost = deployForm.host.trim()
   card.deployServiceName = deployForm.serviceName.trim()
   ensureTick()
@@ -768,18 +929,115 @@ async function startDeployAction() {
     })
     card.deployJobId = dto.id
     card.deployStatus = dto.status
+    card.deployProgress = dto.progress ?? 0
     card.deployLog = dto.log || ''
     deployDialogVisible.value = false
     activeLogTab.value = 'deploy'
     selectedCardId.value = card.id
     startDeployPolling()
     ElMessage.success('部署任务已启动')
+    // 记录部署配置快照（构建成功后自动部署复用；不含密码）
+    card.lastDeployConfig = {
+      targetOS: deployForm.targetOS,
+      siteName: deployForm.siteName || 'convenient',
+      serviceName: deployForm.serviceName.trim(),
+      remoteDir: deployForm.remoteDir.trim(),
+      archiveName: deployForm.archiveName.trim(),
+      deployPath: deployForm.deployPath.trim(),
+      verifyHealth: deployForm.verifyHealth,
+      keepDatabase: deployForm.keepDatabase,
+      host: deployForm.host.trim(),
+      userName: deployForm.userName.trim(),
+    }
+    // 勾选“记住密码”时以 DPAPI 加密保存到本机（保存失败不影响部署）
+    if (deployForm.rememberPassword && deployForm.password) {
+      saveSshCredential({
+        host: deployForm.host.trim(),
+        userName: deployForm.userName.trim(),
+        password: deployForm.password,
+      }).catch(() => { /* ignore */ })
+    }
   } catch (err: any) {
     card.deployEndTime = Date.now()
     stopTickIfIdle()
     ElMessage.error(`启动部署失败：${err?.message || '未知错误'}`)
   } finally {
     deployLoading.value = false
+  }
+}
+
+/** 构建成功后自动部署：优先用卡片绑定的部署模版，未绑定时回退上次部署配置；密码从本机 DPAPI 凭据读取 */
+async function autoDeployAfterBuild(card: BuildCard) {
+  const tpl = deployTemplates.value.find((t) => t.id === card.deployTemplateId)
+  const cfg = tpl
+    ? {
+        targetOS: tpl.targetOS,
+        siteName: tpl.siteName,
+        serviceName: tpl.serviceName,
+        remoteDir: tpl.remoteDir,
+        archiveName: tpl.archiveName,
+        deployPath: tpl.deployPath,
+        verifyHealth: tpl.verifyHealth,
+        keepDatabase: tpl.keepDatabase,
+        host: tpl.host,
+        userName: tpl.userName,
+      }
+    : card.lastDeployConfig
+  if (!cfg) {
+    ElMessage.warning(`【${card.name}】未选择部署模版且未记录部署配置，自动部署已跳过（先手动部署一次或在卡片上选择模版）`)
+    return
+  }
+  let password = ''
+  try {
+    const cred = await getSshCredential(cfg.host, cfg.userName)
+    password = cred?.password || ''
+  } catch {
+    /* 取不到密码则跳过自动部署 */
+  }
+  if (!password) {
+    ElMessage.warning(`【${card.name}】本机未保存 SSH 密码，自动部署已跳过（部署时勾选“记住密码”）`)
+    return
+  }
+  card.deployJobId = null
+  card.deployStatus = 'Running'
+  card.deployLog = '>> 构建成功，自动部署开始...\n'
+  card.deployStartTime = Date.now()
+  card.deployEndTime = null
+  card.deployProgress = 0
+  card.deployHost = cfg.host
+  card.deployServiceName = cfg.serviceName
+  activeLogTab.value = 'deploy'
+  selectedCardId.value = card.id
+  ensureTick()
+  try {
+    const dto = await startDeploy({
+      outputDir: card.outputDir,
+      buildName: card.name,
+      buildType: card.type,
+      serviceName: cfg.serviceName,
+      remoteDir: cfg.remoteDir,
+      archiveName: cfg.archiveName,
+      targetOS: cfg.targetOS,
+      siteName: cfg.siteName,
+      host: cfg.host,
+      userName: cfg.userName,
+      password,
+      deployPath: cfg.deployPath,
+      verifyHealth: cfg.verifyHealth,
+      keepDatabase: cfg.keepDatabase,
+    })
+    card.deployJobId = dto.id
+    card.deployStatus = dto.status
+    card.deployProgress = dto.progress ?? 0
+    card.deployLog = dto.log || card.deployLog
+    startDeployPolling()
+    ElMessage.success(`【${card.name}】已自动开始部署`)
+  } catch (err: any) {
+    card.deployStatus = 'Failed'
+    card.deployEndTime = Date.now()
+    card.deployLog += `>> 自动部署启动失败：${err?.message || '未知错误'}`
+    stopTickIfIdle()
+    notifyDone('自动部署失败', card.name, 'error')
   }
 }
 
@@ -801,6 +1059,7 @@ function startDeployPolling() {
         if (dto) {
           const prevStatus = card.deployStatus
           card.deployStatus = dto.status
+          card.deployProgress = dto.progress ?? card.deployProgress
           card.deployLog = dto.log
           if (prevStatus === 'Running' && dto.status !== 'Running') {
             card.deployEndTime = Date.now()
@@ -875,14 +1134,16 @@ function openSite(card: BuildCard) {
 
 /** 一键构建全部已配置项目目录的卡片（并发由后端信号量控制） */
 async function buildAll() {
-  const ready = cards.filter((c) => c.projectDir.trim() && c.status !== 'Running')
+  const ready = cards.filter((c) => c.projectDir.trim() && c.status !== 'Running' && c.status !== 'Waiting')
   if (ready.length === 0) {
     ElMessage.warning('没有可构建的任务（卡片需先选择项目目录）')
     return
   }
+  const autoDeployCount = ready.filter((c) => c.autoDeploy).length
+  const deployHint = autoDeployCount > 0 ? `\n其中 ${autoDeployCount} 个勾选了自动部署，构建成功后将自动部署到服务器。` : ''
   try {
     await ElMessageBox.confirm(
-      `将构建 ${ready.length} 个任务：${ready.map((c) => c.name).join('、')}`,
+      `将构建 ${ready.length} 个任务：${ready.map((c) => c.name).join('、')}。${deployHint}`,
       '全部构建',
       { confirmButtonText: '开始', cancelButtonText: '取消', type: 'info' },
     )
@@ -908,6 +1169,9 @@ function persistCards() {
     projectDir: c.projectDir,
     outputDir: c.outputDir,
     outputDirCustom: c.outputDirCustom,
+    prePull: c.prePull,
+    autoDeploy: c.autoDeploy,
+    deployTemplateId: c.deployTemplateId,
   }))
   try {
     localStorage.setItem(CARDS_STORAGE_KEY, JSON.stringify(data))
@@ -924,11 +1188,24 @@ function restoreCards(): boolean {
     for (const item of data) {
       const card = createCard()
       if (item.id) card.id = item.id // 保留 id：定时构建按 cardId 关联
-      card.name = item.name || card.name
       card.type = item.type || 'Web'
+      // 恢复名称：默认格式自动补类型前缀，自定义名称前加 [Type]
+      if (item.name) {
+        const base = stripTypeName(item.name)
+        const idxMatch = /^构建任务\s*(\d+)$/.exec(base)
+        if (idxMatch) {
+          card.name = defaultCardName(card.type, parseInt(idxMatch[1]))
+        } else {
+          const short = typeShortLabelMap[card.type] || card.type
+          card.name = `[${short}] ${base}`
+        }
+      }
       card.projectDir = item.projectDir || ''
       card.outputDir = item.outputDir || ''
       card.outputDirCustom = !!item.outputDirCustom
+      card.prePull = !!item.prePull
+      card.autoDeploy = !!item.autoDeploy
+      card.deployTemplateId = item.deployTemplateId || ''
       cards.push(card)
     }
     selectedCardId.value = cards[0].id
@@ -941,7 +1218,7 @@ function restoreCards(): boolean {
 // 配置字段变化时延迟保存（避免输入过程中高频写 localStorage；日志/状态变化不触发）
 let persistTimer: number | null = null
 watch(
-  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}`).join('\n'),
+  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.autoDeploy}|${c.deployTemplateId}`).join('\n'),
   () => {
     if (persistTimer) window.clearTimeout(persistTimer)
     persistTimer = window.setTimeout(persistCards, 500)
@@ -972,6 +1249,98 @@ function restoreDeployRemember() {
   } catch { /* ignore */ }
 }
 
+// ============================ 配置导出 / 导入 ============================
+
+/** 导出全部配置（卡片 + 构建模板 + 部署模板，不含密码）为 JSON 文件 */
+function exportConfig() {
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    cards: cards.map((c) => ({
+      name: c.name,
+      type: c.type,
+      projectDir: c.projectDir,
+      outputDir: c.outputDir,
+      outputDirCustom: c.outputDirCustom,
+      prePull: c.prePull,
+      autoDeploy: c.autoDeploy,
+    })),
+    templates: templates.value,
+    deployTemplates: deployTemplates.value,
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const now = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  a.href = url
+  a.download = `build-config-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已导出 ${data.cards.length} 张卡片、${templates.value.length} 个构建模板、${deployTemplates.value.length} 个部署模板`)
+}
+
+/** 隐藏的文件选择框（导入配置用） */
+const importFileInput = ref<HTMLInputElement | null>(null)
+
+function triggerImport() {
+  importFileInput.value?.click()
+}
+
+/** 导入配置文件：卡片追加（重新生成 id 避免冲突），模板按 id 去重合并 */
+async function importConfig(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 清空以允许重复选择同一文件
+  if (!file) return
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    if (typeof data !== 'object' || data === null) throw new Error('文件格式不正确')
+
+    let cardCount = 0
+    if (Array.isArray(data.cards)) {
+      for (const item of data.cards) {
+        if (!item || typeof item !== 'object') continue
+        const card = createCard() // 新 id：不与现有卡片/其他机器冲突
+        card.type = item.type || 'Web'
+        if (item.name) card.name = String(item.name)
+        card.projectDir = item.projectDir || ''
+        card.outputDir = item.outputDir || ''
+        card.outputDirCustom = !!item.outputDirCustom
+        card.prePull = !!item.prePull
+        card.autoDeploy = !!item.autoDeploy
+        cards.push(card)
+        cardCount++
+      }
+    }
+
+    let tplCount = 0
+    if (Array.isArray(data.templates)) {
+      for (const t of data.templates) {
+        if (!t?.id || templates.value.some((x) => x.id === t.id)) continue
+        templates.value.push(t)
+        tplCount++
+      }
+      saveTemplates()
+    }
+
+    let deployTplCount = 0
+    if (Array.isArray(data.deployTemplates)) {
+      for (const t of data.deployTemplates) {
+        if (!t?.id || deployTemplates.value.some((x) => x.id === t.id)) continue
+        deployTemplates.value.push(t)
+        deployTplCount++
+      }
+      saveDeployTemplates()
+    }
+
+    ElMessage.success(`导入完成：${cardCount} 张卡片、${tplCount} 个构建模板、${deployTplCount} 个部署模板`)
+  } catch (err: any) {
+    ElMessage.error(`导入失败：${err?.message || '文件格式不正确'}`)
+  }
+}
+
 // ============================ 部署历史 ============================
 
 const historyVisible = ref(false)
@@ -984,6 +1353,136 @@ async function openHistory() {
     historyItems.value = await getDeployHistory()
   } catch {
     historyItems.value = []
+  }
+}
+
+/**
+ * 启动手动回滚（部署历史行入口）：把 .old 备份换回正式目录。
+ * 密码从本机 DPAPI 读取；确认框说明可再次回滚回到当前版本。
+ */
+async function rollbackFromHistory(row: DeployHistoryItem) {
+  let password = ''
+  try {
+    const result = await getSshCredential(row.host, 'root')
+    password = result?.password || ''
+  } catch { /* ignore */ }
+  if (!password) {
+    // root 之外的用户名历史里没存，尝试再取一次 userName 需要用户提供；直接提示
+    ElMessage.warning('本机未保存该服务器密码，无法自动回滚（可在部署弹窗保存密码后重试）')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将把【${row.siteName}】回滚到上一版本（当前版本转为备份，可再次回滚回来）。站点 ${row.host}，确定继续吗？`,
+      '回滚到上一版本',
+      { confirmButtonText: '开始回滚', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  // 建临时卡片跟踪回滚任务状态（复用部署日志面板与轮询）
+  const card = reactive(createCard())
+  card.name = `[回滚] ${row.buildName}`
+  card.type = row.buildType
+  card.deployJobId = null
+  card.deployStatus = 'Running'
+  card.deployLog = ''
+  card.deployProgress = 0
+  card.deployStartTime = Date.now()
+  card.deployEndTime = null
+  card.deployHost = row.host
+  card.deployServiceName = ''
+  cards.push(card)
+  selectedCardId.value = card.id
+  activeLogTab.value = 'deploy'
+  ensureTick()
+  try {
+    const dto = await startRollback({
+      buildName: row.buildName,
+      buildType: row.buildType,
+      targetOS: row.targetOS,
+      siteName: row.siteName,
+      host: row.host,
+      userName: 'root',
+      password,
+    })
+    card.deployJobId = dto.id
+    card.deployStatus = dto.status
+    card.deployProgress = dto.progress ?? 0
+    card.deployLog = dto.log || ''
+    startDeployPolling()
+    ElMessage.success('回滚任务已启动')
+  } catch (err: any) {
+    card.deployStatus = 'Failed'
+    card.deployEndTime = Date.now()
+    card.deployLog += `>> 回滚启动失败：${err?.message || '未知错误'}`
+    stopTickIfIdle()
+    notifyDone('回滚失败', row.buildName, 'error')
+  }
+}
+
+/**
+ * 卡片回滚：用卡片上次部署配置（lastDeployConfig）回滚到上一版本。
+ */
+async function rollbackCard(card: BuildCard) {
+  const cfg = card.lastDeployConfig
+  if (!cfg) {
+    ElMessage.warning(`【${card.name}】未记录部署配置，无法回滚（请先部署一次）`)
+    return
+  }
+  let password = ''
+  try {
+    const result = await getSshCredential(cfg.host, cfg.userName)
+    password = result?.password || ''
+  } catch { /* ignore */ }
+  if (!password) {
+    ElMessage.warning(`【${card.name}】本机未保存 SSH 密码，无法自动回滚（部署时勾选“记住密码”）`)
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将把【${card.name}】回滚到上一版本（当前版本转为备份，可再次回滚回来），确定继续吗？`,
+      '回滚到上一版本',
+      { confirmButtonText: '开始回滚', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  card.deployJobId = null
+  card.deployStatus = 'Running'
+  card.deployLog = '>> 手动回滚开始...\n'
+  card.deployStartTime = Date.now()
+  card.deployEndTime = null
+  card.deployProgress = 0
+  activeLogTab.value = 'deploy'
+  selectedCardId.value = card.id
+  ensureTick()
+  try {
+    const dto = await startRollback({
+      buildName: card.name,
+      buildType: card.type,
+      targetOS: cfg.targetOS,
+      siteName: cfg.siteName,
+      host: cfg.host,
+      userName: cfg.userName,
+      password,
+      deployPath: cfg.deployPath,
+      serviceName: cfg.serviceName,
+      remoteDir: cfg.remoteDir,
+      verifyHealth: cfg.verifyHealth,
+    })
+    card.deployJobId = dto.id
+    card.deployStatus = dto.status
+    card.deployProgress = dto.progress ?? 0
+    card.deployLog = dto.log || card.deployLog
+    startDeployPolling()
+    ElMessage.success(`【${card.name}】回滚任务已启动`)
+  } catch (err: any) {
+    card.deployStatus = 'Failed'
+    card.deployEndTime = Date.now()
+    card.deployLog += `>> 回滚启动失败：${err?.message || '未知错误'}`
+    stopTickIfIdle()
+    notifyDone('回滚失败', card.name, 'error')
   }
 }
 
@@ -1008,6 +1507,13 @@ interface BuildTemplate {
 const TEMPLATES_KEY = 'universal-build-templates-v1'
 const templates = ref<BuildTemplate[]>([])
 const templateVisible = ref(false)
+/** 模板库抽屉当前页签：build = 构建模板，deploy = 部署模板 */
+const templateTab = ref('build')
+
+/** 统计部署模板被多少张构建卡片引用（模板库展示用） */
+function countTemplateUsage(id: string) {
+  return cards.filter((c) => c.deployTemplateId === id).length
+}
 
 function loadTemplates() {
   try {
@@ -1043,8 +1549,8 @@ function saveCardAsTemplate(card: BuildCard) {
 /** 从模板新建卡片（自动套用模板配置） */
 function addCardFromTemplate(tpl: BuildTemplate) {
   const card = reactive(createCard())
-  card.name = tpl.name
   card.type = tpl.type
+  card.name = `[${typeShortLabelMap[tpl.type] || tpl.type}] ${tpl.name}`
   card.projectDir = tpl.projectDir
   card.outputDir = tpl.outputDir
   card.outputDirCustom = !!tpl.outputDir
@@ -1056,6 +1562,186 @@ function addCardFromTemplate(tpl: BuildTemplate) {
 function removeTemplate(id: string) {
   templates.value = templates.value.filter((t) => t.id !== id)
   saveTemplates()
+}
+
+// ============================ 部署模版 ============================
+
+const DEPLOY_TEMPLATES_KEY = 'universal-deploy-templates-v1'
+const deployTemplates = ref<DeployTemplate[]>([])
+/** 部署弹窗当前选中的模版（空 = 手动填写） */
+const selectedDeployTemplateId = ref('')
+
+function loadDeployTemplates() {
+  try {
+    deployTemplates.value = JSON.parse(localStorage.getItem(DEPLOY_TEMPLATES_KEY) || '[]')
+  } catch {
+    deployTemplates.value = []
+  }
+}
+
+function saveDeployTemplates() {
+  try {
+    localStorage.setItem(DEPLOY_TEMPLATES_KEY, JSON.stringify(deployTemplates.value))
+  } catch { /* ignore */ }
+}
+
+/** 选中模版：填充全部表单字段（填充不锁定，仍可修改），并回填本机保存的密码 */
+async function onDeployTemplateChange(id: string) {
+  if (!id) return // 清空选择 = 取消关联，不清空已填表单
+  const tpl = deployTemplates.value.find((t) => t.id === id)
+  if (!tpl) return
+  applyingTemplate = true
+  deployForm.targetOS = tpl.targetOS
+  deployForm.siteName = tpl.siteName
+  deployForm.serviceName = tpl.serviceName
+  deployForm.remoteDir = tpl.remoteDir
+  deployForm.archiveName = tpl.archiveName
+  deployForm.deployPath = tpl.deployPath
+  deployForm.verifyHealth = tpl.verifyHealth
+  deployForm.keepDatabase = tpl.keepDatabase
+  deployForm.host = tpl.host
+  deployForm.userName = tpl.userName
+  fillSavedPassword()
+  // 联动 watch 在微任务中触发，nextTick 后再解除标志
+  await nextTick()
+  applyingTemplate = false
+  // 模版已填齐必填项，清掉残留的验证错误提示
+  deployFormRef.value?.clearValidate()
+}
+
+/** 把当前表单配置存为部署模版（不含密码） */
+async function saveDeployTemplate() {
+  if (!deployForm.host.trim()) {
+    ElMessage.warning('请先填写服务器地址再存为模版')
+    return
+  }
+  let name = ''
+  try {
+    const { value } = await ElMessageBox.prompt('输入部署模版名称', '存为部署模版', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: `${deployForm.targetOS === 'Linux' ? 'Linux' : 'Win'}-${deployForm.siteName.trim() || 'convenient'}`,
+      inputPattern: /\S+/,
+      inputErrorMessage: '名称不能为空',
+    })
+    name = value.trim()
+  } catch {
+    return // 用户取消
+  }
+  const tpl: DeployTemplate = {
+    id: crypto.randomUUID(),
+    name,
+    targetOS: deployForm.targetOS,
+    siteName: deployForm.siteName,
+    serviceName: deployForm.serviceName.trim(),
+    remoteDir: deployForm.remoteDir.trim(),
+    archiveName: deployForm.archiveName.trim(),
+    deployPath: deployForm.deployPath.trim(),
+    verifyHealth: deployForm.verifyHealth,
+    keepDatabase: deployForm.keepDatabase,
+    host: deployForm.host.trim(),
+    userName: deployForm.userName.trim(),
+  }
+  deployTemplates.value.push(tpl)
+  saveDeployTemplates()
+  selectedDeployTemplateId.value = tpl.id
+  ElMessage.success(`部署模版「${name}」已保存`)
+}
+
+/** 删除选中的部署模版（引用它的卡片同步解绑，自动部署回退“上次部署配置”） */
+async function removeDeployTemplateById(id: string) {
+  const tpl = deployTemplates.value.find((t) => t.id === id)
+  if (!tpl) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除部署模版「${tpl.name}」吗？引用它的卡片将回退为“用上次部署配置”`,
+      '删除模版',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  deployTemplates.value = deployTemplates.value.filter((t) => t.id !== tpl.id)
+  saveDeployTemplates()
+  selectedDeployTemplateId.value = ''
+  for (const c of cards) {
+    if (c.deployTemplateId === tpl.id) c.deployTemplateId = ''
+  }
+  ElMessage.success('模版已删除')
+}
+
+// ============================ 输入框聚焦悬浮加宽 ============================
+
+let inputMeasureCtx: CanvasRenderingContext2D | null = null
+
+/** 按输入框当前字体测量文本像素宽度（用于估算悬浮展开宽度） */
+function measureInputText(text: string, font: string) {
+  if (!inputMeasureCtx) {
+    inputMeasureCtx = document.createElement('canvas').getContext('2d')
+  }
+  if (!inputMeasureCtx) return text.length * 8
+  inputMeasureCtx.font = font
+  return inputMeasureCtx.measureText(text).width
+}
+
+/**
+ * 卡片内长文本输入框（任务名 / 项目目录 / 输出目录）聚焦时悬浮加宽：
+ * 按内容实际宽度展开并浮在上层（不推挤卡片布局），失焦还原。
+ * 所在卡片整体抬到 1900 层（inline 样式优先级最高，且低于 Element Plus 弹层的 2000+），
+ * 避免展开部分被相邻卡片盖住；右侧空间不足时改为向左展开，不伸出视口。
+ */
+function expandInputOnFocus(e: FocusEvent) {
+  const inner = e.target as HTMLInputElement
+  const box = inner.closest('.el-input') as HTMLElement | null
+  if (!box) return
+  // 抬高所在卡片层级并允许内容伸出边界
+  const card = inner.closest('.build-card') as HTMLElement | null
+  if (card) {
+    card.style.zIndex = '1900'
+    card.style.overflow = 'visible'
+  }
+  const text = inner.value || inner.placeholder || ''
+  const font = getComputedStyle(inner).font || '12px sans-serif'
+  // 余量覆盖前后 padding、suffix 图标与 append 按钮
+  const need = measureInputText(text, font) + 96
+  const rect = box.getBoundingClientRect()
+  // 向右展开的可用宽度（右侧留 24px 视口边距）
+  const rightSpace = window.innerWidth - rect.left - 24
+  if (rightSpace >= 320) {
+    // 右侧空间充足：左对齐原位向右展开
+    const width = Math.ceil(Math.min(900, rightSpace, Math.max(320, need, rect.width)))
+    box.style.position = 'absolute'
+    box.style.top = '0'
+    box.style.left = '0'
+    box.style.width = `${width}px`
+  } else {
+    // 卡片贴近视口右缘：右对齐原位向左展开（宽度不低于原宽，保证只增不减）
+    const leftSpace = rect.left - 24
+    const width = Math.max(rect.width, Math.ceil(Math.min(900, Math.max(320, need), leftSpace)))
+    box.style.position = 'absolute'
+    box.style.top = '0'
+    box.style.right = '0'
+    box.style.width = `${width}px`
+  }
+  box.style.zIndex = '30'
+  box.style.background = '#fff'
+  box.style.borderRadius = '4px'
+  box.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.15)'
+}
+
+/** 输入框失焦：清除悬浮样式，还原卡片内常规布局与层级 */
+function shrinkInputOnBlur(e: FocusEvent) {
+  const inner = e.target as HTMLInputElement
+  const box = inner.closest('.el-input') as HTMLElement | null
+  if (!box) return
+  for (const prop of ['position', 'top', 'left', 'right', 'width', 'z-index', 'background', 'border-radius', 'box-shadow']) {
+    box.style.removeProperty(prop)
+  }
+  const card = inner.closest('.build-card') as HTMLElement | null
+  if (card) {
+    card.style.removeProperty('z-index')
+    card.style.removeProperty('overflow')
+  }
 }
 
 // ============================ 定时构建 ============================
@@ -1149,7 +1835,7 @@ function ensureTick() {
 }
 
 function stopTickIfIdle() {
-  const busy = cards.some(c => c.status === 'Running' || c.deployStatus === 'Running')
+  const busy = cards.some(c => c.status === 'Running' || c.status === 'Waiting' || c.deployStatus === 'Running')
   if (!busy && tickTimer) {
     clearInterval(tickTimer)
     tickTimer = null
@@ -1170,7 +1856,7 @@ function formatElapsed(ms: number): string {
 /** 构建耗时：进行中实时跳动，结束后固定 */
 function buildElapsed(card: BuildCard): string {
   if (!card.startTime) return ''
-  const end = card.status === 'Running' ? nowTick.value : (card.endTime ?? nowTick.value)
+  const end = (card.status === 'Running' || card.status === 'Waiting') ? nowTick.value : (card.endTime ?? nowTick.value)
   return formatElapsed(end - card.startTime)
 }
 
@@ -1233,7 +1919,7 @@ watch(
   async () => {
     if (!selectedCard.value) return
     const isDeployRunning = selectedCard.value.deployStatus === 'Running'
-    const isBuildRunning = selectedCard.value.status === 'Running'
+    const isBuildRunning = selectedCard.value.status === 'Running' || selectedCard.value.status === 'Waiting'
     if (!isDeployRunning && !isBuildRunning) return
     if (!logAutoFollow.value) return
     await nextTick()
@@ -1244,6 +1930,8 @@ watch(
 )
 
 onMounted(() => {
+  // 打开页面即检测本地构建环境，并默认弹出检测结果弹窗
+  envVisible.value = true
   loadEnvironment()
   // 恢复上次的卡片配置（没有存档时给一张默认卡片）
   if (!restoreCards()) {
@@ -1251,6 +1939,7 @@ onMounted(() => {
   }
   restoreDeployRemember()
   loadTemplates()
+  loadDeployTemplates()
   loadSchedules()
   // 尝试授权系统通知（页面在后台时构建/部署完成可弹系统通知；失败不影响功能）
   try {
@@ -1268,16 +1957,28 @@ onUnmounted(() => {
 
 <template>
   <div class="universal-build-page">
-    <!-- 环境检测（默认展开） -->
-    <el-collapse v-model="envCollapse" class="env-collapse">
-      <el-collapse-item name="env">
-        <template #title>
-          <div class="env-header">
-            <span class="env-title">本地构建环境</span>
-            <el-button :loading="envLoading" link type="primary" @click.stop="loadEnvironment">重新检测</el-button>
-          </div>
-        </template>
-        <div class="env-list">
+    <!-- 导入配置的隐藏文件选择框 -->
+    <input ref="importFileInput" type="file" accept=".json,application/json" style="display: none" @change="importConfig" />
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <el-button :icon="Monitor" :loading="envLoading" @click="openEnvDialog">环境检测</el-button>
+      <el-button :icon="VideoPlay" @click="buildAll">全部构建</el-button>
+      <el-button :icon="Collection" @click="templateVisible = true">模板库</el-button>
+      <el-button :icon="Clock" @click="openHistory">部署历史</el-button>
+      <el-button :icon="Download" @click="exportConfig">导出配置</el-button>
+      <el-button :icon="Upload" @click="triggerImport">导入配置</el-button>
+      <el-button type="primary" :icon="Plus" @click="addCard">新增构建</el-button>
+      <el-button type="success" :icon="UploadFilled" @click="openDeployOnlyDialog">部署到服务器</el-button>
+    </div>
+
+    <!-- 环境检测弹窗：页面打开时默认弹出 -->
+    <el-dialog v-model="envVisible" title="本地构建环境" width="720px">
+      <div class="env-dialog-toolbar">
+        <span class="env-dialog-summary">检测各构建类型依赖的本地工具链，缺失工具可点「去下载」安装</span>
+        <el-button size="small" :loading="envLoading" link type="primary" @click="loadEnvironment">重新检测</el-button>
+      </div>
+      <div class="env-list">
         <div
           v-for="item in envInfo"
           :key="item.type"
@@ -1294,18 +1995,8 @@ onUnmounted(() => {
             <el-button size="small" type="primary" link @click="openDownload(item.downloadUrl)">去下载</el-button>
           </div>
         </div>
-        </div>
-      </el-collapse-item>
-    </el-collapse>
-
-    <!-- 工具栏 -->
-    <div class="toolbar">
-      <el-button type="primary" :icon="Plus" @click="addCard">新增构建</el-button>
-      <el-button :icon="VideoPlay" @click="buildAll">全部构建</el-button>
-      <el-button :icon="Collection" @click="templateVisible = true">模板库</el-button>
-      <el-button :icon="Clock" @click="openHistory">部署历史</el-button>
-      <el-button type="success" :icon="UploadFilled" @click="openDeployOnlyDialog">部署到服务器</el-button>
-    </div>
+      </div>
+    </el-dialog>
 
     <!-- 构建卡片 -->
     <div class="build-cards">
@@ -1313,14 +2004,16 @@ onUnmounted(() => {
         v-for="card in cards"
         :key="card.id"
         class="build-card"
-        :class="{ selected: selectedCardId === card.id, running: card.status === 'Running' }"
+        :class="{ selected: selectedCardId === card.id, running: card.status === 'Running' || card.status === 'Waiting' }"
         shadow="hover"
         :body-style="{ padding: '12px' }"
         @click="selectCard(card)"
       >
         <div class="card-header">
-          <el-input v-model="card.name" size="small" placeholder="任务名称" class="card-name-input" :style="{ '--name-color': typeColor(card.type) }" @input="onNameChange(card)" />
-          <el-select v-model="card.type" size="small" class="type-select" @change="onTypeChange(card)">
+          <div class="name-input-wrap">
+            <el-input v-model="card.name" size="small" placeholder="任务名称" class="card-name-input" :style="{ '--name-color': typeColor(card.type) }" :disabled="isRunning(card)" @input="onNameChange(card)" @focus="expandInputOnFocus" @blur="shrinkInputOnBlur" />
+          </div>
+          <el-select v-model="card.type" size="small" class="type-select" :disabled="isRunning(card)" @change="onTypeChange(card)">
             <el-option
               v-for="opt in typeOptions"
               :key="opt.value"
@@ -1328,67 +2021,81 @@ onUnmounted(() => {
               :value="opt.value"
             />
           </el-select>
-          <el-tooltip content="存为模板" placement="top">
+          <el-tooltip v-if="!isRunning(card)" content="存为模板" placement="top">
             <el-icon class="header-icon" @click.stop="saveCardAsTemplate(card)"><Collection /></el-icon>
           </el-tooltip>
-          <el-tooltip content="定时构建" placement="top">
+          <el-tooltip v-if="!isRunning(card)" content="定时构建" placement="top">
             <el-icon class="header-icon" :class="{ active: !!getSchedule(card) }" @click.stop="openScheduleDialog(card)"><AlarmClock /></el-icon>
           </el-tooltip>
-          <el-tooltip content="删除卡片" placement="top">
+          <el-tooltip v-if="!isRunning(card)" content="删除卡片" placement="top">
             <el-icon class="header-icon danger" @click.stop="removeCard(card.id)"><Delete /></el-icon>
           </el-tooltip>
         </div>
 
         <div class="card-field">
           <div class="field-label">项目目录</div>
-          <el-input v-model="card.projectDir" placeholder="请选择项目目录" readonly size="small">
-            <template #append>
-              <el-button type="primary" :icon="FolderOpened" @click.stop="pickProjectDir(card)">选择</el-button>
-            </template>
-          </el-input>
+          <div class="field-input-wrap">
+            <el-input v-model="card.projectDir" placeholder="请选择项目目录" readonly size="small" @focus="expandInputOnFocus" @blur="shrinkInputOnBlur">
+              <template #append>
+                <el-button type="primary" :icon="FolderOpened" :disabled="isRunning(card)" @click.stop="pickProjectDir(card)">选择</el-button>
+              </template>
+            </el-input>
+          </div>
         </div>
 
         <div class="card-field">
           <div class="field-label">输出目录</div>
-          <el-input v-model="card.outputDir" class="output-dir-input" placeholder="默认输出路径" readonly size="small">
-            <template #append>
-              <el-button :icon="FolderOpened" @click.stop="pickOutputDir(card)">选择</el-button>
-            </template>
-            <template #suffix>
-              <el-tooltip content="复制路径" placement="top">
-                <el-icon class="copy-icon" @click.stop="copyPath(card.outputDir)"><DocumentCopy /></el-icon>
-              </el-tooltip>
-              <el-tooltip content="打开目录" placement="top">
-                <el-icon class="copy-icon" @click.stop="openOutputDir(card)"><Folder /></el-icon>
-              </el-tooltip>
-            </template>
-          </el-input>
-        </div>
-
-        <div class="card-meta">
-          <div class="card-env">
-            <template v-if="envStatusForCard(card).ok">
-              <el-tag type="success" size="small" effect="light">环境正常</el-tag>
-            </template>
-            <template v-else>
-              <el-tag type="danger" size="small" effect="light">缺少 {{ envStatusForCard(card).missing.map(x => x.name).join('、') }}</el-tag>
-            </template>
-          </div>
-          <div class="card-status">
-            <el-tag :type="statusType(card.status)" size="small" effect="light">{{ statusText(card.status) }}</el-tag>
-            <el-tag v-if="card.deployStatus" :type="deployStatusType(card.deployStatus)" size="small" effect="dark" style="margin-left: 4px;">{{ deployStatusText(card.deployStatus) }}</el-tag>
+          <div class="field-input-wrap">
+            <el-input v-model="card.outputDir" class="output-dir-input" placeholder="默认输出路径" readonly size="small" @focus="expandInputOnFocus" @blur="shrinkInputOnBlur">
+              <template #append>
+                <el-button :icon="FolderOpened" :disabled="isRunning(card)" @click.stop="pickOutputDir(card)">选择</el-button>
+              </template>
+              <template #suffix>
+                <el-tooltip content="复制路径" placement="top">
+                  <el-icon class="copy-icon" @click.stop="copyPath(card.outputDir)"><DocumentCopy /></el-icon>
+                </el-tooltip>
+                <el-tooltip content="打开目录" placement="top">
+                  <el-icon class="copy-icon" @click.stop="openOutputDir(card)"><Folder /></el-icon>
+                </el-tooltip>
+              </template>
+            </el-input>
           </div>
         </div>
 
-        <!-- 结果摘要：耗时 / 产物大小 / 部署耗时 -->
-        <div v-if="buildElapsed(card) || card.artifactSize || deployElapsed(card)" class="card-result">
+        <!-- 构建行为选项：拉取最新代码 / 成功后自动部署 + 自动部署模版（构建中锁定） -->
+        <div class="card-options">
+          <el-checkbox v-model="card.prePull" size="small" :disabled="isRunning(card)" @click.stop>构建前 git pull</el-checkbox>
+          <el-checkbox v-model="card.autoDeploy" size="small" :disabled="isRunning(card)" @click.stop>成功后自动部署</el-checkbox>
+          <el-select
+            v-if="card.autoDeploy && deployTemplates.length > 0"
+            v-model="card.deployTemplateId"
+            size="small"
+            :disabled="isRunning(card)"
+            placeholder="不选=用上次配置"
+            class="deploy-template-select"
+            @click.stop
+          >
+            <el-option label="不选模版（用上次部署配置）" value="" />
+            <el-option v-for="t in deployTemplates" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </div>
+
+        <!-- 状态标记 + 结果摘要：耗时 / 产物大小 / 部署耗时 -->
+        <div v-if="card.status || card.deployStatus || buildElapsed(card) || card.artifactSize || deployElapsed(card)" class="card-result">
+          <el-tag v-if="!isRunning(card)" :type="statusType(card.status)" size="small" effect="light">{{ statusText(card.status) }}</el-tag>
+          <el-tag v-if="card.deployStatus" :type="deployStatusType(card.deployStatus)" size="small" effect="dark">{{ deployStatusText(card.deployStatus) }}</el-tag>
           <span v-if="buildElapsed(card)">构建耗时 {{ buildElapsed(card) }}</span>
           <span v-if="card.artifactSize">产物 {{ formatSize(card.artifactSize) }}</span>
           <span v-if="deployElapsed(card)">部署耗时 {{ deployElapsed(card) }}</span>
         </div>
 
-        <div v-if="card.status === 'Running'" class="card-progress">
+        <div v-if="card.status === 'Running' || card.status === 'Waiting'" class="card-progress">
           <el-progress :percentage="card.progress" :stroke-width="6" :show-text="true" />
+        </div>
+
+        <!-- 部署进度条（橙色）：上传段按字节实时推进 -->
+        <div v-if="card.deployStatus === 'Running'" class="card-progress">
+          <el-progress :percentage="card.deployProgress" :stroke-width="6" :show-text="true" status="warning" />
         </div>
 
         <div class="card-actions">
@@ -1398,7 +2105,7 @@ onUnmounted(() => {
             :loading="isRunning(card)"
             :icon="(card.status === 'Failed' || card.status === 'Cancelled') ? RefreshRight : undefined"
             @click.stop="startBuild(card)"
-          >{{ (card.status === 'Failed' || card.status === 'Cancelled') ? '重试' : '开始构建' }}</el-button>
+          >{{ card.status === 'Waiting' ? (card.queuePosition > 1 ? `排队中 #${card.queuePosition}` : '排队中...') : isRunning(card) ? '构建中...' : (card.status === 'Failed' || card.status === 'Cancelled') ? '重试' : '开始构建' }}</el-button>
           <el-button
             v-if="card.deployStatus === 'Success'"
             type="success"
@@ -1407,8 +2114,9 @@ onUnmounted(() => {
             :icon="Link"
             @click.stop="openSite(card)"
           >打开站点</el-button>
-          <el-button v-if="card.status === 'Running'" type="danger" size="small" plain @click.stop="cancelBuild(card)">取消构建</el-button>
+          <el-button v-if="card.status === 'Running' || card.status === 'Waiting'" type="danger" size="small" plain @click.stop="cancelBuild(card)">取消构建</el-button>
           <el-button v-if="card.deployStatus === 'Running'" type="danger" size="small" plain @click.stop="cancelDeployAction(card)">取消部署</el-button>
+          <el-button v-if="card.deployStatus === 'Success' && card.lastDeployConfig" type="warning" size="small" plain :icon="RefreshLeft" :disabled="card.status === 'Running' || card.status === 'Waiting'" @click.stop="rollbackCard(card)">回滚</el-button>
           <el-button
             v-if="card.status === 'Success'"
             type="warning"
@@ -1434,6 +2142,19 @@ onUnmounted(() => {
               </span>
             </el-tab-pane>
           </el-tabs>
+          <!-- 日志过滤：类型快捷筛选 + 关键字，统计显示行数 -->
+          <div class="log-filter">
+            <span v-if="logFilterStat && (logFilter || logFilterType)" class="log-filter-stat">
+              {{ logFilterStat.shown }}/{{ logFilterStat.total }} 行
+            </span>
+            <el-radio-group v-model="logFilterType" size="small">
+              <el-radio-button value="">全部</el-radio-button>
+              <el-radio-button value="error">❌</el-radio-button>
+              <el-radio-button value="warn">⚠</el-radio-button>
+              <el-radio-button value="success">✓</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="logFilter" size="small" clearable placeholder="过滤关键字" class="log-filter-input" />
+          </div>
           <!-- 复制当前标签页完整日志（剥离 ANSI 转义码后的纯文本） -->
           <el-tooltip content="复制完整日志" placement="top">
             <el-button :icon="DocumentCopy" size="small" text type="primary" @click="copyLog" />
@@ -1442,7 +2163,7 @@ onUnmounted(() => {
       </template>
       <div ref="logTerminalRef" class="log-terminal" @scroll="onLogScroll">
         <template v-if="activeLogTab === 'build'">
-          <pre v-if="selectedCard?.log" v-html="formatLogHtml(selectedCard.log)"></pre>
+          <pre v-if="selectedCard?.log || selectedCard?.preLog" v-html="formatLogHtml((selectedCard?.preLog || '') + (selectedCard?.log || ''))"></pre>
           <el-empty v-else description="暂无构建日志" />
         </template>
         <template v-else>
@@ -1465,8 +2186,18 @@ onUnmounted(() => {
 
     <!-- 部署弹窗 -->
     <el-dialog v-model="deployDialogVisible" title="部署构建产物" width="560px" :close-on-click-modal="false">
-      <el-form label-width="90px" size="small">
-        <el-form-item label="部署目录">
+      <el-form ref="deployFormRef" :model="deployForm" :rules="deployFormRules" label-width="90px" size="small" class="deploy-form">
+        <el-form-item label="部署模版">
+          <div class="template-row">
+            <el-select v-model="selectedDeployTemplateId" placeholder="不使用模版，手动填写" clearable @change="onDeployTemplateChange">
+              <el-option v-for="t in deployTemplates" :key="t.id" :label="t.name" :value="t.id" />
+            </el-select>
+            <el-button size="small" @click="saveDeployTemplate">存为模版</el-button>
+            <el-button size="small" type="danger" plain :icon="Delete" :disabled="!selectedDeployTemplateId" @click="removeDeployTemplateById(selectedDeployTemplateId)" />
+          </div>
+          <div class="form-hint">选择模版自动填充下方全部配置（填充后仍可修改）；手动填好的配置也可存为模版复用</div>
+        </el-form-item>
+        <el-form-item label="部署目录" prop="outputDir">
           <el-input v-if="deployReadOnlyDir" :model-value="deployForm.outputDir" readonly>
             <template #suffix>
               <el-tooltip content="打开目录" placement="top">
@@ -1493,7 +2224,7 @@ onUnmounted(() => {
           </el-radio-group>
           <div class="form-hint">Linux 通过 SSH + Docker Compose 部署；Windows 通过 SSH + Windows 服务/IIS 部署</div>
         </el-form-item>
-        <el-form-item label="站点名称">
+        <el-form-item label="站点名称" prop="siteName">
           <el-input v-model="deployForm.siteName" placeholder="如 convenient" />
           <div class="site-exists-hint" :class="{ exists: siteExistsInfo?.exists, new: !siteExistsInfo?.exists }">
             {{ siteExistsInfo?.message || ' ' }}
@@ -1512,17 +2243,20 @@ onUnmounted(() => {
           <el-input v-model="deployForm.archiveName" :placeholder="`留空自动生成 {站点名}-{服务名}${archiveExtension(deployForm.targetOS)}`" />
           <div class="form-hint">上传用的临时压缩包名，固定命名可覆盖旧包，不会叠加文件</div>
         </el-form-item>
-        <el-form-item label="服务器地址">
+        <el-form-item label="服务器地址" prop="host">
           <el-input v-model="deployForm.host" placeholder="如 123.56.68.132" />
           <div class="form-hint">目标服务器的公网 IP 或域名，用于 SSH/SFTP 连接</div>
         </el-form-item>
-        <el-form-item label="SSH用户名">
+        <el-form-item label="SSH用户名" prop="userName">
           <el-input v-model="deployForm.userName" placeholder="如 root" />
           <div class="form-hint">具有 SSH/SFTP 权限的登录用户，Linux 服务器通常为 root</div>
         </el-form-item>
-        <el-form-item label="SSH密码">
-          <el-input v-model="deployForm.password" type="password" show-password placeholder="输入 SSH 登录密码" />
-          <div class="form-hint">对应 SSH 用户的登录密码，仅用于本次部署连接</div>
+        <el-form-item label="SSH密码" prop="password">
+          <div class="password-row">
+            <el-input v-model="deployForm.password" type="password" show-password placeholder="输入 SSH 登录密码" />
+            <el-checkbox v-model="deployForm.rememberPassword">记住密码</el-checkbox>
+          </div>
+          <div class="form-hint">对应 SSH 用户的登录密码；勾选“记住密码”后 DPAPI 加密保存在本机，下次自动回填</div>
         </el-form-item>
         <el-form-item label="部署路径">
           <el-input v-model="deployForm.deployPath" placeholder="留空使用默认路径" />
@@ -1561,22 +2295,47 @@ onUnmounted(() => {
         <el-table-column label="耗时" width="62">
           <template #default="{ row }">{{ formatElapsed(row.durationSeconds * 1000) }}</template>
         </el-table-column>
+        <el-table-column label="操作" width="72">
+          <template #default="{ row }">
+            <el-button size="small" type="warning" plain @click="rollbackFromHistory(row)">回滚</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </el-drawer>
 
-    <!-- 模板库抽屉 -->
-    <el-drawer v-model="templateVisible" title="构建模板库" size="480px">
-      <div v-if="templates.length === 0" class="template-empty">
-        暂无模板。点击卡片标题栏的收藏图标，可把当前配置存为模板，下次一键新建。
-      </div>
-      <div v-for="tpl in templates" :key="tpl.id" class="template-item">
-        <div class="template-info">
-          <div class="template-name" :style="{ color: typeColor(tpl.type) }">{{ tpl.name }}</div>
-          <div class="template-meta" :title="tpl.projectDir">{{ typeLabelMap[tpl.type] }} · {{ tpl.projectDir }}</div>
-        </div>
-        <el-button size="small" type="primary" @click="addCardFromTemplate(tpl)">新建</el-button>
-        <el-button size="small" type="danger" plain :icon="Delete" @click="removeTemplate(tpl.id)" />
-      </div>
+    <!-- 模板库抽屉：构建模板 + 部署模板 -->
+    <el-drawer v-model="templateVisible" title="模板库" size="480px">
+      <el-tabs v-model="templateTab" class="template-tabs">
+        <el-tab-pane :label="`构建模板 (${templates.length})`" name="build">
+          <div v-if="templates.length === 0" class="template-empty">
+            暂无构建模板。点击卡片标题栏的收藏图标，可把当前配置存为模板，下次一键新建。
+          </div>
+          <div v-for="tpl in templates" :key="tpl.id" class="template-item">
+            <div class="template-info">
+              <div class="template-name" :style="{ color: typeColor(tpl.type) }">{{ tpl.name }}</div>
+              <div class="template-meta" :title="tpl.projectDir">{{ typeLabelMap[tpl.type] }} · {{ tpl.projectDir }}</div>
+            </div>
+            <el-button size="small" type="primary" @click="addCardFromTemplate(tpl)">新建</el-button>
+            <el-button size="small" type="danger" plain :icon="Delete" @click="removeTemplate(tpl.id)" />
+          </div>
+        </el-tab-pane>
+        <el-tab-pane :label="`部署模板 (${deployTemplates.length})`" name="deploy">
+          <div v-if="deployTemplates.length === 0" class="template-empty">
+            暂无部署模板。在部署弹窗中填好配置后点「存为模版」，构建卡片的自动部署可直接引用。
+          </div>
+          <div v-for="tpl in deployTemplates" :key="tpl.id" class="template-item">
+            <div class="template-info">
+              <div class="template-name">
+                <el-tag :type="tpl.targetOS === 'Linux' ? 'success' : 'primary'" size="small" effect="light">{{ tpl.targetOS === 'Linux' ? 'Linux' : 'Win' }}</el-tag>
+                <span class="deploy-tpl-name">{{ tpl.name }}</span>
+              </div>
+              <div class="template-meta" :title="`${tpl.host} · ${tpl.deployPath}`">{{ tpl.siteName || '未填站点' }} · {{ tpl.host }}</div>
+              <div class="template-meta">引用卡片：{{ countTemplateUsage(tpl.id) }} 张</div>
+            </div>
+            <el-button size="small" type="danger" plain :icon="Delete" @click="removeDeployTemplateById(tpl.id)" />
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-drawer>
 
     <!-- 定时构建弹窗 -->
@@ -1625,38 +2384,17 @@ onUnmounted(() => {
   margin-bottom: 0;
 }
 
-/* 环境检测折叠面板 */
-.env-collapse {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
-}
-
-.env-collapse :deep(.el-collapse-item__header) {
-  padding: 0 16px;
-  height: 44px;
-  border-bottom: none;
-}
-
-.env-collapse :deep(.el-collapse-item__wrap) {
-  padding: 0 16px 12px;
-}
-
-.env-collapse :deep(.el-collapse-item__content) {
-  padding-bottom: 0;
-}
-
-.env-header {
+/* 环境检测弹窗：顶部说明 + 重新检测 */
+.env-dialog-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
-  margin-bottom: 0;
+  margin-bottom: 12px;
 }
 
-.env-title {
-  font-weight: 600;
-  font-size: 15px;
+.env-dialog-summary {
+  font-size: 12px;
+  color: #909399;
 }
 
 .env-list {
@@ -1724,10 +2462,17 @@ onUnmounted(() => {
 }
 
 .build-card {
+  position: relative;
   border-radius: 8px;
   cursor: pointer;
   transition: box-shadow 0.2s, border-color 0.2s;
   border: 1px solid transparent;
+}
+
+/* 输入框聚焦悬浮期间：允许伸出卡片边界展示完整内容，并盖在相邻卡片之上 */
+.build-card:focus-within {
+  overflow: visible;
+  z-index: 5;
 }
 
 .build-card:hover {
@@ -1750,9 +2495,22 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
-.card-name-input {
+/* 任务名输入框定位包裹层：聚焦悬浮加宽时不挤压同行元素 */
+.name-input-wrap {
   flex: 1;
   min-width: 0;
+  position: relative;
+  height: 24px;
+}
+
+/* 目录输入框定位包裹层：悬浮展开时行高固定，下方内容不跳动 */
+.field-input-wrap {
+  position: relative;
+  height: 24px;
+}
+
+.card-name-input {
+  width: 100%;
 }
 
 .card-name-input :deep(.el-input__inner) {
@@ -1786,9 +2544,10 @@ onUnmounted(() => {
   color: #e6a23c;
 }
 
-/* 结果摘要行：耗时/产物大小/部署耗时 */
+/* 状态标记 + 结果摘要行：标签/耗时/产物大小/部署耗时 */
 .card-result {
   display: flex;
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
   font-size: 12px;
@@ -1800,17 +2559,43 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
-.card-meta {
+/* 构建行为选项行（git pull / 自动部署 + 自动部署模版下拉） */
+.card-options {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-bottom: 8px;
 }
 
-.card-env,
-.card-status {
-  flex-shrink: 0;
+/* 卡片：自动部署模版下拉（独占整行，模版名完整显示） */
+.deploy-template-select {
+  width: 100%;
+  flex-basis: 100%;
+}
+
+/* 部署弹窗：模版选择与操作按钮并排 */
+.template-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.template-row .el-select {
+  flex: 1;
+}
+
+/* 部署弹窗：密码输入与“记住密码”并排 */
+.password-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.password-row .el-input {
+  flex: 1;
 }
 
 .field-label {
@@ -1841,10 +2626,6 @@ onUnmounted(() => {
   color: #409eff;
 }
 
-.card-env {
-  margin-bottom: 12px;
-}
-
 .card-progress {
   margin-bottom: 8px;
 }
@@ -1858,6 +2639,23 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+/* 日志过滤行：类型快捷按钮 + 关键字输入（构建/部署日志共用） */
+.log-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-filter-input {
+  width: 160px;
+}
+
+.log-filter-stat {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
 }
 
 /* 日志卡片：为“回到底部”悬浮按钮提供定位基准 */
@@ -1889,6 +2687,14 @@ onUnmounted(() => {
 }
 
 /* 模板库 */
+.template-tabs :deep(.el-tabs__content) {
+  padding-top: 4px;
+}
+
+.deploy-tpl-name {
+  margin-left: 6px;
+}
+
 .template-empty {
   color: #909399;
   font-size: 13px;
@@ -1950,6 +2756,12 @@ onUnmounted(() => {
 .log-terminal .log-step { color: #61afef; font-weight: 600; }
 .log-terminal .log-cmd { color: #abb2bf; background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 0 4px; }
 .log-terminal .log-cancel { color: #56b6c2; font-weight: 600; }
+
+/* 表单验证错误信息改为占位显示，避免与字段下方提示文字重叠 */
+.deploy-form :deep(.el-form-item__error) {
+  position: static;
+  padding-top: 2px;
+}
 
 /* 部署表单提示 */
 .form-hint {

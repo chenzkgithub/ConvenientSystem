@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import { getAttendance, getAttendanceDtl, getDailyRanking, getDeptTree } from '@/yunhan/api/attendance'
 import type { AttendanceRow, DeptNode, DeptViewRaw, RequestDto } from '@/yunhan/types'
 import CommonDialog from '@/common/components/CommonDialog.vue'
@@ -141,7 +142,7 @@ function collectParentIds(tree: DeptNode[], targetId: number): number[] {
   return ids
 }
 
-// 按人分组求和（以钉钉用户ID为键，避免同名人员被合并；同时保留 ddUserId/deptId 供查看明细精确定位）
+// 按人分组求和（以钉钉用户ID为键，避免同名人员被合并；同时保留 ddUserId/dingCode/deptId 供查看明细精确定位）
 function groupSum(list: AttendanceRow[]): AttendanceRow[] {
   const map = new Map<string, AttendanceRow>()
   list.forEach((row) => {
@@ -150,6 +151,7 @@ function groupSum(list: AttendanceRow[]): AttendanceRow[] {
       const base = {
         userName: row.userName,
         ddUserId: row.ddUserId,
+        dingCode: row.dingCode,
         avatar: row.avatar || '',
         hiredDate: row.hiredDate,
         employeeStatus: row.employeeStatus,
@@ -276,12 +278,21 @@ async function openDailyRanking() {
 }
 
 // ========== 钉钉跳转 ==========
-/** 返回钉钉 PC 客户端联系人详情页 URL Scheme */
+/** 返回钉钉 URL Scheme，通过 dingCode 打开聊天窗口 */
 function dingTalkUrl(row: AttendanceRow): string | null {
-  if (!row.ddUserId) return null
-  return row.corpId
-    ? `dingtalk://dingtalkclient/page/contacts?corpId=${row.corpId}&userId=${row.ddUserId}`
-    : `dingtalk://dingtalkclient/page/contacts?userId=${row.ddUserId}`
+  if (!row.dingCode) return null
+  return `dingtalk://dingtalkclient/action/sendmsg?spm=dingtalk_id=${row.dingCode}`
+}
+
+/** 点击姓名唤起钉钉：WebView2 走消息桥接，浏览器走 location.href */
+function openDingTalk(row: AttendanceRow) {
+  const url = dingTalkUrl(row)
+  if (!url) return
+  if ((window as any).chrome?.webview) {
+    (window as any).chrome.webview.postMessage({ type: 'scheme:open', url })
+  } else {
+    window.location.href = url
+  }
 }
 
 // ========== 初始化 ==========
@@ -365,15 +376,17 @@ onMounted(async () => {
               />
             </template>
           </el-table-column>
-          <el-table-column label="姓名" width="120">
+          <el-table-column label="姓名" width="140">
             <template #default="{ row }">
-              <a
-                v-if="dingTalkUrl(row)"
-                :href="dingTalkUrl(row)!"
-                class="dd-name-link"
-                @click.stop
-              >{{ row.userName }}</a>
-              <span v-else>{{ row.userName }}</span>
+              <div class="name-cell">
+                <span>{{ row.userName }}</span>
+                <el-icon
+                  v-if="dingTalkUrl(row)"
+                  class="dd-chat-icon"
+                  title="打开钉钉聊天"
+                  @click.stop="openDingTalk(row)"
+                ><ChatDotRound /></el-icon>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="部门" min-width="140">
@@ -467,15 +480,17 @@ onMounted(async () => {
             />
           </template>
         </el-table-column>
-        <el-table-column label="姓名" width="120">
+        <el-table-column label="姓名" width="140">
           <template #default="{ row }">
-            <a
-              v-if="dingTalkUrl(row)"
-              :href="dingTalkUrl(row)!"
-              class="dd-name-link"
-              @click.stop
-            >{{ row.userName }}</a>
-            <span v-else>{{ row.userName }}</span>
+            <div class="name-cell">
+              <span>{{ row.userName }}</span>
+              <el-icon
+                v-if="dingTalkUrl(row)"
+                class="dd-chat-icon"
+                title="打开钉钉聊天"
+                @click.stop="openDingTalk(row)"
+              ><ChatDotRound /></el-icon>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="部门" min-width="200">

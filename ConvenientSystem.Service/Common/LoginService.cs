@@ -155,21 +155,27 @@ namespace ConvenientSystem.Service.Common
                 .Where(ur => ur.UserId == userId)
                 .ToListAsync(ur => ur.RoleId);
 
-            if (roleIds.Count == 0)
-                return (new List<string>(), new List<string>(), false, DataScope.Self);
+            // 无角色不提前返回：用户可能只有用户级直接授权（SysUserMenu/SysUserViewPerm）。
+            // roleIds 为空时各角色查询返回空集，不影响用户级授权合并。
 
-            var roles = await _configDb.Select<SysRoleEntity>()
-                .Where(r => roleIds.Contains(r.Id) && r.Enabled)
-                .ToListAsync(r => new { r.Code, r.IsAdmin, r.DataScope });
+            var roles = roleIds.Count == 0
+                ? new List<(string Code, bool IsAdmin, int DataScope)>()
+                : (await _configDb.Select<SysRoleEntity>()
+                    .Where(r => roleIds.Contains(r.Id) && r.Enabled)
+                    .ToListAsync(r => new { r.Code, r.IsAdmin, r.DataScope }))
+                    .Select(r => (r.Code, r.IsAdmin, r.DataScope))
+                    .ToList();
 
             var roleCodes = roles.Select(r => r.Code).ToList();
             var isAdmin = roles.Any(r => r.IsAdmin || string.Equals(r.Code, JwtHelper.AdminRole, StringComparison.OrdinalIgnoreCase));
             var dataScope = roles.Any() ? (DataScope)roles.Max(r => r.DataScope) : DataScope.Self;
 
             // 角色菜单（SysRoleMenu）+ 用户级额外授权（SysUserMenu）取并集。
-            var roleMenuIds = await _configDb.Select<SysRoleMenuEntity>()
-                .Where(rm => roleIds.Contains(rm.RoleId))
-                .ToListAsync(rm => rm.MenuId);
+            var roleMenuIds = roleIds.Count == 0
+                ? new List<int>()
+                : await _configDb.Select<SysRoleMenuEntity>()
+                    .Where(rm => roleIds.Contains(rm.RoleId))
+                    .ToListAsync(rm => rm.MenuId);
 
             var userMenuIds = await _configDb.Select<SysUserMenuEntity>()
                 .Where(um => um.UserId == userId)

@@ -52,6 +52,7 @@ namespace ConvenientSystem.Service.YunHan
                     buv.full_code,
                     buv.dept_name as deptName,
                     duser.UserName,
+                    duser.DingCode as dingCode,
                     duser.hired_date as HiredDate,
                     bu.WorkDuration,
                     bu.LeaveDuration,
@@ -154,6 +155,7 @@ namespace ConvenientSystem.Service.YunHan
                 {
                     avatar = t.Max(t.Value.Item2.avatar),
                     DDUserId = t.Max(t.Value.Item2.DDUserId),
+                    dingCode = t.Max(t.Value.Item2.DingCode),
                     corpId = t.Max(t.Value.Item2.corpId),
                     employeeStatus = t.Max(t.Value.Item2.EmployeeStatus),
                     UserName = t.Value.Item2.UserName,

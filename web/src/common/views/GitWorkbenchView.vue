@@ -6,8 +6,9 @@ import {
 } from '@element-plus/icons-vue'
 import {
   addGitRepo, discoverGitRepos, getGitBranches, getGitChanges, getGitCommitDetail, getGitConfigList, getGitEnv, getGitFileDiff, getGitLog,
-  getGitMergeState, getGitRepos, getGitStatus, gitCancel, gitCheckout, gitClone, gitCommitChanges, gitConfigSet, gitDiscard,
-  gitExec, gitMerge, gitPull, gitPush, gitStage, gitStash, getGitStashList, gitStashPop, gitStashDrop, removeGitRepo,
+  getGitMergeState, getGitRepos, getGitReposHealth, getGitStatus, gitCancel, gitCheckout, gitClone, gitCommitChanges, gitConfigSet, gitDiscard,
+  gitExec, gitListRemoteBranches, gitMerge, gitPull, gitPush, gitStage, gitStash, getGitStashList, gitStashPop, gitStashDrop, removeGitRepo,
+  updateRepoGroup,
   type GitBranch, type GitChangeFile, type GitCommandResult, type GitCommitDetail, type GitConfigItem, type GitDiffFile,
   type GitDiscoveredRepo, type GitEnv, type GitFileDiff, type GitLogEntry, type GitMergeState, type GitRepoStatus, type GitStashEntry,
 } from '@/common/api/git'
@@ -37,25 +38,108 @@ function togglePin(path: string) {
   localStorage.setItem(PINS_KEY, JSON.stringify(pinnedPaths.value))
 }
 
-const filteredRepos = computed(() => {
+// ============================ 分组 ============================
+
+const GROUP_ORDER_KEY = 'git-workbench-group-order'
+const GROUP_EXPAND_KEY = 'git-workbench-group-expand'
+const REPO_ORDER_KEY = 'git-workbench-repo-order'
+
+function loadGroupOrder(): string[] {
+  try { return JSON.parse(localStorage.getItem(GROUP_ORDER_KEY) ?? '[]') } catch { return [] }
+}
+function saveGroupOrder(order: string[]) {
+  localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(order))
+}
+function loadGroupExpand(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(GROUP_EXPAND_KEY) ?? '{}') } catch { return {} }
+}
+function loadRepoOrder(): string[] {
+  try { return JSON.parse(localStorage.getItem(REPO_ORDER_KEY) ?? '[]') } catch { return [] }
+}
+function saveRepoOrder(order: string[]) {
+  localStorage.setItem(REPO_ORDER_KEY, JSON.stringify(order))
+}
+const groupOrder = ref<string[]>(loadGroupOrder())
+const groupExpand = ref<Record<string, boolean>>(loadGroupExpand())
+
+function toggleGroupExpand(group: string) {
+  groupExpand.value[group] = !groupExpand.value[group]
+  localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+}
+
+/** 过滤后的仓库按分组归类（无分组仓库不在此列，一级平铺） */
+const groupedRepos = computed(() => {
+  const q = repoSearch.value.trim().toLowerCase()
+  const list = q
+    ? repos.value.filter(r => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q))
+    : repos.value
+
+  // 按自定义顺序排序（置顶前置，其余按用户拖拽顺序）
+  const pinned = pinnedPaths.value
+  const repoOrd = loadRepoOrder()
+  const sorted = [...list].sort((a, b) => {
+    const ap = pinned.includes(a.path) ? 0 : 1
+    const bp = pinned.includes(b.path) ? 0 : 1
+    if (ap !== bp) return ap - bp
+    const ai = repoOrd.indexOf(a.path)
+    const bi = repoOrd.indexOf(b.path)
+    return (ai >= 0 ? ai : 9999) - (bi >= 0 ? bi : 9999)
+  })
+
+  // 按 group 分组（无分组仓库跳过，与分组同级一级显示）
+  const map = new Map<string, typeof sorted>()
+  for (const r of sorted) {
+    const g = r.group || ''
+    if (!g) continue
+    if (!map.has(g)) map.set(g, [])
+    map.get(g)!.push(r)
+  }
+
+  // 非搜索状态：groupOrder 中已创建但暂无仓库的空分组也显示（新建分组后可见，拖仓库进入）
+  if (!q) {
+    for (const g of groupOrder.value) {
+      if (g && !map.has(g)) map.set(g, [])
+    }
+  }
+
+  // 按 groupOrder 排序，未排序的分组追加到末尾
+  const order = groupOrder.value
+  const groups = [...map.keys()].sort((a, b) => {
+    const ai = order.indexOf(a)
+    const bi = order.indexOf(b)
+    return (ai >= 0 ? ai : 9999) - (bi >= 0 ? bi : 9999)
+  })
+
+  return groups.map(g => ({
+    name: g,
+    label: g,
+    repos: map.get(g)!,
+    expanded: groupExpand.value[g] !== false, // 默认展开
+  }))
+})
+
+/** 无分组仓库：与分组同级一级平铺（置顶前置 + 自定义排序） */
+const ungroupedRepos = computed(() => {
   const q = repoSearch.value.trim().toLowerCase()
   const list = q
     ? repos.value.filter(r => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q))
     : repos.value
   const pinned = pinnedPaths.value
-  return [...list].sort((a, b) => {
+  const repoOrd = loadRepoOrder()
+  return list.filter(r => !r.group).sort((a, b) => {
     const ap = pinned.includes(a.path) ? 0 : 1
     const bp = pinned.includes(b.path) ? 0 : 1
-    return ap - bp
+    if (ap !== bp) return ap - bp
+    const ai = repoOrd.indexOf(a.path)
+    const bi = repoOrd.indexOf(b.path)
+    return (ai >= 0 ? ai : 9999) - (bi >= 0 ? bi : 9999)
   })
 })
 
+const filteredRepos = computed(() => repos.value)
+
 /** 搜索结果中是否同时存在置顶和普通仓库（用于显示分隔线） */
-const hasPinDivider = computed(() => {
-  const pinned = pinnedPaths.value
-  return filteredRepos.value.some(r => pinned.includes(r.path)) &&
-         filteredRepos.value.some(r => !pinned.includes(r.path))
-})
+const hasPinDivider = computed(() => false)
 
 // ============================ 全屏 ============================
 
@@ -98,7 +182,8 @@ interface ContextMenuItem {
   danger?: boolean       // 红色危险项
   divider?: boolean      // 在本项上方显示分隔线
   disabled?: boolean
-  action: () => void
+  children?: ContextMenuItem[] // 子菜单（悬停展开，如「移动到分组」）
+  action?: () => void
 }
 
 const contextMenu = ref<{
@@ -119,9 +204,25 @@ function hideContextMenu() {
 }
 
 function runMenuItem(item: ContextMenuItem) {
-  if (item.disabled) return
+  if (item.disabled || !item.action) return
   hideContextMenu()
   item.action()
+}
+
+/** 仓库项右键菜单（分组内 / 一级仓库共用） */
+function repoMenuItems(repo: GitRepoStatus): ContextMenuItem[] {
+  const pinned = pinnedPaths.value.includes(repo.path)
+  return [
+    { icon: pinned ? '★' : '☆', label: pinned ? '取消置顶' : '置顶', action: () => togglePin(repo.path) },
+    { icon: '📁', label: '移动到分组', children: groupMenuItems(repo) },
+    { icon: '↓', label: '拉取', divider: true, disabled: !repo.isRepo || !!runningOp, action: () => { selectRepo(repo.path); pullCurrent() } },
+    { icon: '↑', label: '推送', disabled: !repo.isRepo || !!runningOp, action: () => { selectRepo(repo.path); pushCurrent() } },
+    { icon: '🔀', label: '合并', disabled: !repo.isRepo || !!runningOp, action: () => { selectRepo(repo.path); nextTick(openMergeDialog) } },
+    { icon: '⎇', label: '分支管理', disabled: !repo.isRepo, action: () => { selectRepo(repo.path); nextTick(openBranchDrawer) } },
+    { icon: '📂', label: '在资源管理器打开', divider: true, disabled: !repo.isRepo, action: () => { selectRepo(repo.path); nextTick(openRepoFolder) } },
+    { icon: '📋', label: '复制路径', action: () => copyText(repo.path, '路径已复制') },
+    { icon: '🗑️', label: '移除仓库', divider: true, danger: true, action: () => { selectRepo(repo.path); nextTick(removeRepoConfirm) } },
+  ]
 }
 
 function onDocumentClick() {
@@ -131,10 +232,10 @@ function onDocumentClick() {
 const currentPath = ref('')
 const current = computed(() => repos.value.find(r => r.path === currentPath.value))
 
-async function loadRepos() {
-  reposLoading.value = true
+async function loadRepos(silent = false) {
+  if (!silent) reposLoading.value = true
   try {
-    repos.value = await getGitRepos()
+    repos.value = await getGitRepos({ silent })
     // 当前选中失效（被移除/目录消失）时自动切到第一个
     if (currentPath.value && !repos.value.some(r => r.path === currentPath.value)) {
       currentPath.value = repos.value[0]?.path ?? ''
@@ -154,9 +255,13 @@ function selectRepo(path: string) {
 async function refreshCurrent() {
   if (!currentPath.value) return
   try {
-    const status = await getGitStatus({ path: currentPath.value })
+    const status = await getGitStatus({ path: currentPath.value }, { silent: true })
     const idx = repos.value.findIndex(r => r.path === currentPath.value)
-    if (idx >= 0) repos.value[idx] = status
+    if (idx >= 0) {
+      // 保留本地维护的字段（group 由后端 Repos 接口填充，GetStatus 不返回）
+      const preservedGroup = repos.value[idx].group
+      repos.value[idx] = { ...status, group: preservedGroup }
+    }
   } catch {
     // 静默：状态刷新失败不打扰
   }
@@ -169,11 +274,52 @@ async function refreshCurrent() {
 let changesPollingTimer: ReturnType<typeof setInterval> | null = null
 const CHANGES_POLL_INTERVAL = 8000
 
+/** 仓库健康检查轮询（检测目录被外部删除/移动，失效打标记） */
+let healthPollingTimer: ReturnType<typeof setInterval> | null = null
+const HEALTH_POLL_INTERVAL = 15000
+
+async function checkReposHealth() {
+  if (reposLoading.value || repos.value.length === 0) return
+  try {
+    const health = await getGitReposHealth()
+    let hasRecovered = false
+    for (const repo of repos.value) {
+      const ok = health[repo.path]
+      if (ok === undefined) continue
+      if (ok && !repo.isRepo) {
+        // 失效→恢复（目录移回来了）：需要拿完整状态（分支/领先落后等）
+        hasRecovered = true
+      } else if (!ok && repo.isRepo) {
+        repo.isRepo = false
+        repo.message = '目录不存在或已被移动'
+      }
+    }
+    if (hasRecovered) {
+      await loadRepos(true)  // silent
+      if (currentPath.value) void refreshCurrent()
+    }
+  } catch {
+    // 静默：健康检查失败不打扰
+  }
+}
+
+function startHealthPolling() {
+  if (healthPollingTimer) return
+  healthPollingTimer = setInterval(() => { void checkReposHealth() }, HEALTH_POLL_INTERVAL)
+}
+
+function stopHealthPolling() {
+  if (healthPollingTimer) {
+    clearInterval(healthPollingTimer)
+    healthPollingTimer = null
+  }
+}
+
 function startChangesPolling() {
   if (changesPollingTimer) return
   changesPollingTimer = setInterval(() => {
     if (activeTab.value === 'changes' && currentPath.value && !changesLoading.value) {
-      void reloadChanges()
+      void reloadChanges(true)  // silent
       void refreshCurrent()
     }
   }, CHANGES_POLL_INTERVAL)
@@ -186,11 +332,23 @@ function stopChangesPolling() {
   }
 }
 
-/** 窗口获得焦点时立即刷新改动和仓库状态 */
+/** 窗口获得焦点时刷新（节流：3s 内不重复触发，debounce 合并连续事件） */
+const FOCUS_THROTTLE_MS = 3000
+let lastFocusRefresh = 0
+let focusDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 function onWindowFocus() {
-  if (!currentPath.value) return
-  void refreshCurrent()
-  if (activeTab.value === 'changes') void reloadChanges()
+  if (focusDebounceTimer) clearTimeout(focusDebounceTimer)
+  focusDebounceTimer = setTimeout(() => {
+    focusDebounceTimer = null
+    const now = Date.now()
+    if (now - lastFocusRefresh < FOCUS_THROTTLE_MS) return
+    lastFocusRefresh = now
+    void checkReposHealth()
+    if (!currentPath.value) return
+    void refreshCurrent()
+    if (activeTab.value === 'changes') void reloadChanges(true)  // silent
+  }, 300)
 }
 
 onMounted(async () => {
@@ -202,6 +360,7 @@ onMounted(async () => {
   document.addEventListener('keydown', onGlobalKeydown)
   document.addEventListener('click', onDocumentClick)
   window.addEventListener('focus', onWindowFocus)
+  startHealthPolling()
 })
 
 onUnmounted(() => {
@@ -209,6 +368,8 @@ onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick)
   window.removeEventListener('focus', onWindowFocus)
   stopChangesPolling()
+  stopHealthPolling()
+  if (focusDebounceTimer) clearTimeout(focusDebounceTimer)
 })
 
 // ============================ 添加 / 移除仓库 ============================
@@ -245,6 +406,359 @@ async function addRepoFlow() {
   }
 }
 
+// ============================ 分组管理 ============================
+
+/** 获取所有已有的分组名（含空分组，去重） */
+const existingGroups = computed(() => {
+  const set = new Set<string>()
+  for (const r of repos.value) if (r.group) set.add(r.group)
+  for (const g of groupOrder.value) if (g) set.add(g)
+  return [...set].sort()
+})
+
+/** 实际执行仓库移动到分组（API + 本地状态 + groupOrder 维护） */
+async function applyRepoGroup(path: string, group: string) {
+  await updateRepoGroup({ path, group })
+  const repo = repos.value.find(r => r.path === path)
+  if (repo) repo.group = group
+  if (group && !groupOrder.value.includes(group)) {
+    groupOrder.value.push(group)
+    saveGroupOrder(groupOrder.value)
+  }
+}
+
+/** 移动仓库到指定分组（带成功提示，子菜单/拖拽共用） */
+async function moveRepoTo(path: string, group: string) {
+  try {
+    await applyRepoGroup(path, group)
+    ElMessage.success(group ? `已移动到「${group}」` : '已移出分组（一级显示）')
+  } catch { /* 拦截器已提示 */ }
+}
+
+/** 新建分组并把仓库移入（子菜单「新建分组…」入口） */
+async function moveRepoToNewGroup(path: string) {
+  try {
+    const { value } = await ElMessageBox.prompt('输入新分组名称，创建后仓库将移入该分组', '新建分组并移入', {
+      confirmButtonText: '创建并移入',
+      cancelButtonText: '取消',
+      inputPlaceholder: '新分组名',
+      inputValidator: (v: string) => {
+        const name = (v ?? '').trim()
+        if (!name) return '分组名不能为空'
+        if (existingGroups.value.includes(name)) return '分组已存在（请从子菜单直接选择）'
+        return true
+      },
+    })
+    const name = (value ?? '').trim()
+    if (name) await moveRepoTo(path, name)
+  } catch { /* 用户取消 */ }
+}
+
+/** 「移动到分组」子菜单：直接列出所有分组，免手输 */
+function groupMenuItems(repo: GitRepoStatus): ContextMenuItem[] {
+  const currentGroup = repo.group || ''
+  const items: ContextMenuItem[] = existingGroups.value
+    .filter(g => g !== currentGroup)
+    .map(g => ({ label: g, icon: '▸', action: () => { void moveRepoTo(repo.path, g) } }))
+  if (currentGroup) {
+    items.push({ label: '移出分组（一级显示）', icon: '←', divider: true, action: () => { void moveRepoTo(repo.path, '') } })
+  }
+  items.push({ label: '新建分组…', icon: '＋', divider: true, action: () => { void moveRepoToNewGroup(repo.path) } })
+  return items
+}
+
+/** 新建空分组（仅记录到 groupOrder，无仓库时也显示） */
+async function createGroup() {
+  try {
+    const { value } = await ElMessageBox.prompt('输入新分组名称，创建后可拖拽仓库进入', '新建分组', {
+      confirmButtonText: '创建',
+      cancelButtonText: '取消',
+      inputPlaceholder: '新分组名',
+      inputValidator: (v: string) => {
+        const name = (v ?? '').trim()
+        if (!name) return '分组名不能为空'
+        if (name === '未分组') return '不能使用保留名「未分组」'
+        if (existingGroups.value.includes(name)) return '分组已存在'
+        return true
+      },
+    })
+    const name = (value ?? '').trim()
+    groupOrder.value.push(name)
+    saveGroupOrder(groupOrder.value)
+    groupExpand.value[name] = true
+    localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+    ElMessage.success(`分组「${name}」已创建，可拖拽仓库进入`)
+  } catch { /* 用户取消 */ }
+}
+
+/** 重命名分组：批量更新组内仓库 + 同步排序/展开状态 */
+async function renameGroup(oldName: string) {
+  try {
+    const { value } = await ElMessageBox.prompt(`将分组「${oldName}」重命名为：`, '重命名分组', {
+      confirmButtonText: '重命名',
+      cancelButtonText: '取消',
+      inputValue: oldName,
+      inputValidator: (v: string) => {
+        const name = (v ?? '').trim()
+        if (!name) return '分组名不能为空'
+        if (name === '未分组') return '不能使用保留名「未分组」'
+        if (name === oldName) return '名称未变化'
+        if (existingGroups.value.includes(name)) return '目标分组已存在'
+        return true
+      },
+    })
+    const newName = (value ?? '').trim()
+    const members = repos.value.filter(r => (r.group || '') === oldName)
+    for (const r of members) {
+      await updateRepoGroup({ path: r.path, group: newName })
+      r.group = newName
+    }
+    // 同步 groupOrder（保持原位置）
+    const idx = groupOrder.value.indexOf(oldName)
+    if (idx >= 0) groupOrder.value[idx] = newName
+    else groupOrder.value.push(newName)
+    saveGroupOrder(groupOrder.value)
+    // 同步展开状态
+    if (oldName in groupExpand.value) {
+      groupExpand.value[newName] = groupExpand.value[oldName]
+      delete groupExpand.value[oldName]
+      localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+    }
+    ElMessage.success(`已重命名为「${newName}」（${members.length} 个仓库）`)
+  } catch { /* 用户取消 */ }
+}
+
+/** 解散分组：组内仓库全部移到未分组 */
+async function dissolveGroup(name: string) {
+  const members = repos.value.filter(r => (r.group || '') === name)
+  const tip = members.length > 0
+    ? `分组「${name}」下有 ${members.length} 个仓库，解散后将全部移到未分组。`
+    : `确认解散空分组「${name}」？`
+  try {
+    await ElMessageBox.confirm(tip, '解散分组', { type: 'warning', confirmButtonText: '解散', cancelButtonText: '取消' })
+  } catch { return }
+  for (const r of members) {
+    await updateRepoGroup({ path: r.path, group: '' })
+    r.group = ''
+  }
+  groupOrder.value = groupOrder.value.filter(g => g !== name)
+  saveGroupOrder(groupOrder.value)
+  delete groupExpand.value[name]
+  localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+}
+
+// ---------- 拖拽仓库到分组 ----------
+
+/** 拖拽中：当前悬停的分组名（高亮放置目标） */
+const dragOverGroup = ref('')
+/** 拖拽中的仓库路径 */
+let draggingRepoPath = ''
+
+/** 拖拽中状态（响应式，供「移出分组」放置区显隐） */
+const isDraggingRepo = ref(false)
+/** 拖拽中的仓库是否来自分组（决定是否显示「移出分组」放置区） */
+const draggingRepoFromGroup = ref(false)
+
+function onRepoDragStart(e: DragEvent, path: string) {
+  draggingRepoPath = path
+  isDraggingRepo.value = true
+  draggingRepoFromGroup.value = !!repos.value.find(r => r.path === path)?.group
+  if (e.dataTransfer) {
+    e.dataTransfer.setData('text/plain', path)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function onRepoDragEnd() {
+  draggingRepoPath = ''
+  isDraggingRepo.value = false
+  dragOverGroup.value = ''
+  dragOverRepoPath.value = ''
+  repoInsertAbove.value = false
+}
+
+// ---------- 拖拽仓库改变顺序（组内 / 一级区域） ----------
+
+/** 拖拽中：悬停的目标仓库路径 */
+const dragOverRepoPath = ref('')
+/** 拖拽中：插入方向（true=上方，false=下方） */
+const repoInsertAbove = ref(false)
+
+/** 拖拽仓库 over 另一个仓库项：计算插入位置，显示指示线 */
+function onRepoItemDragOver(e: DragEvent, targetPath: string) {
+  if (!draggingRepoPath || draggingRepoPath === targetPath) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  const el = e.currentTarget as HTMLElement
+  const rect = el.getBoundingClientRect()
+  const isAbove = (e.clientY - rect.top) < rect.height / 2
+  if (dragOverRepoPath.value !== targetPath || repoInsertAbove.value !== isAbove) {
+    dragOverRepoPath.value = targetPath
+    repoInsertAbove.value = isAbove
+  }
+}
+
+function onRepoItemDragLeave() {
+  if (dragOverRepoPath.value) {
+    dragOverRepoPath.value = ''
+  }
+}
+
+/** 拖拽仓库 drop 到另一个仓库项：组内重新排序 */
+function onRepoItemDrop(e: DragEvent, targetPath: string) {
+  e.preventDefault()
+  const srcPath = e.dataTransfer?.getData('text/plain') || draggingRepoPath
+  dragOverRepoPath.value = ''
+  repoInsertAbove.value = false
+  if (!srcPath || srcPath === targetPath) return
+
+  const srcRepo = repos.value.find(r => r.path === srcPath)
+  const tgtRepo = repos.value.find(r => r.path === targetPath)
+  if (!srcRepo || !tgtRepo) return
+  // 只允许同组内排序（组间移动用拖到分组 header / 放置区）
+  if ((srcRepo.group || '') !== (tgtRepo.group || '')) return
+
+  const order = loadRepoOrder()
+  // 确保两个路径都在 order 中
+  if (!order.includes(srcPath)) order.push(srcPath)
+  if (!order.includes(targetPath)) order.push(targetPath)
+
+  const srcIdx = order.indexOf(srcPath)
+  order.splice(srcIdx, 1)
+  let tgtIdx = order.indexOf(targetPath)
+  // 插入到目标上方或下方
+  const insertIdx = repoInsertAbove.value ? tgtIdx : tgtIdx + 1
+  order.splice(insertIdx, 0, srcPath)
+
+  saveRepoOrder(order)
+}
+
+function onGroupDragOver(e: DragEvent, group: string) {
+  if (!draggingRepoPath) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  dragOverGroup.value = group
+}
+
+function onGroupDragLeave(e: DragEvent, group: string) {
+  if (dragOverGroup.value !== group) return
+  // 子元素间移动不取消高亮
+  const el = e.currentTarget as HTMLElement
+  if (e.relatedTarget && el.contains(e.relatedTarget as Node)) return
+  dragOverGroup.value = ''
+}
+
+async function onGroupDrop(e: DragEvent, group: string) {
+  e.preventDefault()
+  const path = e.dataTransfer?.getData('text/plain') || draggingRepoPath
+  dragOverGroup.value = ''
+  draggingRepoPath = ''
+  if (!path) return
+  const repo = repos.value.find(r => r.path === path)
+  if (!repo || (repo.group || '') === group) return
+  try {
+    await applyRepoGroup(path, group)
+    // 目标分组折叠时自动展开，让用户看到移动结果
+    if (group && groupExpand.value[group] === false) {
+      groupExpand.value[group] = true
+      localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+    }
+    ElMessage.success(`已移动到「${group || '未分组'}」`)
+  } catch {
+    // 拦截器已提示
+  }
+}
+
+// ---------- 移出分组放置区（拖仓库到此处变一级仓库） ----------
+
+const UNGROUP_ZONE_KEY = '__ungroup__'
+
+function onUngroupZoneDragOver(e: DragEvent) {
+  if (!draggingRepoPath) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  dragOverGroup.value = UNGROUP_ZONE_KEY
+}
+
+function onUngroupZoneDragLeave() {
+  if (dragOverGroup.value === UNGROUP_ZONE_KEY) dragOverGroup.value = ''
+}
+
+async function onUngroupZoneDrop(e: DragEvent) {
+  e.preventDefault()
+  const path = e.dataTransfer?.getData('text/plain') || draggingRepoPath
+  dragOverGroup.value = ''
+  draggingRepoPath = ''
+  isDraggingRepo.value = false
+  if (!path) return
+  const repo = repos.value.find(r => r.path === path)
+  if (!repo || !repo.group) return
+  try {
+    await applyRepoGroup(path, '')
+    ElMessage.success('已移出分组（一级显示）')
+  } catch {
+    // 拦截器已提示
+  }
+}
+
+// ---------- 分组拖拽排序 ----------
+
+/** 拖拽中的分组名（排序用） */
+let draggingGroupName = ''
+
+function onGroupHeaderDragStart(e: DragEvent, name: string) {
+  // 未分组固定排最后，不参与排序拖拽
+  if (!name) {
+    e.preventDefault()
+    return
+  }
+  draggingGroupName = name
+  if (e.dataTransfer) {
+    e.dataTransfer.setData('text/group-name', name)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function onGroupHeaderDragEnd() {
+  draggingGroupName = ''
+  dragOverGroup.value = ''
+}
+
+function onGroupHeaderDragOver(e: DragEvent, group: string) {
+  if (!draggingGroupName || draggingGroupName === group) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  dragOverGroup.value = group
+}
+
+function onGroupHeaderDrop(e: DragEvent, group: string) {
+  e.preventDefault()
+  const name = draggingGroupName
+  draggingGroupName = ''
+  dragOverGroup.value = ''
+  if (!name || name === group) return
+  // groupOrder 重排：插入目标分组当前位置
+  const order = groupOrder.value
+  const from = order.indexOf(name)
+  if (from < 0) return
+  order.splice(from, 1)
+  const to = order.indexOf(group)
+  order.splice(to < 0 ? order.length : to, 0, name)
+  saveGroupOrder(order)
+}
+
+/** header 统一 dragover 分流：仓库拖入移组 or 分组拖动排序 */
+function onHeaderDragOver(e: DragEvent, group: string) {
+  if (draggingRepoPath) { onGroupDragOver(e, group); return }
+  onGroupHeaderDragOver(e, group)
+}
+
+/** header 统一 drop 分流：仓库拖入移组 or 分组拖动排序 */
+function onHeaderDrop(e: DragEvent, group: string) {
+  if (draggingGroupName) { onGroupHeaderDrop(e, group); return }
+  void onGroupDrop(e, group)
+}
+
 // ============================ 克隆仓库 ============================
 
 const cloneVisible = ref(false)
@@ -255,6 +769,39 @@ const cloneLoading = ref(false)
 /** 上次克隆保存位置（非敏感，可记住） */
 const CLONE_PARENT_KEY = 'git-clone-parent-v1'
 
+// 克隆增强：分支选择 + 高级选项 + 分组
+const cloneBranches = ref<string[]>([])
+const cloneBranch = ref('')
+const cloneBranchLoading = ref(false)
+const cloneShallow = ref(false)
+const cloneRecurseSubmodules = ref(false)
+const cloneNoCheckout = ref(false)
+const cloneFilter = ref('')
+const cloneOriginName = ref('')
+const cloneGroup = ref('')
+const cloneAdvancedExpand = ref(false)
+let cloneBranchTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 防抖拉取远程分支 */
+function fetchRemoteBranches(url: string) {
+  if (cloneBranchTimer) clearTimeout(cloneBranchTimer)
+  if (!url.trim() || (!url.startsWith('http') && !url.startsWith('git@') && !url.startsWith('ssh://'))) return
+  cloneBranchTimer = setTimeout(async () => {
+    cloneBranchLoading.value = true
+    try {
+      cloneBranches.value = await gitListRemoteBranches({ url: url.trim() })
+      // 默认选中 main 或 master
+      const preferred = cloneBranches.value.find(b => b === 'main' || b === 'master')
+      cloneBranch.value = preferred || cloneBranches.value[0] || ''
+    } catch {
+      cloneBranches.value = []
+      cloneBranch.value = ''
+    } finally {
+      cloneBranchLoading.value = false
+    }
+  }, 800)
+}
+
 /** 从仓库地址推断目录名：去查询串与尾斜杠后取末段，再去掉 .git 后缀 */
 function inferDirName(url: string): string {
   const tail = url.split(/[?#]/)[0].replace(/\/+$/, '')
@@ -262,13 +809,25 @@ function inferDirName(url: string): string {
   return last.toLowerCase().endsWith('.git') ? last.slice(0, -4) : last
 }
 
-// 地址变化时自动推断目录名（覆盖旧值，与提示文案一致）
+// 地址变化时自动推断目录名 + 防抖拉取远程分支
 watch(cloneUrl, (url) => {
   cloneDirName.value = inferDirName(url.trim())
+  fetchRemoteBranches(url.trim())
 })
 
 function openCloneDialog() {
   cloneVisible.value = true
+  cloneUrl.value = ''
+  cloneDirName.value = ''
+  cloneBranches.value = []
+  cloneBranch.value = ''
+  cloneShallow.value = false
+  cloneRecurseSubmodules.value = false
+  cloneNoCheckout.value = false
+  cloneFilter.value = ''
+  cloneOriginName.value = ''
+  cloneGroup.value = ''
+  cloneAdvancedExpand.value = false
   try {
     cloneParentDir.value = localStorage.getItem(CLONE_PARENT_KEY) || ''
   } catch {
@@ -280,6 +839,24 @@ async function chooseCloneParent() {
   const path = await selectFolder()
   if (path) cloneParentDir.value = path
 }
+
+/** 实时预览将执行的 git clone 命令 */
+const cloneCommandPreview = computed(() => {
+  const url = cloneUrl.value.trim()
+  if (!url) return ''
+  const parts = ['git clone']
+  if (cloneBranch.value) { parts.push('--branch', cloneBranch.value) }
+  if (cloneBranch.value) parts.push('--single-branch')
+  if (cloneShallow.value) parts.push('--depth 1')
+  if (cloneRecurseSubmodules.value) parts.push('--recurse-submodules')
+  if (cloneNoCheckout.value) parts.push('--no-checkout')
+  if (cloneFilter.value.trim()) parts.push('--filter', cloneFilter.value.trim())
+  if (cloneOriginName.value.trim()) parts.push('--origin', cloneOriginName.value.trim())
+  parts.push(url)
+  const name = cloneDirName.value.trim()
+  if (name) parts.push(name)
+  return parts.join(' ')
+})
 
 async function confirmClone() {
   const url = cloneUrl.value.trim()
@@ -303,11 +880,21 @@ async function confirmClone() {
   runningOp.value = op
   cloneLoading.value = true
   activeTab.value = 'log'
-  appendLog('cmd', `$ git clone ${url}${name ? ' ' + name : ''}`)
+  appendLog('cmd', `$ ${cloneCommandPreview.value}`)
   appendLog('out', '克隆中…大仓库耗时较长（可随时取消）')
   const before = new Set(repos.value.map(r => r.path))
   try {
-    const result = await gitClone({ url, parentDir: parent, dirName: name, opId: op.opId })
+    const result = await gitClone({
+      url, parentDir: parent, dirName: name, opId: op.opId,
+      branch: cloneBranch.value || undefined,
+      singleBranch: cloneBranch.value ? true : undefined,
+      depth: cloneShallow.value ? 1 : undefined,
+      recurseSubmodules: cloneRecurseSubmodules.value || undefined,
+      noCheckout: cloneNoCheckout.value || undefined,
+      filter: cloneFilter.value.trim() || undefined,
+      originName: cloneOriginName.value.trim() || undefined,
+      group: cloneGroup.value.trim() || undefined,
+    })
     appendResult(result)
     if (result.success) {
       appendLog('ok', '✓ 克隆完成，已添加到仓库列表')
@@ -503,10 +1090,17 @@ async function copyLog() {
 
 const TERMINAL_HISTORY_KEY = 'git-terminal-history'
 function loadTerminalHistory(): string[] {
-  try { return JSON.parse(localStorage.getItem(TERMINAL_HISTORY_KEY) ?? '[]') } catch { return [] }
+  try {
+    const list = JSON.parse(localStorage.getItem(TERMINAL_HISTORY_KEY) ?? '[]')
+    if (!Array.isArray(list)) return []
+    // 旧版历史存的是去掉 git 前缀的子命令，补前缀保证可直接回车执行
+    return list
+      .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+      .map(c => (c.startsWith('git ') ? c : `git ${c}`))
+  } catch { return [] }
 }
 
-/** 命令输入框内容（不含 git 前缀） */
+/** 命令输入框内容（完整命令，与 cmd 一致） */
 const terminalInput = ref('')
 /** 终端输出行 */
 const terminalLines = ref<LogLine[]>([])
@@ -521,13 +1115,16 @@ const terminalSuggestVisible = ref(false)
 /** 当前匹配的知识库快捷提示 */
 const terminalSuggestions = computed(() => {
   const kw = terminalInput.value.trim().toLowerCase()
-  if (!kw) return gitCommands.slice(0, 8)
+  if (!kw) return [] // 空输入不带出提示，与 cmd 一致
   return gitCommands.filter(c =>
     c.command.toLowerCase().includes(kw) ||
     c.desc.toLowerCase().includes(kw)
   ).slice(0, 10)
 })
+const hasVisibleSuggestions = computed(() =>
+  terminalSuggestVisible.value && terminalSuggestions.value.length > 0)
 const terminalOutputRef = ref<HTMLDivElement>()
+const terminalInputRef = ref<HTMLInputElement>()
 
 function terminalScrollBottom() {
   void nextTick(() => {
@@ -546,24 +1143,39 @@ function saveTerminalHistory(cmd: string) {
 }
 
 function applySuggestion(cmd: string) {
-  // 知识库命令带 git 前缀，去掉前缀填入输入框
-  terminalInput.value = cmd.startsWith('git ') ? cmd.slice(4) : cmd
+  // 直接填入完整命令（含 git 前缀），回车执行；点击建议项 / Tab 补全时调用
+  terminalInput.value = cmd
   terminalSuggestVisible.value = false
 }
 
 async function runTerminalCommand() {
-  const sub = terminalInput.value.trim()
-  if (!sub) return
-  if (!currentPath.value) { ElMessage.warning('请先在左侧选择仓库'); return }
-  const fullCmd = sub.startsWith('git ') ? sub : `git ${sub}`
+  const cmd = terminalInput.value.trim()
+  if (!cmd) return
   terminalSuggestVisible.value = false
-  terminalLines.value.push({ kind: 'cmd', text: `$ ${fullCmd}` })
-  saveTerminalHistory(sub)
+  // cls / clear：本地清屏，与 cmd 一致，不发后端
+  if (cmd === 'cls' || cmd === 'clear') {
+    clearTerminal()
+    saveTerminalHistory(cmd)
+    terminalHistoryIdx = -1
+    terminalInput.value = ''
+    return
+  }
+  if (!currentPath.value) { ElMessage.warning('请先在左侧选择仓库'); return }
+  // 仅支持 git 命令（后端白名单同样限制）；非 git 命令给 cmd 风格报错
+  const first = cmd.split(/\s+/)[0]
+  if (first !== 'git') {
+    terminalLines.value.push({ kind: 'cmd', text: `$ ${cmd}` })
+    terminalLines.value.push({ kind: 'err', text: `'${first}' 不是内部或外部命令，也不是可运行的程序（本终端仅支持 git 命令）。` })
+    terminalInput.value = ''
+    return
+  }
+  terminalLines.value.push({ kind: 'cmd', text: `$ ${cmd}` })
+  saveTerminalHistory(cmd)
   terminalHistoryIdx = -1
   terminalInput.value = ''
   terminalRunning.value = true
   try {
-    const result = await gitExec({ path: currentPath.value, command: fullCmd })
+    const result = await gitExec({ path: currentPath.value, command: cmd })
     const text = (result.output || '').replace(/\r\n/g, '\n').trimEnd()
     if (text) {
       for (const line of text.split('\n'))
@@ -579,13 +1191,16 @@ async function runTerminalCommand() {
 }
 
 function onTerminalKeydown(e: KeyboardEvent) {
+  if (e.key === 'Tab') {
+    e.preventDefault()
+    if (hasVisibleSuggestions.value) {
+      applySuggestion(terminalSuggestions.value[0].command)
+    }
+    return
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
-    if (terminalSuggestVisible.value && terminalSuggestions.value.length > 0) {
-      applySuggestion(terminalSuggestions.value[0].command)
-    } else {
-      void runTerminalCommand()
-    }
+    void runTerminalCommand()
     return
   }
   if (e.key === 'Escape') {
@@ -612,11 +1227,16 @@ function onTerminalKeydown(e: KeyboardEvent) {
 
 function onTerminalInput() {
   terminalHistoryIdx = -1
-  terminalSuggestVisible.value = terminalInput.value.trim().length > 0 || true
+  terminalSuggestVisible.value = terminalInput.value.trim().length > 0
 }
 
 function clearTerminal() {
   terminalLines.value = []
+}
+
+/** 点击输出区域时聚焦输入框 */
+function focusTerminalInput() {
+  terminalInputRef.value?.focus()
 }
 
 async function copyText(text: string, tip = '已复制') {
@@ -1059,7 +1679,7 @@ const changesSort = ref<'status' | 'path-asc' | 'path-desc' | 'name-asc' | 'name
 /** 匹配显示类型筛选 */
 function matchFilter(f: GitChangeFile, staged: boolean): boolean {
   switch (changesFilter.value) {
-    case 'modified': return f.status !== '?' && !f.isConflict
+    case 'modified': return !f.isConflict  // 已修改 + 已删除 + 未跟踪（新文件），排除冲突
     case 'untracked': return f.status === '?'
     case 'conflict': return !!f.isConflict
     case 'pending': return staged   // 已暂存区有内容：在已暂存中显示全部
@@ -1097,14 +1717,14 @@ const filteredStaged = computed(() =>
   sortFiles(changesStaged.value.filter(f => matchFilter(f, true)), checkedStaged.value)
 )
 
-async function reloadChanges() {
+async function reloadChanges(silent = false) {
   if (!currentPath.value) {
     ElMessage.warning('请先在左侧选择仓库')
     return
   }
-  changesLoading.value = true
+  if (!silent) changesLoading.value = true
   try {
-    const dto = await getGitChanges({ path: currentPath.value })
+    const dto = await getGitChanges({ path: currentPath.value }, { silent })
     changesStaged.value = dto.staged
     changesUnstaged.value = dto.unstaged
     // 同步合并横幅（与 MergeState 端点同源数据）
@@ -1289,7 +1909,7 @@ function fileBadgeIcon(status: string): string {
   if (status === 'R') return '→'
   if (status === 'C') return '©'
   if (status === 'U') return '!'
-  if (status === '?') return '?'
+  if (status === '?') return '+'
   return status || '·'
 }
 
@@ -1754,52 +2374,123 @@ async function addConfig() {
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
         </div>
-        <div v-loading="reposLoading" class="repo-list">
-          <template v-for="(repo, idx) in filteredRepos" :key="repo.path">
-            <!-- 置顶与普通之间的分隔线 -->
+        <div
+          v-loading="reposLoading"
+          class="repo-list"
+          @contextmenu="showContextMenu($event, [
+            { icon: '↓', label: '克隆仓库…', action: openCloneDialog },
+            { icon: '＋', label: '添加本地仓库…', action: addRepoFlow },
+            { icon: '📁', label: '新建分组', divider: true, action: createGroup },
+          ])"
+        >
+          <template v-for="group in groupedRepos" :key="group.name">
+            <!-- 分组标题（右键管理分组 / 拖拽仓库放置目标 / 拖动排序） -->
             <div
-              v-if="hasPinDivider && idx > 0 && !pinnedPaths.includes(repo.path) && pinnedPaths.includes(filteredRepos[idx - 1].path)"
-              class="repo-pin-divider"
-            ></div>
-            <div
-              class="repo-item"
-              :class="{ selected: repo.path === currentPath, invalid: !repo.isRepo }"
-              :title="repo.message || repo.path"
-              @click="selectRepo(repo.path)"
+              class="repo-group-header"
+              :class="{ 'drag-over': dragOverGroup === group.name }"
+              @click="toggleGroupExpand(group.name)"
               @contextmenu="showContextMenu($event, [
-                { icon: pinnedPaths.includes(repo.path) ? '★' : '☆', label: pinnedPaths.includes(repo.path) ? '取消置顶' : '置顶', action: () => togglePin(repo.path) },
-                { icon: '↓', label: '拉取', divider: true, disabled: !repo.isRepo || !!runningOp, action: () => { selectRepo(repo.path); pullCurrent() } },
-                { icon: '↑', label: '推送', disabled: !repo.isRepo || !!runningOp, action: () => { selectRepo(repo.path); pushCurrent() } },
-                { icon: '🔀', label: '合并', disabled: !repo.isRepo || !!runningOp, action: () => { selectRepo(repo.path); nextTick(openMergeDialog) } },
-                { icon: '⎇', label: '分支管理', disabled: !repo.isRepo, action: () => { selectRepo(repo.path); nextTick(openBranchDrawer) } },
-                { icon: '📂', label: '在资源管理器打开', divider: true, disabled: !repo.isRepo, action: () => { selectRepo(repo.path); nextTick(openRepoFolder) } },
-                { icon: '📋', label: '复制路径', action: () => copyText(repo.path, '路径已复制') },
-                { icon: '🗑️', label: '移除仓库', divider: true, danger: true, action: () => { selectRepo(repo.path); nextTick(removeRepoConfirm) } },
+                { icon: '＋', label: '新建分组', action: createGroup },
+                { icon: '✎', label: '重命名分组…', divider: true, action: () => renameGroup(group.name) },
+                { icon: '🗑️', label: '解散分组', danger: true, action: () => dissolveGroup(group.name) },
               ])"
+              :draggable="!!group.name"
+              @dragstart="onGroupHeaderDragStart($event, group.name)"
+              @dragend="onGroupHeaderDragEnd"
+              @dragover="onHeaderDragOver($event, group.name)"
+              @dragleave="onGroupDragLeave($event, group.name)"
+              @drop="onHeaderDrop($event, group.name)"
             >
-              <!-- 改动数角标 -->
-              
-              <div class="repo-item-top">
-                <span class="repo-name">{{ repo.name }}</span>
-                <el-icon
-                  class="repo-pin-icon"
-                  :class="{ pinned: pinnedPaths.includes(repo.path) }"
-                  :title="pinnedPaths.includes(repo.path) ? '取消置顶' : '置顶'"
-                  @click.stop="togglePin(repo.path)"
-                ><Star /></el-icon>
-              </div>
-              <div class="repo-item-meta">
-                <el-tag v-if="repo.isRepo && repo.branch" size="small" type="info">{{ repo.branch }}</el-tag>
-                <el-tag v-else size="small" type="danger">失效</el-tag>
-                <span v-if="repo.isRepo && repo.ahead > 0" class="meta-ahead">↑{{ repo.ahead }}</span>
-                <span v-if="repo.isRepo && repo.behind > 0" class="meta-behind">↓{{ repo.behind }}</span>
-                <span v-if="repo.isRepo" class="meta-changes" :class="{ dirty: repo.changes > 0 }">
-                  {{ repo.changes > 0 ? `${repo.changes} 改动` : '干净' }}
-                </span>
-                <span v-else class="meta-error">{{ repo.message }}</span>
-              </div>
+              <span class="repo-group-arrow">{{ group.expanded ? '▾' : '▸' }}</span>
+              <span class="repo-group-label">{{ group.label }}</span>
+              <span class="repo-group-count">{{ group.repos.length }}</span>
             </div>
+            <template v-if="group.expanded">
+              <div
+                v-for="repo in group.repos"
+                :key="repo.path"
+                class="repo-item grouped"
+                :class="{ selected: repo.path === currentPath, invalid: !repo.isRepo, 'drop-above': dragOverRepoPath === repo.path && repoInsertAbove, 'drop-below': dragOverRepoPath === repo.path && !repoInsertAbove }"
+                :title="repo.message || repo.path"
+                draggable="true"
+                @dragstart="onRepoDragStart($event, repo.path)"
+                @dragend="onRepoDragEnd"
+                @dragover="onRepoItemDragOver($event, repo.path)"
+                @dragleave="onRepoItemDragLeave"
+                @drop="onRepoItemDrop($event, repo.path)"
+                @click="selectRepo(repo.path)"
+                @contextmenu="showContextMenu($event, repoMenuItems(repo))"
+              >
+                <div class="repo-item-top">
+                  <span class="repo-name">{{ repo.name }}</span>
+                  <el-icon
+                    class="repo-pin-icon"
+                    :class="{ pinned: pinnedPaths.includes(repo.path) }"
+                    :title="pinnedPaths.includes(repo.path) ? '取消置顶' : '置顶'"
+                    @click.stop="togglePin(repo.path)"
+                  ><Star /></el-icon>
+                </div>
+                <div class="repo-item-meta">
+                  <el-tag v-if="repo.isRepo && repo.branch" size="small" type="info">{{ repo.branch }}</el-tag>
+                  <el-tag v-else size="small" type="danger">失效</el-tag>
+                  <span v-if="repo.isRepo && repo.ahead > 0" class="meta-ahead">↑{{ repo.ahead }}</span>
+                  <span v-if="repo.isRepo && repo.behind > 0" class="meta-behind">↓{{ repo.behind }}</span>
+                  <span v-if="repo.isRepo" class="meta-changes" :class="{ dirty: repo.changes > 0 }">
+                    {{ repo.changes > 0 ? `${repo.changes} 改动` : '干净' }}
+                  </span>
+                  <span v-else class="meta-error">{{ repo.message }}</span>
+                </div>
+              </div>
+            </template>
           </template>
+
+          <!-- 拖拽仓库时：「移出分组」放置区（拖入即变一级仓库） -->
+          <div
+            v-if="isDraggingRepo && draggingRepoFromGroup"
+            class="repo-ungroup-dropzone"
+            :class="{ 'drag-over': dragOverGroup === '__ungroup__' }"
+            @dragover="onUngroupZoneDragOver($event)"
+            @dragleave="onUngroupZoneDragLeave"
+            @drop="onUngroupZoneDrop($event)"
+          >⟲ 松开移出分组（一级显示）</div>
+
+          <!-- 一级仓库（无分组）：与分组同级平铺 -->
+          <div
+            v-for="repo in ungroupedRepos"
+            :key="repo.path"
+            class="repo-item"
+            :class="{ selected: repo.path === currentPath, invalid: !repo.isRepo, 'drop-above': dragOverRepoPath === repo.path && repoInsertAbove, 'drop-below': dragOverRepoPath === repo.path && !repoInsertAbove }"
+            :title="repo.message || repo.path"
+            draggable="true"
+            @dragstart="onRepoDragStart($event, repo.path)"
+            @dragend="onRepoDragEnd"
+            @dragover="onRepoItemDragOver($event, repo.path)"
+            @dragleave="onRepoItemDragLeave"
+            @drop="onRepoItemDrop($event, repo.path)"
+            @click="selectRepo(repo.path)"
+            @contextmenu="showContextMenu($event, repoMenuItems(repo))"
+          >
+            <div class="repo-item-top">
+              <span class="repo-name">{{ repo.name }}</span>
+              <el-icon
+                class="repo-pin-icon"
+                :class="{ pinned: pinnedPaths.includes(repo.path) }"
+                :title="pinnedPaths.includes(repo.path) ? '取消置顶' : '置顶'"
+                @click.stop="togglePin(repo.path)"
+              ><Star /></el-icon>
+            </div>
+            <div class="repo-item-meta">
+              <el-tag v-if="repo.isRepo && repo.branch" size="small" type="info">{{ repo.branch }}</el-tag>
+              <el-tag v-else size="small" type="danger">失效</el-tag>
+              <span v-if="repo.isRepo && repo.ahead > 0" class="meta-ahead">↑{{ repo.ahead }}</span>
+              <span v-if="repo.isRepo && repo.behind > 0" class="meta-behind">↓{{ repo.behind }}</span>
+              <span v-if="repo.isRepo" class="meta-changes" :class="{ dirty: repo.changes > 0 }">
+                {{ repo.changes > 0 ? `${repo.changes} 改动` : '干净' }}
+              </span>
+              <span v-else class="meta-error">{{ repo.message }}</span>
+            </div>
+          </div>
+
           <div v-if="!reposLoading && filteredRepos.length === 0" class="repo-empty">
             <template v-if="repoSearch">
               <div style="padding:12px;font-size:12px;color:#909399">无匹配结果</div>
@@ -2451,50 +3142,46 @@ async function addConfig() {
               <el-icon><FolderOpened /></el-icon>
               <span class="terminal-path-text">{{ currentPath || '未选择仓库' }}</span>
             </div>
-            <!-- 输出区 -->
-            <div ref="terminalOutputRef" class="terminal-output">
+            <!-- 输出区（输入行也在内部，像真实终端一样是最后一行） -->
+            <div ref="terminalOutputRef" class="terminal-output" @click="focusTerminalInput">
               <div
                 v-for="(line, i) in terminalLines"
                 :key="i"
                 :class="['terminal-line', 'tl-' + line.kind]"
               >{{ line.text }}</div>
-              <div v-if="terminalLines.length === 0" class="terminal-empty">输入 git 子命令并回车执行，支持上下键翻历史</div>
-            </div>
-            <!-- 输入区 -->
-            <div class="terminal-input-wrap">
-              <span class="terminal-prefix">git</span>
-              <div class="terminal-suggest-wrap">
-                <!-- 快捷提示 -->
-                <div v-show="terminalSuggestVisible && terminalSuggestions.length > 0" class="terminal-suggest-list">
-                  <div
-                    v-for="s in terminalSuggestions"
-                    :key="s.command"
-                    class="terminal-suggest-item"
-                    :class="{ danger: s.danger }"
-                    @mousedown.prevent="applySuggestion(s.command)"
-                  >
-                    <code class="tsi-cmd">{{ s.command.startsWith('git ') ? s.command.slice(4) : s.command }}</code>
-                    <span class="tsi-desc">{{ s.desc }}</span>
+              <div v-if="terminalLines.length === 0" class="terminal-empty">输入 git 命令并回车执行，↑↓ 翻阅历史，Tab 补全，cls 清屏</div>
+              <!-- 输入行（输出流最后一行） -->
+              <div class="terminal-input-area">
+                <div class="terminal-suggest-wrap">
+                  <div v-show="hasVisibleSuggestions" class="terminal-suggest-list">
+                    <div
+                      v-for="s in terminalSuggestions"
+                      :key="s.command"
+                      class="terminal-suggest-item"
+                      :class="{ danger: s.danger }"
+                      @mousedown.prevent="applySuggestion(s.command)"
+                    >
+                      <code class="tsi-cmd">{{ s.command.startsWith('git ') ? s.command.slice(4) : s.command }}</code>
+                      <span class="tsi-desc">{{ s.desc }}</span>
+                    </div>
                   </div>
                 </div>
-                <input
-                  v-model="terminalInput"
-                  class="terminal-input"
-                  placeholder="输入命令，如 log --oneline -10"
-                  :disabled="terminalRunning"
-                  @keydown="onTerminalKeydown"
-                  @input="onTerminalInput"
-                  @focus="terminalSuggestVisible = true"
-                  @blur="terminalSuggestVisible = false"
-                />
+                <div class="terminal-input-row">
+                  <span class="terminal-prompt">$</span>
+                  <input
+                    ref="terminalInputRef"
+                    v-model="terminalInput"
+                    class="terminal-input"
+                    placeholder="输入 git 命令，如 git log --oneline -10"
+                    :disabled="terminalRunning"
+                    @keydown="onTerminalKeydown"
+                    @input="onTerminalInput"
+                    @focus="terminalSuggestVisible = true"
+                    @blur="terminalSuggestVisible = false"
+                  />
+                  <span v-if="terminalRunning" class="terminal-running-dot" />
+                </div>
               </div>
-              <el-button
-                type="primary"
-                :loading="terminalRunning"
-                :disabled="!terminalInput.trim() || !currentPath"
-                class="terminal-run-btn"
-                @click="runTerminalCommand"
-              >执行</el-button>
             </div>
           </div>
         </div>
@@ -2502,7 +3189,7 @@ async function addConfig() {
     </div>
 
     <!-- 克隆仓库弹窗 -->
-    <el-dialog v-model="cloneVisible" title="克隆仓库" width="540px" :close-on-click-modal="false">
+    <el-dialog v-model="cloneVisible" title="克隆仓库" width="600px" :close-on-click-modal="false">
       <el-form label-position="top" class="clone-form" @submit.prevent>
         <el-form-item label="仓库地址">
           <el-input v-model="cloneUrl" placeholder="https://gitee.com/user/repo.git" clearable />
@@ -2516,8 +3203,54 @@ async function addConfig() {
         </el-form-item>
         <el-form-item label="目录名">
           <el-input v-model="cloneDirName" placeholder="留空则从仓库地址推断" clearable />
-          <div class="clone-hint">已从仓库地址自动推断，可修改；目标目录已存在且非空时会中止</div>
         </el-form-item>
+        <el-form-item label="分支">
+          <el-select
+            v-model="cloneBranch"
+            filterable
+            allow-create
+            placeholder="默认分支"
+            clearable
+            :loading="cloneBranchLoading"
+            style="width: 100%"
+          >
+            <el-option v-for="b in cloneBranches" :key="b" :label="b" :value="b" />
+          </el-select>
+          <div class="clone-hint">输入仓库地址后自动加载分支列表，也可直接输入分支名</div>
+        </el-form-item>
+        <el-form-item label="分组">
+          <el-select v-model="cloneGroup" filterable allow-create clearable placeholder="未分组" style="width: 100%">
+            <el-option v-for="g in existingGroups" :key="g" :label="g" :value="g" />
+          </el-select>
+        </el-form-item>
+
+        <!-- 高级选项折叠 -->
+        <div class="clone-advanced-toggle" @click="cloneAdvancedExpand = !cloneAdvancedExpand">
+          <span>{{ cloneAdvancedExpand ? '▾' : '▸' }}</span> 高级选项
+        </div>
+        <div v-show="cloneAdvancedExpand" class="clone-advanced-panel">
+          <el-form-item>
+            <el-checkbox v-model="cloneShallow" :disabled="!!cloneFilter.trim()">浅克隆（--depth 1）</el-checkbox>
+          </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="cloneRecurseSubmodules">递归初始化子模块（--recurse-submodules）</el-checkbox>
+          </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="cloneNoCheckout">无检出（--no-checkout）</el-checkbox>
+          </el-form-item>
+          <el-form-item label="部分克隆">
+            <el-input v-model="cloneFilter" placeholder="如 blob:none" clearable @input="cloneFilter.trim() && (cloneShallow = false)" />
+            <div class="clone-hint">延迟下载大文件，按需获取。与浅克隆互斥</div>
+          </el-form-item>
+          <el-form-item label="自定义远程名">
+            <el-input v-model="cloneOriginName" placeholder="默认 origin" clearable />
+          </el-form-item>
+        </div>
+
+        <!-- 命令预览 -->
+        <div v-if="cloneCommandPreview" class="clone-cmd-preview">
+          <span class="clone-cmd-label">$</span> {{ cloneCommandPreview }}
+        </div>
       </el-form>
       <template #footer>
         <el-button v-if="cloneLoading" type="warning" plain @click="cancelCurrent">取消克隆</el-button>
@@ -2684,8 +3417,30 @@ async function addConfig() {
       @click.stop
     >
       <template v-for="(item, idx) in contextMenu.items" :key="idx">
+        <!-- 分隔线（在本项上方，项本身仍渲染） -->
         <div v-if="item.divider" class="ctx-divider"></div>
+        <!-- 带子菜单：悬停向右侧展开 -->
+        <div v-if="item.children" class="ctx-item ctx-item--parent">
+          <span v-if="item.icon" class="ctx-icon">{{ item.icon }}</span>
+          <span class="ctx-label">{{ item.label }}</span>
+          <span class="ctx-arrow">&#x25B8;</span>
+          <div class="ctx-submenu">
+            <template v-for="(sub, si) in item.children" :key="si">
+              <div v-if="sub.divider" class="ctx-divider"></div>
+              <div
+                class="ctx-item"
+                :class="{ 'ctx-item--danger': sub.danger, 'ctx-item--disabled': sub.disabled }"
+                @click="runMenuItem(sub)"
+              >
+                <span v-if="sub.icon" class="ctx-icon">{{ sub.icon }}</span>
+                <span class="ctx-label">{{ sub.label }}</span>
+              </div>
+            </template>
+          </div>
+        </div>
+        <!-- 普通项 -->
         <div
+          v-else
           class="ctx-item"
           :class="{ 'ctx-item--danger': item.danger, 'ctx-item--disabled': item.disabled }"
           @click="runMenuItem(item)"
@@ -2749,6 +3504,89 @@ async function addConfig() {
   padding: 8px;
 }
 
+/* 分组标题（一级：静态浅背景，与子项形成层级） */
+.repo-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+  margin: 4px 0 2px;
+  background: #f0f2f5;
+  transition: background 0.15s;
+}
+
+.repo-group-header:hover {
+  background: #ebeef5;
+}
+
+/* 拖拽仓库悬停时高亮放置目标 */
+.repo-group-header.drag-over {
+  background: #ecf5ff;
+  outline: 2px dashed #409eff;
+  outline-offset: -2px;
+}
+
+/* 拖动排序中的分组 header */
+.repo-group-header:active {
+  cursor: grabbing;
+}
+
+/* 拖拽仓库时的「移出分组」放置区 */
+.repo-ungroup-dropzone {
+  margin: 4px 8px;
+  padding: 10px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: #909399;
+  border: 1px dashed #dcdfe6;
+  border-radius: 4px;
+  background: #fafafa;
+  user-select: none;
+}
+
+.repo-ungroup-dropzone.drag-over {
+  color: #409eff;
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+/* 仓库项可拖拽 */
+.repo-item[draggable='true'] {
+  cursor: grab;
+}
+
+.repo-group-arrow {
+  font-size: 12px;
+  color: #909399;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.repo-group-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-group-count {
+  font-size: 11px;
+  color: #909399;
+  background: #ebeef5;
+  border-radius: 10px;
+  padding: 0 6px;
+  line-height: 18px;
+  flex-shrink: 0;
+}
+
 .repo-item {
   position: relative;
   padding: 10px 12px;
@@ -2757,6 +3595,46 @@ async function addConfig() {
   border: 1px solid transparent;
   margin-bottom: 4px;
   transition: background 0.2s, border-color 0.2s;
+}
+
+/* 分组内仓库（二级：缩进 + 左侧引导线） */
+.repo-item.grouped {
+  margin-left: 18px;
+  border-left: 2px solid #e4e7ed;
+}
+
+.repo-item.grouped.selected {
+  border-left-color: #409eff;
+}
+
+/* 拖拽排序插入指示线 */
+.repo-item.drop-above {
+  position: relative;
+}
+.repo-item.drop-above::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: #409eff;
+  border-radius: 1px;
+  z-index: 2;
+}
+.repo-item.drop-below {
+  position: relative;
+}
+.repo-item.drop-below::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: #409eff;
+  border-radius: 1px;
+  z-index: 2;
 }
 
 .repo-item:hover {
@@ -3816,6 +4694,51 @@ async function addConfig() {
   line-height: 1.4;
 }
 
+/* 高级选项折叠 */
+.clone-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: #606266;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.clone-advanced-toggle:hover {
+  color: #409eff;
+}
+
+.clone-advanced-panel {
+  padding: 4px 0 0 4px;
+  border-left: 2px solid #e4e7ed;
+  margin-left: 6px;
+  margin-bottom: 8px;
+}
+
+/* 命令预览 */
+.clone-cmd-preview {
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  color: #303133;
+  word-break: break-all;
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+.clone-cmd-label {
+  color: #909399;
+  margin-right: 4px;
+  user-select: none;
+}
+
 .discover-tip {
   font-size: 13px;
   color: #606266;
@@ -4102,7 +5025,7 @@ async function addConfig() {
 .fb-renamed   { background: #409eff; }
 .fb-copied    { background: #9b59b6; }
 .fb-conflict  { background: #c0392b; }
-.fb-untracked { background: #909399; }
+.fb-untracked { background: #2ecc71; }
 .fb-default   { background: #b0b8c5; }
 
 /* ===== 仓库列表改动数角标 ===== */
@@ -4325,57 +5248,59 @@ async function addConfig() {
 .tl-ok   { color: #a6e3a1; }
 .tl-warn { color: #f9e2af; }
 
-.terminal-input-wrap {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 6px 10px;
-  background: #12131e;
-  border-top: 1px solid #2a2b3d;
-  flex-shrink: 0;
+/* 终端输入区（在输出流内部，像真实终端的最后一行） */
+.terminal-input-area {
+  position: relative;
 }
 
-.terminal-prefix {
-  padding: 0 8px;
-  color: #a6e3a1;
-  font-weight: 700;
-  background: #1e1f2e;
-  border: 1px solid #2a2b3d;
-  border-right: none;
-  border-radius: 4px 0 0 4px;
-  height: 32px;
-  line-height: 32px;
-  flex-shrink: 0;
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.terminal-prompt {
+  color: #6c7086;
+  margin-right: 8px;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .terminal-suggest-wrap {
-  flex: 1;
   position: relative;
+  flex: 1;
   min-width: 0;
 }
 
 .terminal-input {
-  width: 100%;
-  height: 32px;
-  background: #1e1f2e;
-  border: 1px solid #2a2b3d;
-  border-radius: 0;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
   color: #cdd6f4;
   font-family: inherit;
   font-size: 13px;
-  padding: 0 10px;
   outline: none;
-  box-sizing: border-box;
-}
-
-.terminal-input:focus {
-  border-color: #89b4fa;
+  padding: 0;
 }
 
 .terminal-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.terminal-running-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f9e2af;
+  flex-shrink: 0;
+  animation: terminal-pulse 1s ease-in-out infinite;
+}
+
+@keyframes terminal-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .terminal-suggest-list {
@@ -4428,11 +5353,6 @@ async function addConfig() {
 }
 
 .terminal-suggest-item.danger .tsi-cmd { color: #f38ba8; }
-
-.terminal-run-btn {
-  border-radius: 0 4px 4px 0 !important;
-  flex-shrink: 0;
-}
 </style>
 
 <!-- 右键菜单使用 Teleport 脱离组件根节点，scoped 样式水印不到，需用全局样式 -->
@@ -4497,5 +5417,36 @@ async function addConfig() {
 
 .ctx-label {
   flex: 1;
+}
+
+/* 带子菜单的项（悬停向右展开） */
+.ctx-item--parent {
+  position: relative;
+}
+
+.ctx-arrow {
+  font-size: 11px;
+  color: #909399;
+  margin-left: 16px;
+  flex-shrink: 0;
+}
+
+.ctx-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -5px;
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.ctx-item--parent:hover > .ctx-submenu {
+  display: block;
 }
 </style>

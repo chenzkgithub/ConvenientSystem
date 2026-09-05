@@ -32,6 +32,8 @@ export interface GitRepoStatus {
   remote: string
   /** 状态不可用原因（目录不存在等，正常为空） */
   message: string
+  /** 分组名（空 = 未分组） */
+  group: string
 }
 
 /** 分支条目 */
@@ -103,6 +105,22 @@ export interface GitCloneRequest {
   dirName: string
   /** 操作 ID（用于取消） */
   opId?: string
+  /** 克隆指定分支（空 = 默认分支） */
+  branch?: string
+  /** 仅克隆指定分支的历史 */
+  singleBranch?: boolean
+  /** 浅克隆深度（0 = 完整克隆） */
+  depth?: number
+  /** 递归初始化子模块 */
+  recurseSubmodules?: boolean
+  /** 克隆但不检出文件 */
+  noCheckout?: boolean
+  /** 部分克隆过滤器（如 blob:none） */
+  filter?: string
+  /** 自定义远程名（空 = 默认 origin） */
+  originName?: string
+  /** 克隆后归入的分组 */
+  group?: string
 }
 
 /** 白名单执行请求 */
@@ -210,8 +228,13 @@ export interface GitFileDiff {
 }
 
 /** 仓库列表（附带实时状态） */
-export function getGitRepos() {
-  return httpPost<GitRepoStatus[]>('/api/Common/Git/Repos', {}, undefined, LOCAL_TIMEOUT_MS)
+export function getGitRepos(opts?: { silent?: boolean }) {
+  return httpPost<GitRepoStatus[]>('/api/Common/Git/Repos', {}, undefined, LOCAL_TIMEOUT_MS, opts)
+}
+
+/** 仓库健康检查（轻量：目录是否存在，供前端轮询检测失效） */
+export function getGitReposHealth() {
+  return httpPost<Record<string, boolean>>('/api/Common/Git/ReposHealth', {}, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 添加仓库（自动解析仓库根目录，子目录自动归属） */
@@ -230,8 +253,8 @@ export function discoverGitRepos(request: GitPathRequest) {
 }
 
 /** 查询仓库状态总览 */
-export function getGitStatus(request: GitPathRequest) {
-  return httpPost<GitRepoStatus>('/api/Common/Git/Status', request)
+export function getGitStatus(request: GitPathRequest, opts?: { silent?: boolean }) {
+  return httpPost<GitRepoStatus>('/api/Common/Git/Status', request, undefined, undefined, opts)
 }
 
 /** 分支列表（本地在前、远程在后） */
@@ -296,8 +319,8 @@ export function getGitCommitDetail(request: { path: string; hash: string }) {
 }
 
 /** 工作区改动列表（已暂存/未暂存两组，含未跟踪与冲突） */
-export function getGitChanges(request: GitPathRequest) {
-  return httpPost<GitChanges>('/api/Common/Git/Changes', request, undefined, LOCAL_TIMEOUT_MS)
+export function getGitChanges(request: GitPathRequest, opts?: { silent?: boolean }) {
+  return httpPost<GitChanges>('/api/Common/Git/Changes', request, undefined, LOCAL_TIMEOUT_MS, opts)
 }
 
 /** 暂存/取消暂存（单文件或全部，本地快命令不可取消） */
@@ -376,4 +399,16 @@ export function getGitConfigList() {
 /** 设置或删除一项全局配置（value 为 null 时删除） */
 export function gitConfigSet(request: { key: string; value: string | null }) {
   return httpPost<GitCommandResult>('/api/Common/Git/ConfigSet', request)
+}
+
+// ==================== 远程分支 & 分组 ====================
+
+/** 列出远程仓库的分支列表（git ls-remote --heads） */
+export function gitListRemoteBranches(request: { url: string }) {
+  return httpPost<string[]>('/api/Common/Git/ListRemoteBranches', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+}
+
+/** 更新仓库分组 */
+export function updateRepoGroup(request: { path: string; group: string }) {
+  return httpPost<{ ok: boolean }>('/api/Common/Git/UpdateGroup', request)
 }

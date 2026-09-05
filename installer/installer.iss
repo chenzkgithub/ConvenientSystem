@@ -20,8 +20,10 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 
 ; 安装到 C:\Program Files\ConvenientSystem 需要管理员权限
-; wwwroot 目录授予 Users 组写入权限（运行时下载更新前端）
+; 根目录授予 Users 组写入权限（git-repos.json 等用户数据文件写入安装目录）
+; wwwroot 目录授权（运行时下载更新前端），logs 目录授权（运行日志）
 [Dirs]
+Name: "{app}"; Permissions: users-modify
 Name: "{app}\wwwroot"; Permissions: users-modify
 Name: "{app}\logs"; Permissions: users-modify
 

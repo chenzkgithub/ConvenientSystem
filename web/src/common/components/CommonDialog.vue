@@ -27,7 +27,6 @@ const props = withDefaults(defineProps<{
   closeOnClickModal?: boolean
   appendToBody?: boolean
   destroyOnClose?: boolean
-  draggable?: boolean
   fullscreen?: boolean
   closeOnPressEscape?: boolean
   alignCenter?: boolean
@@ -39,7 +38,6 @@ const props = withDefaults(defineProps<{
   closeOnClickModal: false,
   appendToBody: true,
   destroyOnClose: false,
-  draggable: true,
   fullscreen: false,
   closeOnPressEscape: true,
   alignCenter: false,
@@ -132,7 +130,9 @@ const dialogProps = computed(() => ({
   closeOnClickModal: props.closeOnClickModal,
   appendToBody: props.appendToBody,
   destroyOnClose: props.destroyOnClose,
-  draggable: props.draggable,
+  // 拖拽由全局 dialogFlex.ts 实现（带按钮过滤）；EP 内置拖拽不过滤标题栏按钮，
+  // 且其钳制逻辑会让超高弹窗在按下时瞬间上跳，导致关闭按钮 click 落空需点两次
+  draggable: false,
   fullscreen: false, // 不用 EP 内置全屏，改用浏览器 Fullscreen API
   closeOnPressEscape: props.closeOnPressEscape,
   alignCenter: props.alignCenter,

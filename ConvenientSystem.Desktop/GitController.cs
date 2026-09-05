@@ -22,6 +22,12 @@ public class GitController : ControllerBase
     public IReadOnlyList<GitRepoStatusDto> Repos()
         => _gitService.GetReposWithStatus();
 
+    /// <summary>仓库健康检查（轻量，供前端高频轮询检测目录失效）。</summary>
+    [HttpPost]
+    [Route("ReposHealth")]
+    public IReadOnlyDictionary<string, bool> ReposHealth()
+        => _gitService.GetReposHealth();
+
     /// <summary>添加仓库（自动解析仓库根目录，子目录自动归属）。</summary>
     [HttpPost]
     [Route("AddRepo")]
@@ -126,7 +132,9 @@ public class GitController : ControllerBase
     [Route("Clone")]
     public IActionResult CloneRepo([FromBody] GitCloneRequest request)
     {
-        try { return Ok(_gitService.Clone(request.Url, request.ParentDir, request.DirName, request.OpId)); }
+        try { return Ok(_gitService.Clone(request.Url, request.ParentDir, request.DirName, request.OpId,
+            request.Branch, request.SingleBranch, request.Depth, request.RecurseSubmodules,
+            request.NoCheckout, request.Filter, request.OriginName, request.Group)); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (TimeoutException ex) { return BadRequest(new { message = ex.Message }); }
         catch (Exception ex)
@@ -134,6 +142,25 @@ public class GitController : ControllerBase
             _logger.LogWarning(ex, "克隆仓库失败: {Url}", request.Url);
             return BadRequest(new { message = "克隆失败: " + ex.Message });
         }
+    }
+
+    /// <summary>列出远程仓库的分支列表（git ls-remote --heads）。</summary>
+    [HttpPost]
+    [Route("ListRemoteBranches")]
+    public IActionResult ListRemoteBranches([FromBody] GitListRemoteBranchesRequest request)
+    {
+        try { return Ok(_gitService.ListRemoteBranches(request.Url)); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (Exception ex) { return BadRequest(new { message = "获取远程分支失败: " + ex.Message }); }
+    }
+
+    /// <summary>更新仓库分组。</summary>
+    [HttpPost]
+    [Route("UpdateGroup")]
+    public IActionResult UpdateGroup([FromBody] GitUpdateGroupRequest request)
+    {
+        try { return Ok(new { ok = _gitService.UpdateRepoGroup(request.Path, request.Group) }); }
+        catch (Exception ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     /// <summary>提交历史（新→旧，含父提交与 refs，前端画分支线）。</summary>

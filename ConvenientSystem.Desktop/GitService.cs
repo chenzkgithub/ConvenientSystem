@@ -14,6 +14,8 @@ public sealed class GitRepo
     public string Path { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public DateTime AddedAt { get; set; } = DateTime.Now;
+    /// <summary>分组名（空 = 未分组）。</summary>
+    public string Group { get; set; } = string.Empty;
 }
 
 /// <summary>仓库状态总览。</summary>
@@ -38,6 +40,8 @@ public sealed class GitRepoStatusDto
     public string Remote { get; set; } = string.Empty;
     /// <summary>状态不可用原因（目录不存在等，正常为空）。</summary>
     public string Message { get; set; } = string.Empty;
+    /// <summary>分组名（空 = 未分组）。</summary>
+    public string Group { get; set; } = string.Empty;
 }
 
 /// <summary>分支条目。</summary>
@@ -206,12 +210,43 @@ public sealed class GitCloneRequest
     public string DirName { get; set; } = string.Empty;
     /// <summary>操作 ID（前端生成，用于取消）。</summary>
     public string OpId { get; set; } = string.Empty;
+    /// <summary>克隆指定分支（空 = 默认分支）。</summary>
+    public string Branch { get; set; } = string.Empty;
+    /// <summary>仅克隆指定分支的历史（--single-branch）。</summary>
+    public bool SingleBranch { get; set; }
+    /// <summary>浅克隆深度（0 = 完整克隆，>0 = --depth N）。</summary>
+    public int Depth { get; set; }
+    /// <summary>递归初始化子模块。</summary>
+    public bool RecurseSubmodules { get; set; }
+    /// <summary>克隆但不检出文件（--no-checkout）。</summary>
+    public bool NoCheckout { get; set; }
+    /// <summary>部分克隆过滤器（如 blob:none，空 = 不过滤）。</summary>
+    public string Filter { get; set; } = string.Empty;
+    /// <summary>自定义远程名（空 = 默认 origin）。</summary>
+    public string OriginName { get; set; } = string.Empty;
+    /// <summary>克隆后归入的分组（空 = 未分组）。</summary>
+    public string Group { get; set; } = string.Empty;
 }
 
 /// <summary>取消请求：opId 对应运行中的操作进程。</summary>
 public sealed class GitCancelRequest
 {
     public string OpId { get; set; } = string.Empty;
+}
+
+/// <summary>列出远程分支请求。</summary>
+public sealed class GitListRemoteBranchesRequest
+{
+    /// <summary>远程仓库地址。</summary>
+    public string Url { get; set; } = string.Empty;
+}
+
+/// <summary>更新仓库分组请求。</summary>
+public sealed class GitUpdateGroupRequest
+{
+    public string Path { get; set; } = string.Empty;
+    /// <summary>新分组名（空 = 未分组）。</summary>
+    public string Group { get; set; } = string.Empty;
 }
 
 public sealed class GitLogRequest
@@ -380,11 +415,28 @@ public sealed class GitService
     /// <summary>仓库列表（附带实时状态，供列表展示分支徽章）。</summary>
     public IReadOnlyList<GitRepoStatusDto> GetReposWithStatus()
     {
-        lock (_lock) return _repos.Select(r => GetStatus(r.Path)).ToList();
+        lock (_lock) return _repos.Select(r =>
+        {
+            var s = GetStatus(r.Path);
+            s.Group = r.Group ?? string.Empty;
+            return s;
+        }).ToList();
+    }
+
+    /// <summary>
+    /// 仓库健康检查（轻量，不 spawn git 进程）：目录存在且含 .git（目录或文件）即有效。
+    /// 供前端高频轮询，检测目录被外部删除/移动。
+    /// </summary>
+    public IReadOnlyDictionary<string, bool> GetReposHealth()
+    {
+        lock (_lock) return _repos.ToDictionary(
+            r => r.Path,
+            r => Directory.Exists(r.Path)
+                && (Directory.Exists(Path.Combine(r.Path, ".git")) || File.Exists(Path.Combine(r.Path, ".git"))));
     }
 
     /// <summary>添加仓库：自动解析仓库根目录（子目录也可识别），重复添加跳过。</summary>
-    public GitAddRepoResult AddRepo(string path)
+    public GitAddRepoResult AddRepo(string path, string group = "")
     {
         path = path?.Trim() ?? string.Empty;
         if (path.Length == 0 || !Directory.Exists(path))
@@ -405,10 +457,13 @@ public sealed class GitService
                 Path = root,
                 Name = Path.GetFileName(root.TrimEnd('\\', '/')),
                 AddedAt = DateTime.Now,
+                Group = group?.Trim() ?? string.Empty,
             });
             SaveLocked();
         }
-        return new GitAddRepoResult { Ok = true, Message = "已添加", Status = GetStatus(root) };
+        var status = GetStatus(root);
+        status.Group = group?.Trim() ?? string.Empty;
+        return new GitAddRepoResult { Ok = true, Message = "已添加", Status = status };
     }
 
     /// <summary>移除仓库（只移除列表记录，不碰磁盘）。</summary>
@@ -703,8 +758,9 @@ public sealed class GitService
             throw new ArgumentException("无效的提交哈希");
 
         // 元信息 + 文件状态列表（--name-status 隐含压制 patch 正文）
+        // -m --first-parent：合并提交按第一父对比（combined diff 对干净合并无输出，必须 -m 才能看到实际改动）
         var meta = RunGit(path, LocalTimeoutMs, null,
-            "show", "--no-color", "--name-status",
+            "show", "--no-color", "--name-status", "-m", "--first-parent",
             "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%ad%x1f%s",
             "--date=format:%Y-%m-%d %H:%M", hash);
         if (meta.ExitCode != 0)
@@ -747,8 +803,9 @@ public sealed class GitService
         }
 
         // 纯 diff（空 format 压制 commit 头）：按 "diff --git " 块切分文件
+        // -m --first-parent：合并提交同样按第一父对比
         var diff = RunGit(path, LocalTimeoutMs, null,
-            "show", "--no-color", "--pretty=format:", hash);
+            "show", "--no-color", "--pretty=format:", "-m", "--first-parent", hash);
         if (diff.ExitCode == 0)
         {
             var text = diff.Output.Replace("\r\n", "\n");
@@ -793,7 +850,7 @@ public sealed class GitService
     public GitChangesDto GetChanges(string path)
     {
         var dto = new GitChangesDto();
-        var result = RunGit(path, "status", "--porcelain=v1");
+        var result = RunGit(path, "status", "--porcelain=v1", "--untracked-files=all");
         if (result.ExitCode != 0)
             throw new InvalidOperationException("获取改动列表失败: " + result.Output);
 
@@ -1076,11 +1133,17 @@ public sealed class GitService
     /// 目标目录已存在时必须为空（防止误写非空目录），目录名空则从 URL 末段推断。
     /// 失败或被取消时：目录是本次克隆新建的则删除半成品，避免残留空壳/垃圾对象。
     /// </summary>
-    public GitCommandResultDto Clone(string url, string parentDir, string dirName, string? opId = null)
+    public GitCommandResultDto Clone(string url, string parentDir, string dirName,
+        string? opId = null, string branch = "", bool singleBranch = false,
+        int depth = 0, bool recurseSubmodules = false, bool noCheckout = false,
+        string filter = "", string originName = "", string group = "")
     {
         url = url?.Trim() ?? string.Empty;
         parentDir = parentDir?.Trim() ?? string.Empty;
         dirName = dirName?.Trim() ?? string.Empty;
+        branch = branch?.Trim() ?? string.Empty;
+        filter = filter?.Trim() ?? string.Empty;
+        originName = originName?.Trim() ?? string.Empty;
         if (url.Length == 0 || url.StartsWith('-'))
             throw new ArgumentException("无效的仓库地址");
         if (parentDir.Length == 0 || !Directory.Exists(parentDir))
@@ -1109,11 +1172,23 @@ public sealed class GitService
             createdNew = true;
         }
 
-        var result = RunGit(parentDir, CloneTimeoutMs, opId, "clone", url, dirName);
+        // 构建 git clone 参数列表
+        var args = new List<string> { "clone" };
+        if (branch.Length > 0) { args.Add("--branch"); args.Add(branch); }
+        if (singleBranch) args.Add("--single-branch");
+        if (depth > 0) { args.Add("--depth"); args.Add(depth.ToString()); }
+        if (recurseSubmodules) args.Add("--recurse-submodules");
+        if (noCheckout) args.Add("--no-checkout");
+        if (filter.Length > 0) { args.Add("--filter"); args.Add(filter); }
+        if (originName.Length > 0) { args.Add("--origin"); args.Add(originName); }
+        args.Add(url);
+        args.Add(dirName);
+
+        var result = RunGit(parentDir, CloneTimeoutMs, opId, args.ToArray());
         if (result.ExitCode == 0)
         {
             // 克隆成功自动入库（同仓库已在列表时忽略，不影响克隆结果）
-            try { AddRepo(targetDir); }
+            try { AddRepo(targetDir, group); }
             catch { /* 入库失败不影响克隆 */ }
         }
         else if (createdNew && Directory.Exists(targetDir))
@@ -1123,6 +1198,56 @@ public sealed class GitService
             catch (Exception ex) { _logger.LogWarning(ex, "清理克隆半成品目录失败: {Dir}", targetDir); }
         }
         return ToResult(result);
+    }
+
+    /// <summary>
+    /// 列出远程仓库的分支列表（通过 git ls-remote --heads）。
+    /// </summary>
+    public IReadOnlyList<string> ListRemoteBranches(string url)
+    {
+        url = url?.Trim() ?? string.Empty;
+        if (url.Length == 0 || url.StartsWith('-'))
+            throw new ArgumentException("无效的仓库地址");
+
+        var result = RunGitRaw(null, "ls-remote", "--heads", "--", url);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"获取远程分支失败: {result.Output}");
+
+        // 输出格式：{sha}\trefs/heads/{branch}\n
+        var branches = new List<string>();
+        foreach (var line in result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length >= 2)
+            {
+                var refPath = parts[1]; // refs/heads/xxx
+                var branchName = refPath.StartsWith("refs/heads/") ? refPath["refs/heads/".Length..] : refPath;
+                if (branchName.Length > 0) branches.Add(branchName);
+            }
+        }
+        // 把 main/master 排到前面
+        branches.Sort((a, b) =>
+        {
+            int wa = a is "main" or "master" ? 0 : 1;
+            int wb = b is "main" or "master" ? 0 : 1;
+            return wa != wb ? wa - wb : string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+        });
+        return branches;
+    }
+
+    /// <summary>更新仓库的分组名。</summary>
+    public bool UpdateRepoGroup(string path, string group)
+    {
+        path = path?.Trim() ?? string.Empty;
+        group = group?.Trim() ?? string.Empty;
+        lock (_lock)
+        {
+            var repo = _repos.FirstOrDefault(r => r.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (repo == null) return false;
+            repo.Group = group;
+            SaveLocked();
+            return true;
+        }
     }
 
     /// <summary>
@@ -1352,10 +1477,17 @@ public sealed class GitService
         }
     }
 
-    /// <summary>保存到磁盘（调用方需持有 _lock）。</summary>
+    /// <summary>保存到磁盘（调用方需持有 _lock）。写入失败（如安装目录无权限）仅记日志，不影响内存状态。</summary>
     private void SaveLocked()
     {
-        File.WriteAllText(StorePath, JsonSerializer.Serialize(_repos, JsonOpts));
+        try
+        {
+            File.WriteAllText(StorePath, JsonSerializer.Serialize(_repos, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "保存仓库列表失败（可能安装目录无写入权限）: {Path}", StorePath);
+        }
     }
 
     // ============================ 环境检测与配置管理 ============================

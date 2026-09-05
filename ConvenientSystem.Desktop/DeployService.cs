@@ -68,6 +68,283 @@ public sealed class DeployService
         return ToDto(job);
     }
 
+    // ============================ 手动回滚（上一版本） ============================
+
+    /// <summary>
+    /// 启动手动回滚：把最近一次部署留下的 .old 备份换回正式目录并重启服务。
+    /// 复用 DeployJob 机制（日志/进度/取消/历史），历史名称标记 [回滚]。
+    /// </summary>
+    public string StartRollback(RollbackRequest request)
+    {
+        var jobId = Guid.NewGuid().ToString("N")[..12];
+        var job = new DeployJob
+        {
+            Id = jobId,
+            BuildName = $"[回滚] {request.BuildName}",
+            BuildType = request.BuildType,
+            TargetOS = request.TargetOS,
+            SiteName = string.IsNullOrWhiteSpace(request.SiteName) ? "convenient" : request.SiteName.Trim(),
+            Host = request.Host.Trim(),
+            Status = DeployStatus.Running,
+            StartTime = DateTime.Now,
+            Log = new StringBuilder(),
+            Cts = new CancellationTokenSource(),
+        };
+        _jobs[jobId] = job;
+
+        _ = Task.Run(() => RunRollbackAsync(job, request));
+        return jobId;
+    }
+
+    private async Task RunRollbackAsync(DeployJob job, RollbackRequest request)
+    {
+        try
+        {
+            job.Log.AppendLine($"===== 开始回滚 [{job.BuildName}] → {job.TargetOS} {request.Host} [{job.SiteName}] =====");
+            job.Log.AppendLine($"将 {job.SiteName} 恢复到上一版本（.old 备份），当前版本转为备份");
+            job.Log.AppendLine();
+
+            if (job.TargetOS == DeployTargetOS.Linux)
+                await RollbackLinuxAsync(job, request);
+            else
+                await RollbackWindowsAsync(job, request);
+        }
+        catch (OperationCanceledException)
+        {
+            job.Status = DeployStatus.Cancelled;
+            job.CompletedTime = DateTime.Now;
+            job.Log.AppendLine();
+            job.Log.AppendLine($"===== ⛔ 回滚已取消（中断于第 {job.CurrentStep} 步） =====");
+        }
+        catch (Exception ex)
+        {
+            job.Status = DeployStatus.Failed;
+            job.CompletedTime = DateTime.Now;
+            job.Log.AppendLine();
+            job.Log.AppendLine($"===== ❌ 回滚失败: {ex.Message} =====");
+            _logger.LogError(ex, "回滚失败: {BuildName}", job.BuildName);
+        }
+        finally
+        {
+            RecordHistory(job);
+        }
+    }
+
+    /// <summary>Linux 回滚：三段交换目录（current→tmp、.old→current、tmp→.old）+ 重建容器 + 健康检查。</summary>
+    private async Task RollbackLinuxAsync(DeployJob job, RollbackRequest request)
+    {
+        var token = job.Cts!.Token;
+        var siteName = job.SiteName;
+        var deployBase = string.IsNullOrWhiteSpace(request.DeployPath)
+            ? $"/opt/{siteName}"
+            : request.DeployPath.Trim();
+
+        var (defaultService, defaultDir) = GetLinuxDeployTarget(request.BuildType, deployBase);
+        var serviceName = string.IsNullOrWhiteSpace(request.ServiceName) ? defaultService : request.ServiceName.Trim();
+        var remoteTargetDir = string.IsNullOrWhiteSpace(request.RemoteDir) ? defaultDir : request.RemoteDir.Trim();
+        var oldDir = $"{remoteTargetDir}.old";
+        RecordRemotePaths(job, remoteTargetDir, $"{remoteTargetDir}.new", oldDir, string.Empty, serviceName);
+        job.DeployBaseDir = deployBase;
+
+        var connectionInfo = new Renci.SshNet.ConnectionInfo(
+            request.Host.Trim(),
+            request.UserName.Trim(),
+            new PasswordAuthenticationMethod(request.UserName.Trim(), request.Password));
+
+        using var ssh = new SshClient(connectionInfo);
+        ssh.Connect();
+
+        // ① 校验备份存在（无备份时明确报错，不做任何改动）
+        SetStep(job, 1, "校验备份");
+        await ExecuteSshAsync(ssh,
+            $"test -d {oldDir} || (echo '上一版本备份不存在: {oldDir}，无法回滚' && exit 1)", job, token);
+        job.Log.AppendLine($"      ✓ 备份存在（{oldDir}）");
+        job.Progress = 10;
+
+        // ② 停止旧容器（可取消；后续步骤失败时文件已换回，不影响再处理）
+        SetStep(job, 2, "停止旧容器");
+        if (!string.IsNullOrEmpty(serviceName))
+        {
+            await ExecuteSshAsync(ssh,
+                $"cd {deployBase} && docker compose -p {siteName} stop {serviceName} 2>&1", job, token);
+            job.Log.AppendLine($"      ✓ 容器已停止");
+        }
+        job.Progress = 30;
+
+        // ③ 三段交换目录（交换而非删除：可再次回滚回到当前版本）
+        SetStep(job, 3, "切换回旧版本");
+        await ExecuteSshAsync(ssh,
+            $"mv {remoteTargetDir} {remoteTargetDir}.rb 2>/dev/null || true; " +
+            $"mv {oldDir} {remoteTargetDir}; " +
+            $"mv {remoteTargetDir}.rb {oldDir}", job, token);
+        job.FilesSwapped = true;
+        job.Log.AppendLine($"      ✓ 已换回上一版本（当前版本转存 {oldDir}，可再次回滚）");
+        job.Progress = 55;
+
+        // ④ 重建容器（临界区：期间拒绝取消）
+        SetStep(job, 4, "重建容器");
+        if (!string.IsNullOrEmpty(serviceName))
+        {
+            job.InCriticalSection = true;
+            try
+            {
+                await ExecuteSshAsync(ssh,
+                    $"cd {deployBase} && docker compose -p {siteName} build --no-cache {serviceName} && " +
+                    $"docker compose -p {siteName} up -d --force-recreate {serviceName} 2>&1", job, CancellationToken.None);
+            }
+            finally
+            {
+                job.InCriticalSection = false;
+            }
+            job.Log.AppendLine($"      ✓ 容器已用旧版本重建并启动");
+        }
+        job.Committed = true;
+        job.Progress = 85;
+
+        // ⑤ 验证（失败只告警，不再自动回滚——再点一次回滚即可回到当前版本）
+        SetStep(job, 5, "健康检查");
+        if (request.VerifyHealth && !string.IsNullOrEmpty(serviceName))
+        {
+            await Task.Delay(3000, token);
+            await ExecuteSshAsync(ssh,
+                $"docker ps --filter name={siteName}-{serviceName} --format \"table {{{{.Names}}}}\\t{{{{.Status}}}}\" 2>&1", job, token);
+
+            var healthUrl = serviceName == "api"
+                ? "http://localhost:51943/api/health"
+                : "http://localhost:80";
+            var healthOutput = ExecuteSshCommand(ssh,
+                $"curl -s -o /dev/null -w \"%{{http_code}}\" --max-time 10 {healthUrl} 2>/dev/null || echo 000");
+            var httpCode = ParseHttpCode(healthOutput);
+            job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
+            if (!httpCode.StartsWith("2"))
+            {
+                job.Log.AppendLine($"      ⚠ 健康检查未通过（HTTP {httpCode}），请检查旧版本可用性或再次回滚");
+            }
+            else
+            {
+                job.Log.AppendLine($"      ✓ 验证完成");
+            }
+        }
+        job.Progress = 100;
+
+        ssh.Disconnect();
+
+        job.Status = DeployStatus.Success;
+        job.CompletedTime = DateTime.Now;
+        var elapsed = (int)(job.CompletedTime.Value - job.StartTime).TotalSeconds;
+        job.Log.AppendLine();
+        job.Log.AppendLine($"===== ✅ 回滚完成！耗时 {elapsed} 秒 =====");
+        job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request, serviceName)}");
+    }
+
+    /// <summary>Windows 回滚：停服务 + 三段交换目录 + 启动服务 + 健康检查。</summary>
+    private async Task RollbackWindowsAsync(DeployJob job, RollbackRequest request)
+    {
+        var token = job.Cts!.Token;
+        var siteName = job.SiteName;
+        var deployBase = string.IsNullOrWhiteSpace(request.DeployPath)
+            ? @$"D:\apps\{siteName}"
+            : request.DeployPath.Trim();
+
+        var (defaultService, defaultDir) = GetWindowsDeployTarget(request.BuildType, deployBase);
+        var serviceName = string.IsNullOrWhiteSpace(request.ServiceName) ? defaultService : request.ServiceName.Trim();
+        var remoteTargetDir = string.IsNullOrWhiteSpace(request.RemoteDir) ? defaultDir : request.RemoteDir.Trim();
+        var oldDir = $@"{remoteTargetDir}.old";
+        RecordRemotePaths(job, remoteTargetDir, $@"{remoteTargetDir}.new", oldDir, string.Empty, serviceName);
+        var leafName = Path.GetFileName(remoteTargetDir.TrimEnd('\\', '/'));
+
+        var connectionInfo = new Renci.SshNet.ConnectionInfo(
+            request.Host.Trim(),
+            request.UserName.Trim(),
+            new PasswordAuthenticationMethod(request.UserName.Trim(), request.Password));
+
+        using var ssh = new SshClient(connectionInfo);
+        ssh.Connect();
+
+        // ① 校验备份存在
+        SetStep(job, 1, "校验备份");
+        await ExecuteSshAsync(ssh,
+            $"powershell -Command \"if (-not (Test-Path '{oldDir}')) {{ Write-Host '上一版本备份不存在: {oldDir}，无法回滚'; exit 1 }}\"", job, token);
+        job.Log.AppendLine($"      ✓ 备份存在（{oldDir}）");
+        job.Progress = 10;
+
+        // ② 停止服务（当前版本可能正在运行，exe 锁定目录必须先停）
+        SetStep(job, 2, "停止服务");
+        if (!string.IsNullOrEmpty(serviceName))
+        {
+            await ExecuteSshAsync(ssh,
+                $"powershell -Command \"Stop-Service -Name '{serviceName}' -Force -ErrorAction SilentlyContinue\"", job, token);
+            job.ServiceStopped = true;
+            job.Log.AppendLine($"      ✓ 服务已停止");
+        }
+        job.Progress = 30;
+
+        // ③ 三段交换目录（交换而非删除：可再次回滚回到当前版本）
+        SetStep(job, 3, "切换回旧版本");
+        await ExecuteSshAsync(ssh,
+            $"powershell -Command \"$ErrorActionPreference='Stop'; " +
+            $"if (Test-Path '{remoteTargetDir}') {{ Rename-Item '{remoteTargetDir}' '{leafName}.rb' -Force }}; " +
+            $"Rename-Item '{oldDir}' '{leafName}' -Force; " +
+            $"if (Test-Path '{remoteTargetDir}.rb') {{ Rename-Item '{remoteTargetDir}.rb' '{leafName}.old' -Force }}\"", job, token);
+        job.FilesSwapped = true;
+        job.Log.AppendLine($"      ✓ 已换回上一版本（当前版本转存 {oldDir}，可再次回滚）");
+        job.Progress = 55;
+
+        // ④ 启动服务（临界区）
+        SetStep(job, 4, "启动服务");
+        if (!string.IsNullOrEmpty(serviceName))
+        {
+            job.InCriticalSection = true;
+            try
+            {
+                await ExecuteSshAsync(ssh,
+                    $"powershell -Command \"Start-Service -Name '{serviceName}' -ErrorAction SilentlyContinue\"", job, CancellationToken.None);
+            }
+            finally
+            {
+                job.InCriticalSection = false;
+            }
+            job.Log.AppendLine($"      ✓ 服务已启动");
+        }
+        job.Committed = true;
+        job.Progress = 85;
+
+        // ⑤ 验证（失败只告警）
+        SetStep(job, 5, "健康检查");
+        if (request.VerifyHealth && !string.IsNullOrEmpty(serviceName))
+        {
+            await Task.Delay(3000, token);
+            await ExecuteSshAsync(ssh,
+                $"powershell -Command \"Get-Service -Name '{serviceName}' | Format-Table Name,Status\"", job, token);
+
+            var healthUrl = serviceName == "ConvenientSystem.Api"
+                ? "http://localhost:51943/api/health"
+                : "http://localhost:8080";
+            var healthOutput = ExecuteSshCommand(ssh,
+                $"powershell -Command \"try {{ (Invoke-WebRequest -Uri '{healthUrl}' -UseBasicParsing -TimeoutSec 10).StatusCode }} catch {{ 'ERR' }}\"");
+            var httpCode = ParseHttpCode(healthOutput);
+            job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
+            if (!httpCode.StartsWith("2"))
+            {
+                job.Log.AppendLine($"      ⚠ 健康检查未通过（HTTP {httpCode}），请检查旧版本可用性或再次回滚");
+            }
+            else
+            {
+                job.Log.AppendLine($"      ✓ 验证完成");
+            }
+        }
+        job.Progress = 100;
+
+        ssh.Disconnect();
+
+        job.Status = DeployStatus.Success;
+        job.CompletedTime = DateTime.Now;
+        var elapsed = (int)(job.CompletedTime.Value - job.StartTime).TotalSeconds;
+        job.Log.AppendLine();
+        job.Log.AppendLine($"===== ✅ 回滚完成！耗时 {elapsed} 秒 =====");
+        job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request, serviceName)}");
+    }
+
     /// <summary>
     /// 取消部署任务：发送取消信号，正在运行的部署会在安全检查点中断并自动还原环境。
     /// 临界区（重启容器/启停服务）期间拒绝取消，返回原因。
@@ -215,6 +492,7 @@ public sealed class DeployService
         var newDir = $"{remoteTargetDir}.new";
         var oldDir = $"{remoteTargetDir}.old";
         RecordRemotePaths(job, remoteTargetDir, newDir, oldDir, tempDir, serviceName);
+        job.DeployBaseDir = deployBase;
 
         var archiveName = string.IsNullOrWhiteSpace(request.ArchiveName)
             ? $"{siteName}-{serviceName}.tar.gz"
@@ -234,25 +512,32 @@ public sealed class DeployService
             await Task.Run(() => CreateTarGz(outputDir, localArchivePath, token), token);
             var size = new FileInfo(localArchivePath).Length;
             job.Log.AppendLine($"      ✓ {archiveName} ({FormatSize(size)})");
+            job.Progress = 10;
 
-            // ② SFTP 上传（可取消，无副作用）
+            // ② SFTP 上传（可取消，无副作用）：上传占整体 10%~70%，按字节实时推进
             SetStep(job, 2, "SFTP 上传到服务器");
             using (var sftp = new SftpClient(connectionInfo))
             {
                 sftp.Connect();
                 EnsureRemoteDirectory(sftp, tempDir);
                 var totalBytes = (ulong)new FileInfo(localArchivePath).Length;
+                var lastLoggedPercent = 0;
                 using var fs = File.OpenRead(localArchivePath);
                 sftp.UploadFile(fs, remoteArchivePath, true, (sent) =>
                 {
                     token.ThrowIfCancellationRequested();
                     if (totalBytes <= 0) return;
                     var percent = (int)(sent * 100 / totalBytes);
-                    if (percent % 25 == 0 && percent > 0)
+                    job.Progress = 10 + percent * 60 / 100;
+                    if (percent > lastLoggedPercent && percent % 10 == 0)
+                    {
+                        lastLoggedPercent = percent;
                         job.Log.AppendLine($"      上传进度: {percent}%");
+                    }
                 });
                 sftp.Disconnect();
             }
+            job.Progress = 70;
             job.Log.AppendLine($"      ✓ 上传完成");
 
             // ③ 解压到 .new 临时目录（正式目录未动，取消无副作用）
@@ -262,6 +547,7 @@ public sealed class DeployService
 
             await ExecuteSshAsync(ssh, $"rm -rf {newDir} && mkdir -p {newDir}", job, token);
             await ExecuteSshAsync(ssh, $"tar -xzf {remoteArchivePath} -C {newDir}", job, token);
+            job.Progress = 72;
             job.Log.AppendLine($"      ✓ 解压完成（{newDir}，正式目录未受影响）");
 
             // ④ 原子切换（拆两步，保证回滚判定准确）：
@@ -276,6 +562,7 @@ public sealed class DeployService
             job.FilesSwapped = true;
             await ExecuteSshAsync(ssh, $"mv {newDir} {remoteTargetDir}", job, token);
             job.Log.AppendLine($"      ✓ 已切换（旧版本备份于 {oldDir}）");
+            job.Progress = 80;
 
             // ⑤ Docker 镜像构建（可取消：旧容器仍在运行，取消后回滚文件即完全还原）
             SetStep(job, 5, "构建 Docker 镜像");
@@ -311,6 +598,7 @@ public sealed class DeployService
                 job.Log.AppendLine($"      跳过");
             }
             job.Committed = true;
+            job.Progress = 90;
 
             // ⑦ 验证与清理（.old 备份保留，供手动回滚）
             SetStep(job, 7, "验证与清理");
@@ -320,17 +608,27 @@ public sealed class DeployService
                 await ExecuteSshAsync(ssh,
                     $"docker ps --filter name={siteName}-{serviceName} --format \"table {{{{.Names}}}}\\t{{{{.Status}}}}\" 2>&1", job, token);
 
-                // 健康检查
+                // 健康检查：解析 HTTP 状态码，非 2xx 视为新版本不可用 → 抛异常触发自动回滚
                 var healthUrl = serviceName == "api"
                     ? "http://localhost:51943/api/health"
                     : "http://localhost:80";
-                await ExecuteSshAsync(ssh,
-                    $"curl -s -o /dev/null -w \"%{{http_code}}\" {healthUrl} 2>&1 || echo 'health check failed'", job, token);
+                var healthOutput = ExecuteSshCommand(ssh,
+                    $"curl -s -o /dev/null -w \"%{{http_code}}\" --max-time 10 {healthUrl} 2>/dev/null || echo 000");
+                var httpCode = ParseHttpCode(healthOutput);
+                job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
+                if (!httpCode.StartsWith("2"))
+                {
+                    // 容器已用新版本启动过：还原文件后必须重建容器才能回到旧版本
+                    job.Committed = false;
+                    job.RestartServiceAfterRollback = true;
+                    throw new InvalidOperationException($"健康检查未通过（HTTP {httpCode}），新版本不可用，自动回滚到旧版本");
+                }
                 job.Log.AppendLine($"      ✓ 验证完成");
             }
 
             await ExecuteSshAsync(ssh, $"rm -rf {tempDir}", job, token);
             job.Log.AppendLine($"      ✓ 清理完成（旧版本备份保留在 {oldDir}，下次部署时覆盖）");
+            job.Progress = 100;
 
             ssh.Disconnect();
 
@@ -389,25 +687,32 @@ public sealed class DeployService
             token.ThrowIfCancellationRequested();
             var size = new FileInfo(localArchivePath).Length;
             job.Log.AppendLine($"      ✓ {archiveName} ({FormatSize(size)})");
+            job.Progress = 10;
 
-            // ② SFTP 上传（可取消，无副作用）
+            // ② SFTP 上传（可取消，无副作用）：上传占整体 10%~70%，按字节实时推进
             SetStep(job, 2, "SFTP 上传到服务器");
             using (var sftp = new SftpClient(connectionInfo))
             {
                 sftp.Connect();
                 EnsureRemoteDirectory(sftp, tempDir.Replace("\\", "/"));
                 var totalBytes = (ulong)new FileInfo(localArchivePath).Length;
+                var lastLoggedPercent = 0;
                 using var fs = File.OpenRead(localArchivePath);
                 sftp.UploadFile(fs, remoteArchivePath.Replace("\\", "/"), true, (sent) =>
                 {
                     token.ThrowIfCancellationRequested();
                     if (totalBytes <= 0) return;
                     var percent = (int)(sent * 100 / totalBytes);
-                    if (percent % 25 == 0 && percent > 0)
+                    job.Progress = 10 + percent * 60 / 100;
+                    if (percent > lastLoggedPercent && percent % 10 == 0)
+                    {
+                        lastLoggedPercent = percent;
                         job.Log.AppendLine($"      上传进度: {percent}%");
+                    }
                 });
                 sftp.Disconnect();
             }
+            job.Progress = 70;
             job.Log.AppendLine($"      ✓ 上传完成");
 
             // ③ 解压到 .new 临时目录（正式目录未动，取消无副作用）
@@ -443,6 +748,7 @@ public sealed class DeployService
             await ExecuteSshAsync(ssh,
                 $"powershell -Command \"$ErrorActionPreference='Stop'; Rename-Item '{newDir}' '{leafName}' -Force\"", job, token);
             job.Log.AppendLine($"      ✓ 已切换（旧版本备份于 {oldDir}）");
+            job.Progress = 80;
 
             // ⑤ 启动服务（临界区：执行期间拒绝取消；完成后新版本即生效）
             SetStep(job, 5, "启动服务");
@@ -461,6 +767,7 @@ public sealed class DeployService
                 job.Log.AppendLine($"      ✓ 服务已启动");
             }
             job.Committed = true;
+            job.Progress = 90;
 
             // ⑥⑦ 验证与清理（.old 备份保留，供手动回滚）
             SetStep(job, 7, "验证与清理");
@@ -470,17 +777,29 @@ public sealed class DeployService
                 await ExecuteSshAsync(ssh,
                     $"powershell -Command \"Get-Service -Name '{serviceName}' | Format-Table Name,Status\"", job, token);
 
+                // 健康检查：解析 HTTP 状态码，非 2xx 视为新版本不可用 → 抛异常触发自动回滚
                 var healthUrl = serviceName == "ConvenientSystem.Api"
                     ? "http://localhost:51943/api/health"
                     : "http://localhost:8080";
-                await ExecuteSshAsync(ssh,
-                    $"powershell -Command \"(Invoke-WebRequest -Uri '{healthUrl}' -UseBasicParsing -TimeoutSec 10).StatusCode\"", job, token);
+                // Invoke-WebRequest 对非 2xx 会抛异常（含连接失败），统一捕获输出 ERR
+                var healthOutput = ExecuteSshCommand(ssh,
+                    $"powershell -Command \"try {{ (Invoke-WebRequest -Uri '{healthUrl}' -UseBasicParsing -TimeoutSec 10).StatusCode }} catch {{ 'ERR' }}\"");
+                var httpCode = ParseHttpCode(healthOutput);
+                job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
+                if (!httpCode.StartsWith("2"))
+                {
+                    // 新版本服务已启动过：还原文件后需重启服务才能回到旧版本
+                    job.Committed = false;
+                    job.RestartServiceAfterRollback = true;
+                    throw new InvalidOperationException($"健康检查未通过（HTTP {httpCode}），新版本不可用，自动回滚到旧版本");
+                }
                 job.Log.AppendLine($"      ✓ 验证完成");
             }
 
             await ExecuteSshAsync(ssh,
                 $"powershell -Command \"Remove-Item -Path '{tempDir}' -Recurse -Force -ErrorAction SilentlyContinue\"", job, token);
             job.Log.AppendLine($"      ✓ 清理完成（旧版本备份保留在 {oldDir}，下次部署时覆盖）");
+            job.Progress = 100;
 
             ssh.Disconnect();
 
@@ -548,9 +867,23 @@ public sealed class DeployService
                         $"rm -rf {job.NewDir} {job.TempDir}", job, CancellationToken.None);
                     job.Log.AppendLine($"      ↩ 文件已还原为旧版本（运行中的容器自始至终未受影响）");
                 }
+                // 健康检查失败场景：容器已用新版本文件构建并启动过，需用还原后的旧文件重建容器
+                if (job.RestartServiceAfterRollback && !string.IsNullOrEmpty(job.ServiceName))
+                {
+                    await ExecuteSshAsync(ssh,
+                        $"cd {job.DeployBaseDir} && docker compose -p {job.SiteName} build --no-cache {job.ServiceName} && " +
+                        $"docker compose -p {job.SiteName} up -d --force-recreate {job.ServiceName} 2>&1", job, CancellationToken.None);
+                    job.Log.AppendLine($"      ↩ 容器已用旧版本重建并启动");
+                }
             }
             else
             {
+                // 健康检查失败场景：新版本服务正在运行（exe 锁定目录），须先停止才能换回旧文件
+                if (job.RestartServiceAfterRollback && !string.IsNullOrEmpty(job.ServiceName))
+                {
+                    await ExecuteSshAsync(ssh,
+                        $"powershell -Command \"Stop-Service -Name '{job.ServiceName}' -Force -ErrorAction SilentlyContinue\"", job, CancellationToken.None);
+                }
                 if (job.FilesSwapped)
                 {
                     var leafName = Path.GetFileName(job.TargetDir.TrimEnd('\\', '/'));
@@ -562,7 +895,7 @@ public sealed class DeployService
                         $"Remove-Item '{job.TempDir}' -Recurse -Force -ErrorAction SilentlyContinue\"", job, CancellationToken.None);
                     job.Log.AppendLine($"      ↩ 文件已还原为旧版本");
                 }
-                if (job.ServiceStopped && !string.IsNullOrEmpty(job.ServiceName))
+                if ((job.ServiceStopped || job.RestartServiceAfterRollback) && !string.IsNullOrEmpty(job.ServiceName))
                 {
                     await ExecuteSshAsync(ssh,
                         $"powershell -Command \"Start-Service -Name '{job.ServiceName}' -ErrorAction SilentlyContinue\"", job, CancellationToken.None);
@@ -739,6 +1072,13 @@ public sealed class DeployService
         return (cmd.Result ?? string.Empty) + (cmd.Error ?? string.Empty);
     }
 
+    /// <summary>从健康检查输出中提取三位 HTTP 状态码（取不到时视为 000）。</summary>
+    private static string ParseHttpCode(string output)
+    {
+        var code = output.Split((char)10, (char)13, (char)32, (char)9).Select(x => x.Trim()).FirstOrDefault(x => x.Length == 3 && x.All(char.IsDigit));
+        return code ?? "000";
+    }
+
     private static void EnsureRemoteDirectory(SftpClient client, string remoteDirectory)
     {
         if (string.IsNullOrWhiteSpace(remoteDirectory) || remoteDirectory == "/") return;
@@ -833,6 +1173,7 @@ public sealed class DeployService
             Status = job.Status,
             StartTime = job.StartTime,
             CompletedTime = job.CompletedTime,
+            Progress = job.Progress,
             Log = job.Log.ToString(),
         };
     }
@@ -867,6 +1208,8 @@ public sealed class DeployJob
     public DateTime StartTime { get; set; }
     public DateTime? CompletedTime { get; set; }
     public StringBuilder Log { get; set; } = new();
+    /// <summary>整体进度（0-100）：上传段按字节实时推进，其余步骤按阶段刻度。</summary>
+    public int Progress { get; set; }
     /// <summary>取消信号源。</summary>
     public CancellationTokenSource? Cts { get; set; }
     /// <summary>当前执行步骤（1-7），用于取消日志定位。</summary>
@@ -879,6 +1222,10 @@ public sealed class DeployJob
     public bool InCriticalSection { get; set; }
     /// <summary>新版本是否已生效（容器/服务已切换），此后取消不再回滚。</summary>
     public bool Committed { get; set; }
+    /// <summary>健康检查失败触发的回滚：还原文件后必须重启容器/服务才真正回到旧版本。</summary>
+    public bool RestartServiceAfterRollback { get; set; }
+    /// <summary>Linux 部署根路径（docker-compose.yml 所在目录，回滚重建容器用）。</summary>
+    public string DeployBaseDir { get; set; } = string.Empty;
     /// <summary>远程正式目录（回滚用）。</summary>
     public string TargetDir { get; set; } = string.Empty;
     /// <summary>远程新文件临时目录（回滚用）。</summary>
@@ -889,6 +1236,27 @@ public sealed class DeployJob
     public string TempDir { get; set; } = string.Empty;
     /// <summary>远程服务名（回滚重启服务用）。</summary>
     public string ServiceName { get; set; } = string.Empty;
+}
+
+/// <summary>手动回滚请求：把最近一次部署的 .old 备份换回正式目录。</summary>
+public sealed class RollbackRequest
+{
+    /// <summary>构建任务名称（日志标识，回滚历史名称会加 [回滚] 前缀）。</summary>
+    public string BuildName { get; set; } = string.Empty;
+    public UniversalBuildType BuildType { get; set; }
+    public DeployTargetOS TargetOS { get; set; } = DeployTargetOS.Linux;
+    public string SiteName { get; set; } = "convenient";
+    public string Host { get; set; } = string.Empty;
+    public string UserName { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    /// <summary>远程部署根路径（与部署时一致，留空用默认）。</summary>
+    public string DeployPath { get; set; } = string.Empty;
+    /// <summary>服务名（留空按构建类型推断）。</summary>
+    public string ServiceName { get; set; } = string.Empty;
+    /// <summary>远程目标目录（留空按构建类型推断）。</summary>
+    public string RemoteDir { get; set; } = string.Empty;
+    /// <summary>回滚后是否执行健康检查（失败仅告警，不自动再回滚）。</summary>
+    public bool VerifyHealth { get; set; } = true;
 }
 
 public sealed class DeployRequest
@@ -935,6 +1303,8 @@ public sealed class DeployJobDto
     public DeployStatus Status { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime? CompletedTime { get; set; }
+    /// <summary>整体进度（0-100），上传段为字节级真实进度。</summary>
+    public int Progress { get; set; }
     public string Log { get; set; } = string.Empty;
 }
 

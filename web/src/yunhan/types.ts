@@ -38,6 +38,8 @@ export interface RequestDto {
 export interface AttendanceRow {
   avatar?: string
   ddUserId?: string
+  /** 钉钉个人 ID（用于 URL Scheme 打开聊天窗口） */
+  dingCode?: string
   /** 企业 corpId（钉钉 URL Scheme 跳转联系人详情页用） */
   corpId?: string
   userName: string

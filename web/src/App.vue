@@ -38,6 +38,10 @@ const isLocked = computed(() => lock.isLocked)
 // - offset 保持表格内部默认的 0：浮层必须紧贴单元格，留了空隙鼠标就无法连续移到浮层上，
 //   中途会先进入上方元素并触发它自己的提示，导致永远选不中内容、点不到复制按钮。
 // 优先级：列上的显式值 > 表格上的显式值 > 此处全局默认。
+const dialogConfig = {
+  appendToBody: true,
+}
+
 const tableConfig = {
   showOverflowTooltip: true,
   tooltipEffect: 'light',
@@ -187,7 +191,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <el-config-provider :locale="zhCn" :table="tableConfig">
+  <el-config-provider :locale="zhCn" :table="tableConfig" :dialog="dialogConfig">
   <!-- 全局自动悬浮提示：全系统只挂一个实例，任何页面的原生 title
        与被省略号截断的文本都自动弹统一浮层，新页面无需写任何代码 -->
   <GlobalAutoTip />

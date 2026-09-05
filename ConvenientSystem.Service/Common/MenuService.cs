@@ -75,19 +75,27 @@ namespace ConvenientSystem.Service.Common
         }
 
         /// <summary>
-        /// 计算用户可见的菜单 Id 集合：先取角色授权的菜单，再向上补齐所有祖先分组，
-        /// 使被授权的末级菜单在树中仍能显示其父级分组。
+        /// 计算用户可见的菜单 Id 集合：角色授权（SysRoleMenu）与用户级直接授权（SysUserMenu）取并集，
+        /// 再向上补齐所有祖先分组，使被授权的末级菜单在树中仍能显示其父级分组。
+        /// 口径与 LoginService.LoadPermissionsAsync 一致（用户级只能追加不能削减）。
         /// </summary>
         private HashSet<int> ResolveVisibleMenuIds(List<SysMenuEntity> allMenus, Guid userId)
         {
             var roleIds = _configDb.Select<SysUserRoleEntity>()
                 .Where(ur => ur.UserId == userId)
                 .ToList(ur => ur.RoleId);
-            if (roleIds.Count == 0) return new HashSet<int>();
 
-            var granted = _configDb.Select<SysRoleMenuEntity>()
-                .Where(rm => roleIds.Contains(rm.RoleId))
-                .ToList(rm => rm.MenuId);
+            // 角色授权菜单（无角色时为空，不影响下方用户级授权）
+            var granted = roleIds.Count == 0
+                ? new List<int>()
+                : _configDb.Select<SysRoleMenuEntity>()
+                    .Where(rm => roleIds.Contains(rm.RoleId))
+                    .ToList(rm => rm.MenuId);
+
+            // 用户级直接授权的菜单（追加授权，与角色并集）
+            granted.AddRange(_configDb.Select<SysUserMenuEntity>()
+                .Where(um => um.UserId == userId)
+                .ToList(um => um.MenuId));
 
             var parentOf = allMenus.ToDictionary(m => m.Id, m => m.ParentId);
             var visible = new HashSet<int>();

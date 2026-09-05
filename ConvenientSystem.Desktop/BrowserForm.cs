@@ -564,6 +564,16 @@ public sealed class BrowserForm : Form, ILockable
                 return;
             }
 
+            // 外部协议链接（如 dingtalk://）：由宿主直接启动，绕过 WebView2 外部协议策略
+            if (root.TryGetProperty("type", out var msgType) && msgType.GetString() == "scheme:open"
+                && root.TryGetProperty("url", out var schemeUrlEl)
+                && schemeUrlEl.GetString() is { Length: > 0 } schemeUrl)
+            {
+                try { Process.Start(new ProcessStartInfo(schemeUrl) { UseShellExecute = true }); }
+                catch { /* 启动失败时静默忽略 */ }
+                return;
+            }
+
             // 文件操作：与 MainForm 共享同一处理逻辑，确保独立窗口中也能正常保存
             HostFileService.TryHandleMessage(root, _webView.CoreWebView2!, this);
         }

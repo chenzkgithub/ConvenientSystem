@@ -11,6 +11,9 @@
 
         public string UserName { get; set; }
 
+        /// <summary>钉钉个人 ID（用于 URL Scheme 打开聊天窗口）</summary>
+        public string dingCode { get; set; }
+
         public string HiredDate { get; set; }
 
         public decimal WorkDuration { get; set; }

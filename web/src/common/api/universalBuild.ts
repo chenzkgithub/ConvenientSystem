@@ -1,10 +1,10 @@
-﻿import { httpPost } from '@/api/request'
+import { httpPost } from '@/api/request'
 
 /** 通用构建类型 */
 export type UniversalBuildType = 'Web' | 'Node' | 'DotNet' | 'JavaMaven' | 'JavaGradle' | 'Installer'
 
-/** 通用构建状态 */
-export type UniversalBuildStatus = 'Pending' | 'Running' | 'Success' | 'Failed' | 'Cancelled'
+/** 通用构建状态（Waiting = 并发已满，排队等待构建槽位） */
+export type UniversalBuildStatus = 'Pending' | 'Waiting' | 'Running' | 'Success' | 'Failed' | 'Cancelled'
 
 /** 环境检测信息 */
 export interface UniversalEnvironmentInfo {
@@ -25,6 +25,8 @@ export interface UniversalBuildJobDto {
   projectDir: string
   outputDir: string
   progress: number
+  /** 排队位置（仅 Waiting 时有值，按启动顺序 1 起） */
+  queuePosition?: number | null
   log: string
   exitCode?: number
   startTime: string
@@ -38,6 +40,8 @@ export interface UniversalBuildRequest {
   projectDir: string
   outputDir?: string
   name: string
+  /** 构建前先执行 git pull --ff-only 拉取远端最新代码 */
+  prePull?: boolean
 }
 
 /** 检测指定类型环境请求 */
@@ -114,6 +118,8 @@ export interface DeployJobDto {
   status: DeployStatus
   startTime: string
   completedTime?: string
+  /** 部署整体进度（0-100），上传段为字节级真实进度 */
+  progress?: number
   log: string
 }
 
@@ -185,6 +191,30 @@ export function cancelDeploy(request: DeployCancelRequest) {
   return httpPost<DeployCancelResult>('/api/Common/UniversalBuild/DeployCancel', request)
 }
 
+/** 手动回滚请求：把最近一次部署的 .old 备份换回正式目录 */
+export interface RollbackRequest {
+  buildName: string
+  buildType: UniversalBuildType
+  targetOS: DeployTargetOS
+  siteName?: string
+  host: string
+  userName: string
+  password: string
+  /** 远程部署根路径（与部署时一致，留空用默认） */
+  deployPath?: string
+  /** 服务名（留空按构建类型推断） */
+  serviceName?: string
+  /** 远程目标目录（留空按构建类型推断） */
+  remoteDir?: string
+  /** 回滚后是否执行健康检查（失败仅告警） */
+  verifyHealth?: boolean
+}
+
+/** 启动手动回滚（复用部署任务机制，进度/日志/取消同部署） */
+export function startRollback(request: RollbackRequest) {
+  return httpPost<DeployJobDto>('/api/Common/UniversalBuild/Rollback', request)
+}
+
 /** 弹出文件夹选择对话框，返回用户选择的目录路径 */
 export function selectFolder() {
   return httpPost<string | null>('/api/Common/UniversalBuild/SelectFolder', {})
@@ -252,4 +282,33 @@ export function setSchedule(item: ScheduleItem) {
 /** 删除定时构建 */
 export function removeSchedule(id: string) {
   return httpPost(`/api/Common/UniversalBuild/ScheduleRemove?id=${encodeURIComponent(id)}`, {})
+}
+
+// ============================ SSH 凭据（DPAPI 加密存储） ============================
+
+/** SSH 凭据保存请求 */
+export interface SshCredentialRequest {
+  host: string
+  userName: string
+  password: string
+}
+
+/** SSH 凭据查询结果（未保存过或解密失败时为 null） */
+export interface SshCredentialResult {
+  password: string | null
+}
+
+/** 保存 SSH 凭据（DPAPI 加密后落盘本机，供下次部署与自动部署复用） */
+export function saveSshCredential(request: SshCredentialRequest) {
+  return httpPost('/api/Common/UniversalBuild/SaveSshCredential', request)
+}
+
+/** 读取已保存的 SSH 密码（本机接口，供部署弹窗回填） */
+export function getSshCredential(host: string, userName: string) {
+  return httpPost<SshCredentialResult>(`/api/Common/UniversalBuild/GetSshCredential?host=${encodeURIComponent(host)}&userName=${encodeURIComponent(userName)}`, {})
+}
+
+/** 删除已保存的 SSH 凭据 */
+export function removeSshCredential(host: string, userName: string) {
+  return httpPost(`/api/Common/UniversalBuild/RemoveSshCredential?host=${encodeURIComponent(host)}&userName=${encodeURIComponent(userName)}`, {})
 }
