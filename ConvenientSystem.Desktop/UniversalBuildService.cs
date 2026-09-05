@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.IO.Compression;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -55,6 +56,8 @@ public sealed class UniversalBuildRequest
     public string Name { get; set; } = string.Empty;
     /// <summary>构建前先执行 git pull --ff-only 拉取远端最新代码。</summary>
     public bool PrePull { get; set; }
+    /// <summary>构建成功后把产物目录打包成 zip（落在输出目录的父目录，时间戳命名）。</summary>
+    public bool PackArtifact { get; set; }
 }
 
 /// <summary>通用构建任务 DTO。</summary>
@@ -73,6 +76,10 @@ public sealed class UniversalBuildJobDto
     public int? ExitCode { get; set; }
     /// <summary>构建产物总大小（字节，构建成功后统计；失败/未构建为 null）。</summary>
     public long? ArtifactSize { get; set; }
+    /// <summary>构建成功后打包的 zip 路径（勾选打压缩包且成功时有值）。</summary>
+    public string ArtifactArchivePath { get; set; } = string.Empty;
+    /// <summary>打包生成的 zip 大小（字节；未打包为 null）。</summary>
+    public long? ArtifactArchiveSize { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime? CompletedTime { get; set; }
 }
@@ -114,6 +121,12 @@ public sealed class UniversalBuildJob
     public CancellationTokenSource? Cts { get; set; }
     /// <summary>构建前先执行 git pull --ff-only 拉取远端最新代码。</summary>
     public bool PrePull { get; set; }
+    /// <summary>构建成功后把产物目录打包成 zip。</summary>
+    public bool PackArtifact { get; set; }
+    /// <summary>打包生成的 zip 路径（仅勾选且成功时有值）。</summary>
+    public string ArtifactArchivePath { get; set; } = string.Empty;
+    /// <summary>打包生成的 zip 大小（字节；未打包为 null）。</summary>
+    public long? ArtifactArchiveSize { get; set; }
 }
 
 /// <summary>通用本地构建服务：支持 Web/Node/C#/Java/Maven/Gradle/Installer。</summary>
@@ -411,6 +424,7 @@ public sealed class UniversalBuildService
             Status = UniversalBuildStatus.Waiting,
             StartTime = DateTime.Now,
             PrePull = request.PrePull,
+            PackArtifact = request.PackArtifact,
         };
 
         if (!_jobs.TryAdd(job.Id, job))
@@ -537,13 +551,13 @@ public sealed class UniversalBuildService
             }
 
             job.ExitCode = process.ExitCode;
-            job.Status = process.ExitCode == 0 ? UniversalBuildStatus.Success : UniversalBuildStatus.Failed;
-            job.Progress = job.Status == UniversalBuildStatus.Success ? 100 : job.Progress;
             AppendLog(job, string.Empty);
             AppendLog(job, $">> 任务结束，退出码：{process.ExitCode}");
 
-            // 构建成功后把产物归集到输出目录（Web/Node 与 Java 命令不接收输出目录，产物默认落在项目内）
-            if (job.Status == UniversalBuildStatus.Success)
+            // 构建成功后把产物归集到输出目录（Web/Node 与 Java 命令不接收输出目录，产物默认落在项目内）。
+            // 状态在归集/统计/打包全部完成后才置 Success：前端轮询见到 Success 时压缩包字段必为最终值，
+            // 避免打包还在进行中就被判定为“打包失败”
+            if (process.ExitCode == 0)
             {
                 CollectArtifacts(job);
                 // 统计产物总大小并写入日志（前端卡片展示用）
@@ -557,6 +571,15 @@ public sealed class UniversalBuildService
                 {
                     _logger.LogWarning(ex, "统计产物大小失败: {OutputDir}", job.OutputDir);
                 }
+                // 勾选了"成功后打压缩包"：把产物目录打包成 zip（失败不影响构建成功状态）
+                if (job.PackArtifact)
+                    PackArtifactToZip(job);
+                job.Status = UniversalBuildStatus.Success;
+                job.Progress = 100;
+            }
+            else
+            {
+                job.Status = UniversalBuildStatus.Failed;
             }
         }
         catch (Exception ex)
@@ -570,6 +593,38 @@ public sealed class UniversalBuildService
         {
             job.CompletedTime = DateTime.Now;
             _concurrency.Release();
+        }
+    }
+
+    /// <summary>
+    /// 构建成功后把产物目录打包成 zip：落在输出目录的父目录（不能放输出目录自身内，
+    /// 否则下次构建会被打进去），时间戳命名不覆盖旧包。失败只告警，不改变构建状态。
+    /// </summary>
+    private void PackArtifactToZip(UniversalBuildJob job)
+    {
+        try
+        {
+            AppendLog(job, ">> 正在打包压缩包...");
+            var dirName = Path.GetFileName(job.OutputDir.TrimEnd('\\', '/'));
+            if (string.IsNullOrEmpty(dirName)) dirName = "artifact";
+            var parentDir = Path.GetDirectoryName(job.OutputDir.TrimEnd('\\', '/'));
+            if (string.IsNullOrEmpty(parentDir))
+            {
+                AppendLog(job, ">> ⚠ 输出目录无父目录，跳过打包");
+                return;
+            }
+            var archivePath = Path.Combine(parentDir, $"{dirName}_{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+            if (File.Exists(archivePath)) File.Delete(archivePath);
+            ZipFile.CreateFromDirectory(job.OutputDir, archivePath, CompressionLevel.Optimal, true);
+            job.ArtifactArchivePath = archivePath;
+            var size = new FileInfo(archivePath).Length;
+            job.ArtifactArchiveSize = size;
+            AppendLog(job, $">> 压缩包：{archivePath}（{FormatSize(size)}）");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "打包压缩包失败: {OutputDir}", job.OutputDir);
+            AppendLog(job, $">> ⚠ 打包压缩包失败：{ex.Message}");
         }
     }
 
@@ -970,6 +1025,8 @@ public sealed class UniversalBuildService
             Log = logText,
             ExitCode = job.ExitCode,
             ArtifactSize = job.ArtifactSize,
+            ArtifactArchivePath = job.ArtifactArchivePath,
+            ArtifactArchiveSize = job.ArtifactArchiveSize,
             StartTime = job.StartTime,
             CompletedTime = job.CompletedTime,
         };

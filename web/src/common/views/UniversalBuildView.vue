@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   CircleCheck,
@@ -20,8 +21,10 @@ import {
   Download,
   Upload,
   Clock,
+  Promotion,
   Collection,
   AlarmClock,
+  Brush,
 } from '@element-plus/icons-vue'
 import {
   checkUniversalEnvironment,
@@ -51,11 +54,16 @@ import {
   type ScheduleItem,
   saveSshCredential,
   getSshCredential,
+  getDeployLog,
+  getArtifactUsage,
+  cleanArtifact,
+  type DeployLogResult,
 } from '@/common/api/universalBuild'
 import { selectFolder, openOutputFolder } from '@/common/api/universalBuild'
+import { loadUiStateString, saveUiStateString } from '@/common/api/uiState'
 
 /** 部署配置快照：手动部署成功启动时记录，构建成功后自动部署复用 */
-/** 部署模版：一套完整部署配置（不含密码），localStorage 持久化；弹窗填充与自动部署复用 */
+/** 部署模版：一套完整部署配置（不含密码），存 exe 目录 ui-state.json（清缓存/重装不丢）；弹窗填充与自动部署复用 */
 interface DeployTemplate {
   id: string
   name: string
@@ -103,9 +111,15 @@ interface BuildCard {
   deployLog: string
   /** 部署整体进度（0-100），上传段为字节级真实进度 */
   deployProgress: number
+  /** 部署当前步骤文本（如 [5/7] 构建 Docker 镜像，后端返回拼好） */
+  deployStepText: string
+  /** 部署进度显示值：档位间缓慢爬行的视觉值，真实值存 deployProgress */
+  deployDisplayProgress: number
   outputDirCustom: boolean
   /** 构建前先 git pull 拉取远端最新代码 */
   prePull: boolean
+  /** 构建成功后把产物目录打包成 zip（落在输出目录的父目录，时间戳命名） */
+  packArtifact: boolean
   /** 构建成功后自动用上次部署配置部署 */
   autoDeploy: boolean
   /** 上次成功启动部署的参数快照（自动部署用，不持久化） */
@@ -114,6 +128,9 @@ interface BuildCard {
   deployTemplateId: string
   /** 构建产物总大小（字节，构建成功后由后端统计） */
   artifactSize: number | null
+  /** 构建成功后打包的 zip 路径/大小（勾选打压缩包且成功时有值，运行态不持久化） */
+  artifactArchivePath: string
+  artifactArchiveSize: number | null
   /** 本次构建开始/结束时间戳（毫秒，进行中实时计时） */
   startTime: number | null
   endTime: number | null
@@ -135,6 +152,12 @@ const typeOptions: { label: string; value: UniversalBuildType; icon?: string }[]
 ]
 
 const typeLabelMap = Object.fromEntries(typeOptions.map((x) => [x.value, x.label]))
+
+/** 跳转流水线页面（多阶段构建→部署顺序执行） */
+const router = useRouter()
+function gotoPipeline() {
+  router.push('/pipeline')
+}
 
 /** 构建类型对应的颜色（用于卡片左边框） */
 const typeColorMap: Record<UniversalBuildType, string> = {
@@ -211,12 +234,17 @@ function createCard(): BuildCard {
     deployStatus: null,
     deployLog: '',
     deployProgress: 0,
+    deployStepText: '',
+    deployDisplayProgress: 0,
     outputDirCustom: false,
     prePull: false,
+    packArtifact: false,
     autoDeploy: false,
     lastDeployConfig: null,
     deployTemplateId: '',
     artifactSize: null,
+    artifactArchivePath: '',
+    artifactArchiveSize: null,
     startTime: null,
     endTime: null,
     deployStartTime: null,
@@ -367,6 +395,8 @@ async function startBuild(card: BuildCard) {
   card.preLog = ''
   card.startTime = Date.now()
   card.endTime = null
+  card.artifactArchivePath = ''
+  card.artifactArchiveSize = null
   selectedCardId.value = card.id
   ensureTick()
 
@@ -380,6 +410,7 @@ async function startBuild(card: BuildCard) {
       outputDir: card.outputDir.trim(),
       name: card.name.trim(),
       prePull: card.prePull,
+      packArtifact: card.packArtifact,
     })
     card.jobId = dto.id
     // 后端并发已满时任务先排队（Waiting），获得构建槽位后才转 Running
@@ -416,10 +447,20 @@ function startPolling() {
           card.progress = dto.progress
           card.queuePosition = dto.queuePosition ?? 0
           card.artifactSize = dto.artifactSize ?? null
+          card.artifactArchivePath = dto.artifactArchivePath ?? ''
+          card.artifactArchiveSize = dto.artifactArchiveSize ?? null
           const wasActive = prevStatus === 'Running' || prevStatus === 'Waiting'
           if (wasActive && dto.status !== 'Running' && dto.status !== 'Waiting') {
             card.endTime = Date.now()
             notifyDone(dto.status === 'Success' ? '构建成功' : `构建${statusText(dto.status)}`, card.name, dto.status === 'Success' ? 'success' : 'error')
+            // 勾选了打压缩包：打包结果单独提示（成功带大小与路径，失败引导看日志）
+            if (dto.status === 'Success' && card.packArtifact) {
+              if (card.artifactArchiveSize != null) {
+                notifyDone('压缩包已生成', `${card.name} · ${formatSize(card.artifactArchiveSize)}\n${card.artifactArchivePath}`, 'success')
+              } else {
+                notifyDone('压缩包打包失败', `${card.name}：详见构建日志末尾的 ⚠ 提示`, 'error')
+              }
+            }
             stopTickIfIdle()
             // 构建成功且卡片勾选“成功后自动部署”：用上次部署配置链式部署
             if (dto.status === 'Success' && card.autoDeploy) {
@@ -904,6 +945,8 @@ async function startDeployAction() {
   card.deployStartTime = Date.now()
   card.deployEndTime = null
   card.deployProgress = 0
+  card.deployStepText = ''
+  card.deployDisplayProgress = 0
   card.deployHost = deployForm.host.trim()
   card.deployServiceName = deployForm.serviceName.trim()
   ensureTick()
@@ -930,6 +973,7 @@ async function startDeployAction() {
     card.deployJobId = dto.id
     card.deployStatus = dto.status
     card.deployProgress = dto.progress ?? 0
+    if (dto.stepTitle) card.deployStepText = deployStepTextOf(dto)
     card.deployLog = dto.log || ''
     deployDialogVisible.value = false
     activeLogTab.value = 'deploy'
@@ -1004,6 +1048,8 @@ async function autoDeployAfterBuild(card: BuildCard) {
   card.deployStartTime = Date.now()
   card.deployEndTime = null
   card.deployProgress = 0
+  card.deployStepText = ''
+  card.deployDisplayProgress = 0
   card.deployHost = cfg.host
   card.deployServiceName = cfg.serviceName
   activeLogTab.value = 'deploy'
@@ -1029,6 +1075,7 @@ async function autoDeployAfterBuild(card: BuildCard) {
     card.deployJobId = dto.id
     card.deployStatus = dto.status
     card.deployProgress = dto.progress ?? 0
+    if (dto.stepTitle) card.deployStepText = deployStepTextOf(dto)
     card.deployLog = dto.log || card.deployLog
     startDeployPolling()
     ElMessage.success(`【${card.name}】已自动开始部署`)
@@ -1060,6 +1107,7 @@ function startDeployPolling() {
           const prevStatus = card.deployStatus
           card.deployStatus = dto.status
           card.deployProgress = dto.progress ?? card.deployProgress
+          if (dto.stepTitle) card.deployStepText = deployStepTextOf(dto)
           card.deployLog = dto.log
           if (prevStatus === 'Running' && dto.status !== 'Running') {
             card.deployEndTime = Date.now()
@@ -1112,8 +1160,8 @@ function deployStatusText(status: DeployStatus | null) {
   }
 }
 
-/** 部署状态标签类型 */
-function deployStatusType(status: DeployStatus | null) {
+/** 部署状态标签类型（显式标注联合字面量，供模板 el-tag type 属性直接使用） */
+function deployStatusType(status: DeployStatus | null): 'success' | 'warning' | 'danger' | 'info' {
   switch (status) {
     case 'Running': return 'warning'
     case 'Success': return 'success'
@@ -1160,7 +1208,7 @@ async function buildAll() {
 const CARDS_STORAGE_KEY = 'universal-build-cards-v1'
 const DEPLOY_REMEMBER_KEY = 'universal-deploy-remember-v1'
 
-/** 保存卡片配置到本地（运行状态/日志/任务号不持久化，重开页面后从头开始） */
+/** 保存卡片配置（exe 目录 ui-state.json，清缓存/重装不丢；运行状态/日志/任务号不持久化，重开页面后从头开始） */
 function persistCards() {
   const data = cards.map((c) => ({
     id: c.id,
@@ -1170,18 +1218,17 @@ function persistCards() {
     outputDir: c.outputDir,
     outputDirCustom: c.outputDirCustom,
     prePull: c.prePull,
+    packArtifact: c.packArtifact,
     autoDeploy: c.autoDeploy,
     deployTemplateId: c.deployTemplateId,
   }))
-  try {
-    localStorage.setItem(CARDS_STORAGE_KEY, JSON.stringify(data))
-  } catch { /* 存储不可用时静默 */ }
+  saveUiStateString(CARDS_STORAGE_KEY, JSON.stringify(data))
 }
 
 /** 恢复上次的卡片配置（仅配置项，运行态清零）；返回是否有存档 */
-function restoreCards(): boolean {
+async function restoreCards(): Promise<boolean> {
   try {
-    const raw = localStorage.getItem(CARDS_STORAGE_KEY)
+    const raw = await loadUiStateString(CARDS_STORAGE_KEY)
     if (!raw) return false
     const data = JSON.parse(raw) as Partial<BuildCard>[]
     if (!Array.isArray(data) || data.length === 0) return false
@@ -1204,6 +1251,7 @@ function restoreCards(): boolean {
       card.outputDir = item.outputDir || ''
       card.outputDirCustom = !!item.outputDirCustom
       card.prePull = !!item.prePull
+      card.packArtifact = !!item.packArtifact
       card.autoDeploy = !!item.autoDeploy
       card.deployTemplateId = item.deployTemplateId || ''
       cards.push(card)
@@ -1215,10 +1263,10 @@ function restoreCards(): boolean {
   }
 }
 
-// 配置字段变化时延迟保存（避免输入过程中高频写 localStorage；日志/状态变化不触发）
+// 配置字段变化时延迟保存（避免输入过程中高频写存储；日志/状态变化不触发）
 let persistTimer: number | null = null
 watch(
-  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.autoDeploy}|${c.deployTemplateId}`).join('\n'),
+  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.packArtifact}|${c.autoDeploy}|${c.deployTemplateId}`).join('\n'),
   () => {
     if (persistTimer) window.clearTimeout(persistTimer)
     persistTimer = window.setTimeout(persistCards, 500)
@@ -1227,19 +1275,17 @@ watch(
 
 /** 记住部署连接信息（只记非敏感项：主机/用户名/站点/目标系统，密码永不持久化） */
 function persistDeployRemember() {
-  try {
-    localStorage.setItem(DEPLOY_REMEMBER_KEY, JSON.stringify({
-      host: deployForm.host,
-      userName: deployForm.userName,
-      siteName: deployForm.siteName,
-      targetOS: deployForm.targetOS,
-    }))
-  } catch { /* ignore */ }
+  saveUiStateString(DEPLOY_REMEMBER_KEY, JSON.stringify({
+    host: deployForm.host,
+    userName: deployForm.userName,
+    siteName: deployForm.siteName,
+    targetOS: deployForm.targetOS,
+  }))
 }
 
-function restoreDeployRemember() {
+async function restoreDeployRemember() {
   try {
-    const raw = localStorage.getItem(DEPLOY_REMEMBER_KEY)
+    const raw = await loadUiStateString(DEPLOY_REMEMBER_KEY)
     if (!raw) return
     const d = JSON.parse(raw)
     if (d.host) deployForm.host = d.host
@@ -1263,6 +1309,7 @@ function exportConfig() {
       outputDir: c.outputDir,
       outputDirCustom: c.outputDirCustom,
       prePull: c.prePull,
+      packArtifact: c.packArtifact,
       autoDeploy: c.autoDeploy,
     })),
     templates: templates.value,
@@ -1309,6 +1356,7 @@ async function importConfig(e: Event) {
         card.outputDir = item.outputDir || ''
         card.outputDirCustom = !!item.outputDirCustom
         card.prePull = !!item.prePull
+        card.packArtifact = !!item.packArtifact
         card.autoDeploy = !!item.autoDeploy
         cards.push(card)
         cardCount++
@@ -1388,6 +1436,8 @@ async function rollbackFromHistory(row: DeployHistoryItem) {
   card.deployStatus = 'Running'
   card.deployLog = ''
   card.deployProgress = 0
+  card.deployStepText = ''
+  card.deployDisplayProgress = 0
   card.deployStartTime = Date.now()
   card.deployEndTime = null
   card.deployHost = row.host
@@ -1409,6 +1459,7 @@ async function rollbackFromHistory(row: DeployHistoryItem) {
     card.deployJobId = dto.id
     card.deployStatus = dto.status
     card.deployProgress = dto.progress ?? 0
+    if (dto.stepTitle) card.deployStepText = deployStepTextOf(dto)
     card.deployLog = dto.log || ''
     startDeployPolling()
     ElMessage.success('回滚任务已启动')
@@ -1454,6 +1505,8 @@ async function rollbackCard(card: BuildCard) {
   card.deployStartTime = Date.now()
   card.deployEndTime = null
   card.deployProgress = 0
+  card.deployStepText = ''
+  card.deployDisplayProgress = 0
   activeLogTab.value = 'deploy'
   selectedCardId.value = card.id
   ensureTick()
@@ -1474,6 +1527,7 @@ async function rollbackCard(card: BuildCard) {
     card.deployJobId = dto.id
     card.deployStatus = dto.status
     card.deployProgress = dto.progress ?? 0
+    if (dto.stepTitle) card.deployStepText = deployStepTextOf(dto)
     card.deployLog = dto.log || card.deployLog
     startDeployPolling()
     ElMessage.success(`【${card.name}】回滚任务已启动`)
@@ -1484,6 +1538,156 @@ async function rollbackCard(card: BuildCard) {
     stopTickIfIdle()
     notifyDone('回滚失败', card.name, 'error')
   }
+}
+
+// ============================ 部署历史日志查看 ============================
+
+const historyLogVisible = ref(false)
+const historyLogLoading = ref(false)
+const historyLog = ref<DeployLogResult | null>(null)
+
+/** 查看部署历史行的完整日志（内存任务；程序重启后旧条目不可查） */
+async function showHistoryLog(row: DeployHistoryItem) {
+  if (!row.jobId) {
+    ElMessage.warning('该记录没有关联任务日志（程序重启后旧日志会被清除）')
+    return
+  }
+  historyLogVisible.value = true
+  historyLogLoading.value = true
+  historyLog.value = null
+  try {
+    historyLog.value = await getDeployLog(row.jobId)
+  } catch {
+    historyLog.value = null
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    historyLogLoading.value = false
+  }
+}
+
+/** 历史日志格式化：只做着色不做过滤（日志过滤条件只作用于选中卡片的实时日志） */
+function formatHistoryLogHtml(log: string): string {
+  return log.split('\n').map(line => {
+    if (line.includes('\u001b')) return ansiLineToHtml(line)
+    const escaped = escapeHtml(line)
+    const cls = logLineClass(line)
+    return cls ? `<span class="${cls}">${escaped}</span>` : escaped
+  }).join('\n')
+}
+
+/** 历史日志弹层状态（后端返回字符串状态，映射中文与标签色） */
+const historyLogStatusMeta = computed(() => {
+  const s = (historyLog.value?.status as DeployStatus | undefined) ?? null
+  return { text: deployStatusText(s), type: deployStatusType(s) }
+})
+
+// ============================ 产物占用清理 ============================
+
+/** 产物清理弹窗行：卡片名 + 目录占用统计 */
+interface ArtifactRow {
+  cardName: string
+  path: string
+  exists: boolean
+  sizeBytes: number
+  fileCount: number
+  lastWriteTime?: string | null
+  selected: boolean
+}
+
+const artifactVisible = ref(false)
+const artifactLoading = ref(false)
+const artifactCleaning = ref(false)
+const artifactRows = ref<ArtifactRow[]>([])
+
+/** 收集去重后的卡片产物目录列表 */
+function collectArtifactDirs(): string[] {
+  return Array.from(new Set(cards.map(c => c.outputDir.trim()).filter(Boolean)))
+}
+
+/** 打开产物清理弹窗：统计各卡片产物目录占用 */
+function openArtifactDialog() {
+  if (collectArtifactDirs().length === 0) {
+    ElMessage.warning('当前没有配置输出目录的构建卡片')
+    return
+  }
+  artifactVisible.value = true
+  void refreshArtifactUsage()
+}
+
+/** 拉取产物目录占用统计（一个目录可能被多张卡片引用，按卡片行展示） */
+async function refreshArtifactUsage() {
+  const dirs = collectArtifactDirs()
+  if (dirs.length === 0) {
+    artifactRows.value = []
+    return
+  }
+  artifactLoading.value = true
+  try {
+    const items = await getArtifactUsage(dirs)
+    const rows: ArtifactRow[] = []
+    for (const card of cards) {
+      const dir = card.outputDir.trim()
+      if (!dir) continue
+      const item = items.find(i => i.path.toLowerCase() === dir.toLowerCase())
+      if (item) {
+        rows.push({
+          cardName: card.name,
+          path: item.path,
+          exists: item.exists,
+          sizeBytes: item.sizeBytes,
+          fileCount: item.fileCount,
+          lastWriteTime: item.lastWriteTime,
+          selected: false,
+        })
+      }
+    }
+    artifactRows.value = rows
+  } catch {
+    artifactRows.value = []
+  } finally {
+    artifactLoading.value = false
+  }
+}
+
+/** 清理所选产物：二次强提示后逐个清空目录内容（保留目录本身） */
+async function cleanSelectedArtifacts() {
+  const selected = artifactRows.value.filter(r => r.selected && r.exists)
+  if (selected.length === 0) {
+    ElMessage.warning('请先勾选要清理的产物目录')
+    return
+  }
+  const totalBytes = selected.reduce((s, r) => s + r.sizeBytes, 0)
+  try {
+    await ElMessageBox.confirm(
+      `将清空 ${selected.length} 个产物目录的内容（约 ${formatBytes(totalBytes)}），删除后不可恢复！目录本身保留，下次构建重新生成，确定继续吗？`,
+      '清理产物（不可恢复）',
+      { confirmButtonText: '确认清理', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  artifactCleaning.value = true
+  let okCount = 0
+  for (const row of selected) {
+    try {
+      await cleanArtifact(row.path)
+      okCount++
+    } catch {
+      /* 单个失败继续处理其余，错误提示由请求拦截器弹出 */
+    }
+  }
+  artifactCleaning.value = false
+  if (okCount > 0) ElMessage.success(`已清理 ${okCount} 个产物目录`)
+  await refreshArtifactUsage()
+}
+
+/** 字节数格式化（产物占用展示） */
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 /** 时间格式化：MM-dd HH:mm（历史列表/定时提示用） */
@@ -1515,18 +1719,17 @@ function countTemplateUsage(id: string) {
   return cards.filter((c) => c.deployTemplateId === id).length
 }
 
-function loadTemplates() {
+async function loadTemplates() {
+  const raw = await loadUiStateString(TEMPLATES_KEY)
   try {
-    templates.value = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '[]')
+    templates.value = JSON.parse(raw || '[]')
   } catch {
     templates.value = []
   }
 }
 
 function saveTemplates() {
-  try {
-    localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates.value))
-  } catch { /* ignore */ }
+  saveUiStateString(TEMPLATES_KEY, JSON.stringify(templates.value))
 }
 
 /** 把卡片当前配置存为模板 */
@@ -1571,18 +1774,17 @@ const deployTemplates = ref<DeployTemplate[]>([])
 /** 部署弹窗当前选中的模版（空 = 手动填写） */
 const selectedDeployTemplateId = ref('')
 
-function loadDeployTemplates() {
+async function loadDeployTemplates() {
+  const raw = await loadUiStateString(DEPLOY_TEMPLATES_KEY)
   try {
-    deployTemplates.value = JSON.parse(localStorage.getItem(DEPLOY_TEMPLATES_KEY) || '[]')
+    deployTemplates.value = JSON.parse(raw || '[]')
   } catch {
     deployTemplates.value = []
   }
 }
 
 function saveDeployTemplates() {
-  try {
-    localStorage.setItem(DEPLOY_TEMPLATES_KEY, JSON.stringify(deployTemplates.value))
-  } catch { /* ignore */ }
+  saveUiStateString(DEPLOY_TEMPLATES_KEY, JSON.stringify(deployTemplates.value))
 }
 
 /** 选中模版：填充全部表单字段（填充不锁定，仍可修改），并回填本机保存的密码 */
@@ -1670,6 +1872,139 @@ async function removeDeployTemplateById(id: string) {
   ElMessage.success('模版已删除')
 }
 
+// ============================ 模板详情 / 编辑 ============================
+
+/** 模板详情弹窗（构建/部署模板共用：打开时预计算展示行，空值给占位说明并置灰） */
+const templateDetailVisible = ref(false)
+const templateDetailTitle = ref('')
+const templateDetailRows = ref<{ label: string; value: string; isEmpty?: boolean }[]>([])
+
+/** 打开模板详情：构建模板与部署模板字段不同，按类型拼展示行 */
+function showTemplateDetail(tpl: BuildTemplate | DeployTemplate, kind: 'build' | 'deploy') {
+  if (kind === 'build') {
+    const t = tpl as BuildTemplate
+    templateDetailTitle.value = `构建模板详情 - ${t.name}`
+    templateDetailRows.value = [
+      { label: '名称', value: t.name },
+      { label: '构建类型', value: typeLabelMap[t.type] || t.type },
+      { label: '项目目录', value: t.projectDir || '未填写', isEmpty: !t.projectDir.trim() },
+      { label: '输出目录', value: t.outputDir || '默认输出路径', isEmpty: !t.outputDir.trim() },
+    ]
+  } else {
+    const t = tpl as DeployTemplate
+    templateDetailTitle.value = `部署模板详情 - ${t.name}`
+    templateDetailRows.value = [
+      { label: '名称', value: t.name },
+      { label: '目标系统', value: t.targetOS === 'Linux' ? 'Linux (Docker)' : 'Windows (IIS/服务)' },
+      { label: '站点名称', value: t.siteName || '未填写', isEmpty: !t.siteName.trim() },
+      { label: '服务名', value: t.serviceName || '自动推断（按构建类型）', isEmpty: !t.serviceName.trim() },
+      { label: '远程目录', value: t.remoteDir || '自动推断（按构建类型）', isEmpty: !t.remoteDir.trim() },
+      { label: '压缩包名', value: t.archiveName || '自动生成 {站点名}-{服务名}.压缩包', isEmpty: !t.archiveName.trim() },
+      { label: '部署路径', value: t.deployPath || '默认（Linux /opt/{站点名}，Windows D:\\apps\\{站点名}）', isEmpty: !t.deployPath.trim() },
+      { label: '服务器地址', value: t.host || '未填写', isEmpty: !t.host.trim() },
+      { label: 'SSH 用户名', value: t.userName || '未填写', isEmpty: !t.userName.trim() },
+      { label: '验证健康', value: t.verifyHealth ? '开启' : '关闭' },
+      { label: '保留数据库', value: t.keepDatabase ? '开启' : '关闭' },
+      { label: '引用卡片', value: `${countTemplateUsage(t.id)} 张` },
+    ]
+  }
+  templateDetailVisible.value = true
+}
+
+/** 模板编辑弹窗状态（构建/部署模板共用一个弹窗，内部按类型切换表单） */
+const templateEditVisible = ref(false)
+const templateEditKind = ref<'build' | 'deploy'>('build')
+const templateEditId = ref('')
+const buildTplForm = reactive({ name: '', type: 'Web' as UniversalBuildType, projectDir: '', outputDir: '' })
+const deployTplForm = reactive({
+  name: '',
+  targetOS: 'Linux' as DeployTargetOS,
+  siteName: '',
+  serviceName: '',
+  remoteDir: '',
+  archiveName: '',
+  deployPath: '',
+  host: '',
+  userName: '',
+  verifyHealth: true,
+  keepDatabase: true,
+})
+const buildTplEditRef = ref()
+const deployTplEditRef = ref()
+const buildTplRules = {
+  name: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
+  projectDir: [{ required: true, message: '项目目录不能为空', trigger: 'blur' }],
+}
+const deployTplRules = {
+  name: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
+  siteName: [{ required: true, message: '请填写站点名称', trigger: 'blur' }],
+  host: [{ required: true, message: '请填写服务器地址', trigger: 'blur' }],
+  userName: [{ required: true, message: '请填写 SSH 用户名', trigger: 'blur' }],
+}
+
+/** 打开模板编辑：表单字段拷贝填充（不直接绑模板对象，取消时不动原数据） */
+function showTemplateEdit(tpl: BuildTemplate | DeployTemplate, kind: 'build' | 'deploy') {
+  templateEditKind.value = kind
+  templateEditId.value = tpl.id
+  if (kind === 'build') {
+    const t = tpl as BuildTemplate
+    buildTplForm.name = t.name
+    buildTplForm.type = t.type
+    buildTplForm.projectDir = t.projectDir
+    buildTplForm.outputDir = t.outputDir
+  } else {
+    const t = tpl as DeployTemplate
+    deployTplForm.name = t.name
+    deployTplForm.targetOS = t.targetOS
+    deployTplForm.siteName = t.siteName
+    deployTplForm.serviceName = t.serviceName
+    deployTplForm.remoteDir = t.remoteDir
+    deployTplForm.archiveName = t.archiveName
+    deployTplForm.deployPath = t.deployPath
+    deployTplForm.host = t.host
+    deployTplForm.userName = t.userName
+    deployTplForm.verifyHealth = t.verifyHealth
+    deployTplForm.keepDatabase = t.keepDatabase
+  }
+  templateEditVisible.value = true
+  nextTick(() => (templateEditKind.value === 'build' ? buildTplEditRef.value : deployTplEditRef.value)?.clearValidate())
+}
+
+/** 保存模板编辑：校验通过后写回模板数组并持久化（引用该部署模板的卡片自动部署时读取最新值） */
+async function saveTemplateEdit() {
+  try {
+    await (templateEditKind.value === 'build' ? buildTplEditRef.value : deployTplEditRef.value)?.validate()
+  } catch {
+    return // 校验未通过，错误信息已显示在字段下方
+  }
+  if (templateEditKind.value === 'build') {
+    const tpl = templates.value.find((t) => t.id === templateEditId.value)
+    if (!tpl) return
+    tpl.name = buildTplForm.name.trim()
+    tpl.type = buildTplForm.type
+    tpl.projectDir = buildTplForm.projectDir.trim()
+    tpl.outputDir = buildTplForm.outputDir.trim()
+    saveTemplates()
+  } else {
+    const tpl = deployTemplates.value.find((t) => t.id === templateEditId.value)
+    if (!tpl) return
+    tpl.name = deployTplForm.name.trim()
+    tpl.targetOS = deployTplForm.targetOS
+    tpl.siteName = deployTplForm.siteName.trim()
+    tpl.serviceName = deployTplForm.serviceName.trim()
+    tpl.remoteDir = deployTplForm.remoteDir.trim()
+    tpl.archiveName = deployTplForm.archiveName.trim()
+    tpl.deployPath = deployTplForm.deployPath.trim()
+    tpl.host = deployTplForm.host.trim()
+    tpl.userName = deployTplForm.userName.trim()
+    tpl.verifyHealth = deployTplForm.verifyHealth
+    tpl.keepDatabase = deployTplForm.keepDatabase
+    saveDeployTemplates()
+  }
+  templateEditVisible.value = false
+  ElMessage.success('模板已更新')
+}
+
 // ============================ 输入框聚焦悬浮加宽 ============================
 
 let inputMeasureCtx: CanvasRenderingContext2D | null = null
@@ -1685,63 +2020,56 @@ function measureInputText(text: string, font: string) {
 }
 
 /**
- * 卡片内长文本输入框（任务名 / 项目目录 / 输出目录）聚焦时悬浮加宽：
- * 按内容实际宽度展开并浮在上层（不推挤卡片布局），失焦还原。
- * 所在卡片整体抬到 1900 层（inline 样式优先级最高，且低于 Element Plus 弹层的 2000+），
- * 避免展开部分被相邻卡片盖住；右侧空间不足时改为向左展开，不伸出视口。
+ * 卡片内长文本输入框（任务名 / 项目目录 / 输出目录）聚焦时悬浮预览完整内容。
+ * 方案：fixed 定位弹层直挂视口（z-index 3000）——脱离卡片嵌套的层叠上下文与滚动容器裁剪，
+ * 在主窗口/独立窗口/窄屏下都不会被遮挡；纯展示不拦截鼠标（pointer-events: none）。
+ * 输入框本身仍在原位可正常编辑，预览条只是“看全内容”。
  */
-function expandInputOnFocus(e: FocusEvent) {
-  const inner = e.target as HTMLInputElement
-  const box = inner.closest('.el-input') as HTMLElement | null
-  if (!box) return
-  // 抬高所在卡片层级并允许内容伸出边界
-  const card = inner.closest('.build-card') as HTMLElement | null
-  if (card) {
-    card.style.zIndex = '1900'
-    card.style.overflow = 'visible'
-  }
+const inputPreview = reactive({
+  visible: false,
+  text: '',
+  left: 0,
+  top: 0,
+  width: 0,
+})
+
+function showInputPreview(e: FocusEvent) {
+  const inner = e.target as HTMLInputElement | null
+  if (!inner) return
   const text = inner.value || inner.placeholder || ''
+  if (!text.trim()) return
+  const rect = inner.getBoundingClientRect()
   const font = getComputedStyle(inner).font || '12px sans-serif'
-  // 余量覆盖前后 padding、suffix 图标与 append 按钮
-  const need = measureInputText(text, font) + 96
-  const rect = box.getBoundingClientRect()
-  // 向右展开的可用宽度（右侧留 24px 视口边距）
-  const rightSpace = window.innerWidth - rect.left - 24
-  if (rightSpace >= 320) {
-    // 右侧空间充足：左对齐原位向右展开
-    const width = Math.ceil(Math.min(900, rightSpace, Math.max(320, need, rect.width)))
-    box.style.position = 'absolute'
-    box.style.top = '0'
-    box.style.left = '0'
-    box.style.width = `${width}px`
-  } else {
-    // 卡片贴近视口右缘：右对齐原位向左展开（宽度不低于原宽，保证只增不减）
-    const leftSpace = rect.left - 24
-    const width = Math.max(rect.width, Math.ceil(Math.min(900, Math.max(320, need), leftSpace)))
-    box.style.position = 'absolute'
-    box.style.top = '0'
-    box.style.right = '0'
-    box.style.width = `${width}px`
-  }
-  box.style.zIndex = '30'
-  box.style.background = '#fff'
-  box.style.borderRadius = '4px'
-  box.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.15)'
+  const need = measureInputText(text, font) + 24
+  const vw = window.innerWidth
+  // 宽度：内容实际宽度起，不小于原输入框，不超出视口（两侧各留 16px）
+  const width = Math.min(Math.max(need, rect.width), vw - 32)
+  // 水平：默认与输入框左对齐，右缘越界时向左收
+  let left = rect.left
+  if (left + width > vw - 16) left = Math.max(16, vw - 16 - width)
+  // 垂直：默认在输入框上方 6px，上方放不下改放下方
+  let top = rect.top - 40
+  if (top < 8) top = rect.bottom + 6
+  inputPreview.visible = true
+  inputPreview.text = text
+  inputPreview.left = left
+  inputPreview.top = top
+  inputPreview.width = width
 }
 
-/** 输入框失焦：清除悬浮样式，还原卡片内常规布局与层级 */
-function shrinkInputOnBlur(e: FocusEvent) {
-  const inner = e.target as HTMLInputElement
-  const box = inner.closest('.el-input') as HTMLElement | null
-  if (!box) return
-  for (const prop of ['position', 'top', 'left', 'right', 'width', 'z-index', 'background', 'border-radius', 'box-shadow']) {
-    box.style.removeProperty(prop)
-  }
-  const card = inner.closest('.build-card') as HTMLElement | null
-  if (card) {
-    card.style.removeProperty('z-index')
-    card.style.removeProperty('overflow')
-  }
+/** 失焦隐藏预览条 */
+function hideInputPreview() {
+  inputPreview.visible = false
+}
+
+/** 任务名等可编辑框输入过程中实时刷新预览文本（宽度/位置不变，超长自动换行） */
+function refreshInputPreviewText(value: string) {
+  if (inputPreview.visible) inputPreview.text = value || ''
+}
+
+/** 页面滚动时隐藏预览条（输入框已随内容移位，避免预览错位悬空） */
+function onPageScroll() {
+  hideInputPreview()
 }
 
 // ============================ 定时构建 ============================
@@ -1800,7 +2128,7 @@ async function saveSchedule() {
       enabled: scheduleForm.enabled,
     })
     ElMessage.success(scheduleForm.enabled
-      ? `定时构建已开启，下次触发：${formatHistoryTime(saved.nextRunAt)}`
+      ? `定时构建已开启，下次触发：${saved.nextRunAt ? formatHistoryTime(saved.nextRunAt) : '稍后计算'}`
       : '定时构建已保存（未启用）')
     scheduleVisible.value = false
     await loadSchedules()
@@ -1825,13 +2153,45 @@ async function removeScheduleAction() {
 
 // ============================ 耗时计时与完成通知 ============================
 
-/** 秒级时钟：仅在存在运行中任务时跳动（驱动耗时实时显示） */
+/** 部署步骤文本：[n/m] 标题（后端 DTO 拼好的展示用） */
+function deployStepTextOf(dto: DeployJobDto): string {
+  if (!dto.stepTitle) return ''
+  return `[${dto.currentStep ?? '?'}/${dto.totalSteps ?? '?'}] ${dto.stepTitle}`
+}
+
+/**
+ * 部署档位间进度爬行：后端进度只在阶段节点跳变（如 Docker 镜像构建 1-5 分钟纹丝不动），
+ * 显示值在真实值基础上向「真实值 + 12」的虚拟目标缓慢逼近（封顶 99，100 由完成触发），
+ * 真实值跳升时快速追上；SFTP 段真实值连续推进，显示值全程跟随。
+ */
+function advanceDeployCreep() {
+  for (const card of cards) {
+    if (card.deployStatus !== 'Running') {
+      card.deployDisplayProgress = card.deployProgress
+      continue
+    }
+    const real = card.deployProgress
+    if (card.deployDisplayProgress < real) {
+      card.deployDisplayProgress = Math.min(real, card.deployDisplayProgress + 2)
+    } else {
+      const ceiling = Math.min(real + 12, 99)
+      if (card.deployDisplayProgress < ceiling) {
+        card.deployDisplayProgress = Math.min(ceiling, card.deployDisplayProgress + 0.4)
+      }
+    }
+  }
+}
+
+/** 秒级时钟：仅在存在运行中任务时跳动（驱动耗时实时显示 + 部署进度爬行） */
 const nowTick = ref(Date.now())
 let tickTimer: number | null = null
 
 function ensureTick() {
   if (tickTimer) return
-  tickTimer = window.setInterval(() => { nowTick.value = Date.now() }, 1000)
+  tickTimer = window.setInterval(() => {
+    nowTick.value = Date.now()
+    advanceDeployCreep()
+  }, 1000)
 }
 
 function stopTickIfIdle() {
@@ -1929,12 +2289,12 @@ watch(
   },
 )
 
-onMounted(() => {
+onMounted(async () => {
   // 打开页面即检测本地构建环境，并默认弹出检测结果弹窗
   envVisible.value = true
   loadEnvironment()
   // 恢复上次的卡片配置（没有存档时给一张默认卡片）
-  if (!restoreCards()) {
+  if (!await restoreCards()) {
     addCard()
   }
   restoreDeployRemember()
@@ -1956,7 +2316,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="universal-build-page">
+  <div class="universal-build-page" @scroll.passive="onPageScroll">
     <!-- 导入配置的隐藏文件选择框 -->
     <input ref="importFileInput" type="file" accept=".json,application/json" style="display: none" @change="importConfig" />
 
@@ -1966,6 +2326,8 @@ onUnmounted(() => {
       <el-button :icon="VideoPlay" @click="buildAll">全部构建</el-button>
       <el-button :icon="Collection" @click="templateVisible = true">模板库</el-button>
       <el-button :icon="Clock" @click="openHistory">部署历史</el-button>
+      <el-button :icon="Promotion" @click="gotoPipeline">流水线</el-button>
+      <el-button :icon="Brush" @click="openArtifactDialog">产物清理</el-button>
       <el-button :icon="Download" @click="exportConfig">导出配置</el-button>
       <el-button :icon="Upload" @click="triggerImport">导入配置</el-button>
       <el-button type="primary" :icon="Plus" @click="addCard">新增构建</el-button>
@@ -2011,7 +2373,7 @@ onUnmounted(() => {
       >
         <div class="card-header">
           <div class="name-input-wrap">
-            <el-input v-model="card.name" size="small" placeholder="任务名称" class="card-name-input" :style="{ '--name-color': typeColor(card.type) }" :disabled="isRunning(card)" @input="onNameChange(card)" @focus="expandInputOnFocus" @blur="shrinkInputOnBlur" />
+            <el-input v-model="card.name" size="small" placeholder="任务名称" class="card-name-input" :style="{ '--name-color': typeColor(card.type) }" :disabled="isRunning(card)" @input="onNameChange(card); refreshInputPreviewText($event)" @focus="showInputPreview" @blur="hideInputPreview" />
           </div>
           <el-select v-model="card.type" size="small" class="type-select" :disabled="isRunning(card)" @change="onTypeChange(card)">
             <el-option
@@ -2035,7 +2397,7 @@ onUnmounted(() => {
         <div class="card-field">
           <div class="field-label">项目目录</div>
           <div class="field-input-wrap">
-            <el-input v-model="card.projectDir" placeholder="请选择项目目录" readonly size="small" @focus="expandInputOnFocus" @blur="shrinkInputOnBlur">
+            <el-input v-model="card.projectDir" placeholder="选择或手动输入项目目录" size="small" @focus="showInputPreview" @blur="hideInputPreview" @input="refreshInputPreviewText($event)">
               <template #append>
                 <el-button type="primary" :icon="FolderOpened" :disabled="isRunning(card)" @click.stop="pickProjectDir(card)">选择</el-button>
               </template>
@@ -2046,7 +2408,7 @@ onUnmounted(() => {
         <div class="card-field">
           <div class="field-label">输出目录</div>
           <div class="field-input-wrap">
-            <el-input v-model="card.outputDir" class="output-dir-input" placeholder="默认输出路径" readonly size="small" @focus="expandInputOnFocus" @blur="shrinkInputOnBlur">
+            <el-input v-model="card.outputDir" class="output-dir-input" placeholder="默认输出路径（可手动修改）" size="small" @focus="showInputPreview" @blur="hideInputPreview" @input="card.outputDirCustom = true; refreshInputPreviewText($event)">
               <template #append>
                 <el-button :icon="FolderOpened" :disabled="isRunning(card)" @click.stop="pickOutputDir(card)">选择</el-button>
               </template>
@@ -2065,6 +2427,7 @@ onUnmounted(() => {
         <!-- 构建行为选项：拉取最新代码 / 成功后自动部署 + 自动部署模版（构建中锁定） -->
         <div class="card-options">
           <el-checkbox v-model="card.prePull" size="small" :disabled="isRunning(card)" @click.stop>构建前 git pull</el-checkbox>
+          <el-checkbox v-model="card.packArtifact" size="small" :disabled="isRunning(card)" @click.stop>成功后打压缩包</el-checkbox>
           <el-checkbox v-model="card.autoDeploy" size="small" :disabled="isRunning(card)" @click.stop>成功后自动部署</el-checkbox>
           <el-select
             v-if="card.autoDeploy && deployTemplates.length > 0"
@@ -2083,9 +2446,13 @@ onUnmounted(() => {
         <!-- 状态标记 + 结果摘要：耗时 / 产物大小 / 部署耗时 -->
         <div v-if="card.status || card.deployStatus || buildElapsed(card) || card.artifactSize || deployElapsed(card)" class="card-result">
           <el-tag v-if="!isRunning(card)" :type="statusType(card.status)" size="small" effect="light">{{ statusText(card.status) }}</el-tag>
-          <el-tag v-if="card.deployStatus" :type="deployStatusType(card.deployStatus)" size="small" effect="dark">{{ deployStatusText(card.deployStatus) }}</el-tag>
+          <el-tag v-if="card.deployStatus && card.deployStatus !== 'Running'" :type="deployStatusType(card.deployStatus)" size="small" effect="dark">{{ deployStatusText(card.deployStatus) }}</el-tag>
           <span v-if="buildElapsed(card)">构建耗时 {{ buildElapsed(card) }}</span>
           <span v-if="card.artifactSize">产物 {{ formatSize(card.artifactSize) }}</span>
+          <el-tooltip v-if="card.artifactArchiveSize" :content="card.artifactArchivePath" placement="top">
+            <span class="archive-size">压缩包 {{ formatSize(card.artifactArchiveSize) }}</span>
+          </el-tooltip>
+          <span v-else-if="card.status === 'Success' && card.packArtifact" class="archive-failed">压缩包打包失败</span>
           <span v-if="deployElapsed(card)">部署耗时 {{ deployElapsed(card) }}</span>
         </div>
 
@@ -2093,9 +2460,10 @@ onUnmounted(() => {
           <el-progress :percentage="card.progress" :stroke-width="6" :show-text="true" />
         </div>
 
-        <!-- 部署进度条（橙色）：上传段按字节实时推进 -->
+        <!-- 部署进度条（橙色）：上传段按字节实时推进，档位间缓慢爬行；步骤名显示当前在干什么 -->
         <div v-if="card.deployStatus === 'Running'" class="card-progress">
-          <el-progress :percentage="card.deployProgress" :stroke-width="6" :show-text="true" status="warning" />
+          <div v-if="card.deployStepText" class="deploy-step-hint">{{ card.deployStepText }}</div>
+          <el-progress :percentage="Math.floor(card.deployDisplayProgress)" :stroke-width="6" :show-text="true" status="warning" />
         </div>
 
         <div class="card-actions">
@@ -2122,8 +2490,9 @@ onUnmounted(() => {
             type="warning"
             size="small"
             :loading="card.deployStatus === 'Running'"
+            :icon="(card.deployStatus === 'Failed' || card.deployStatus === 'Cancelled') ? RefreshRight : undefined"
             @click.stop="openDeployDialog(card)"
-          >🚀 部署</el-button>
+          >{{ card.deployStatus === 'Running' ? '部署中...' : (card.deployStatus === 'Failed' || card.deployStatus === 'Cancelled') ? '重试' : '🚀 部署' }}</el-button>
         </div>
       </el-card>
     </div>
@@ -2276,32 +2645,78 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
-    <!-- 部署历史抽屉 -->
-    <el-drawer v-model="historyVisible" title="部署历史（最近 100 条）" size="640px">
-      <el-table :data="historyItems" size="small" stripe>
-        <el-table-column label="时间" width="100">
+    <!-- 部署历史弹窗：宽幅弹窗 + 表体独立滚动（表头固定），各列完整展示 -->
+    <el-dialog v-model="historyVisible" title="部署历史（最近 100 条）" width="880px">
+      <el-table :data="historyItems" size="small" stripe :max-height="520">
+        <el-table-column label="时间" width="100" fixed="left">
           <template #default="{ row }">{{ formatHistoryTime(row.startTime) }}</template>
         </el-table-column>
-        <el-table-column prop="buildName" label="任务" min-width="110" show-overflow-tooltip />
-        <el-table-column prop="siteName" label="站点" width="85" show-overflow-tooltip />
-        <el-table-column label="目标" width="60">
+        <el-table-column prop="buildName" label="任务" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="siteName" label="站点" width="90" show-overflow-tooltip />
+        <el-table-column label="目标" width="64">
           <template #default="{ row }">{{ row.targetOS === 'Linux' ? 'Linux' : 'Win' }}</template>
         </el-table-column>
-        <el-table-column label="结果" width="78">
+        <el-table-column label="结果" width="82">
           <template #default="{ row }">
             <el-tag :type="deployStatusType(row.status)" size="small" effect="light">{{ deployStatusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="耗时" width="62">
+        <el-table-column label="耗时" width="70">
           <template #default="{ row }">{{ formatElapsed(row.durationSeconds * 1000) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="72">
+        <el-table-column prop="host" label="服务器" width="120" show-overflow-tooltip />
+        <el-table-column label="操作" width="128" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="warning" plain @click="rollbackFromHistory(row)">回滚</el-button>
+            <el-button size="small" type="primary" plain :disabled="!row.jobId" @click="showHistoryLog(row as DeployHistoryItem)">日志</el-button>
+            <el-button size="small" type="warning" plain @click="rollbackFromHistory(row as DeployHistoryItem)">回滚</el-button>
           </template>
         </el-table-column>
       </el-table>
-    </el-drawer>
+    </el-dialog>
+
+    <!-- 部署历史日志弹层：复用 log-terminal 黑底终端样式（不过滤，展示完整日志） -->
+    <el-dialog v-model="historyLogVisible" :title="`部署日志 - ${historyLog?.buildName || ''}`" width="760px">
+      <div v-loading="historyLogLoading">
+        <template v-if="historyLog">
+          <div class="history-log-meta">
+            <el-tag :type="historyLogStatusMeta.type" size="small" effect="light">{{ historyLogStatusMeta.text }}</el-tag>
+            <span>开始 {{ formatHistoryTime(historyLog.startTime || '') }}</span>
+            <span v-if="historyLog.completedTime">完成 {{ formatHistoryTime(historyLog.completedTime) }}</span>
+          </div>
+          <div class="log-terminal history-log-terminal">
+            <pre v-html="formatHistoryLogHtml(historyLog.log)"></pre>
+          </div>
+        </template>
+        <el-empty v-else-if="!historyLogLoading" description="未获取到日志" />
+      </div>
+    </el-dialog>
+
+    <!-- 产物占用清理弹窗：列出各卡片产物目录，勾选后清空（保留目录本身） -->
+    <el-dialog v-model="artifactVisible" title="产物占用清理" width="640px">
+      <div class="env-dialog-toolbar">
+        <span class="env-dialog-summary">清空构建产物目录内容可释放磁盘空间（目录本身保留，下次构建重新生成）</span>
+        <el-button size="small" :loading="artifactLoading" link type="primary" @click="refreshArtifactUsage">重新统计</el-button>
+      </div>
+      <div v-loading="artifactLoading" class="artifact-list">
+        <div v-if="artifactRows.length === 0 && !artifactLoading" class="template-empty">
+          暂无产物目录（卡片未设置输出目录或尚未构建）
+        </div>
+        <div v-for="(row, idx) in artifactRows" :key="idx" class="artifact-item">
+          <el-checkbox v-model="row.selected" :disabled="!row.exists || row.sizeBytes <= 0" />
+          <div class="artifact-info">
+            <div class="template-name">{{ row.cardName }}</div>
+            <div class="template-meta" :title="row.path">{{ row.path }}</div>
+            <div class="template-meta">
+              {{ row.exists ? (row.sizeBytes > 0 ? `${formatBytes(row.sizeBytes)} · ${row.fileCount} 个文件 · 最后写入 ${row.lastWriteTime ? formatHistoryTime(row.lastWriteTime) : '-'}` : '目录为空') : '目录不存在（尚未构建）' }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="artifactVisible = false">关闭</el-button>
+        <el-button type="danger" :loading="artifactCleaning" @click="cleanSelectedArtifacts">清理所选</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 模板库抽屉：构建模板 + 部署模板 -->
     <el-drawer v-model="templateVisible" title="模板库" size="480px">
@@ -2316,6 +2731,8 @@ onUnmounted(() => {
               <div class="template-meta" :title="tpl.projectDir">{{ typeLabelMap[tpl.type] }} · {{ tpl.projectDir }}</div>
             </div>
             <el-button size="small" type="primary" @click="addCardFromTemplate(tpl)">新建</el-button>
+            <el-button size="small" @click="showTemplateDetail(tpl, 'build')">详情</el-button>
+            <el-button size="small" type="warning" plain @click="showTemplateEdit(tpl, 'build')">编辑</el-button>
             <el-button size="small" type="danger" plain :icon="Delete" @click="removeTemplate(tpl.id)" />
           </div>
         </el-tab-pane>
@@ -2332,11 +2749,83 @@ onUnmounted(() => {
               <div class="template-meta" :title="`${tpl.host} · ${tpl.deployPath}`">{{ tpl.siteName || '未填站点' }} · {{ tpl.host }}</div>
               <div class="template-meta">引用卡片：{{ countTemplateUsage(tpl.id) }} 张</div>
             </div>
+            <el-button size="small" @click="showTemplateDetail(tpl, 'deploy')">详情</el-button>
+            <el-button size="small" type="warning" plain @click="showTemplateEdit(tpl, 'deploy')">编辑</el-button>
             <el-button size="small" type="danger" plain :icon="Delete" @click="removeDeployTemplateById(tpl.id)" />
           </div>
         </el-tab-pane>
       </el-tabs>
     </el-drawer>
+
+    <!-- 模板详情弹窗：构建/部署模板共用，打开时预计算展示行 -->
+    <el-dialog v-model="templateDetailVisible" :title="templateDetailTitle" width="540px">
+      <el-descriptions :column="1" border size="small">
+        <el-descriptions-item v-for="row in templateDetailRows" :key="row.label" :label="row.label">
+          <span :class="{ 'tpl-detail-empty': row.isEmpty }">{{ row.value }}</span>
+        </el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
+
+    <!-- 模板编辑弹窗：构建/部署模板共用，按类型切换表单（表单绑副本，取消不影响原模板） -->
+    <el-dialog v-model="templateEditVisible" :title="templateEditKind === 'build' ? '编辑构建模板' : '编辑部署模板'" width="480px" :close-on-click-modal="false">
+      <el-form v-if="templateEditKind === 'build'" ref="buildTplEditRef" :model="buildTplForm" :rules="buildTplRules" label-width="80px" size="small">
+        <el-form-item label="名称" prop="name">
+          <el-input v-model="buildTplForm.name" placeholder="模板名称" />
+        </el-form-item>
+        <el-form-item label="构建类型">
+          <el-select v-model="buildTplForm.type" style="width: 100%;">
+            <el-option v-for="opt in typeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目目录" prop="projectDir">
+          <el-input v-model="buildTplForm.projectDir" placeholder="本地项目根目录" />
+        </el-form-item>
+        <el-form-item label="输出目录">
+          <el-input v-model="buildTplForm.outputDir" placeholder="留空使用默认输出路径" />
+        </el-form-item>
+      </el-form>
+      <el-form v-else ref="deployTplEditRef" :model="deployTplForm" :rules="deployTplRules" label-width="80px" size="small">
+        <el-form-item label="名称" prop="name">
+          <el-input v-model="deployTplForm.name" placeholder="模板名称" />
+        </el-form-item>
+        <el-form-item label="目标系统">
+          <el-radio-group v-model="deployTplForm.targetOS">
+            <el-radio-button value="Linux">Linux (Docker)</el-radio-button>
+            <el-radio-button value="Windows">Windows (IIS/服务)</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="站点名称" prop="siteName">
+          <el-input v-model="deployTplForm.siteName" placeholder="如 convenient" />
+        </el-form-item>
+        <el-form-item label="服务名">
+          <el-input v-model="deployTplForm.serviceName" placeholder="留空自动推断：前端→web，后端→api" />
+        </el-form-item>
+        <el-form-item label="远程目录">
+          <el-input v-model="deployTplForm.remoteDir" placeholder="留空按构建类型自动推断" />
+        </el-form-item>
+        <el-form-item label="压缩包名">
+          <el-input v-model="deployTplForm.archiveName" placeholder="留空自动生成" />
+        </el-form-item>
+        <el-form-item label="部署路径">
+          <el-input v-model="deployTplForm.deployPath" placeholder="留空使用默认路径" />
+        </el-form-item>
+        <el-form-item label="服务器地址" prop="host">
+          <el-input v-model="deployTplForm.host" placeholder="如 123.56.68.132" />
+        </el-form-item>
+        <el-form-item label="SSH用户名" prop="userName">
+          <el-input v-model="deployTplForm.userName" placeholder="如 root" />
+        </el-form-item>
+        <el-form-item label="选项">
+          <el-checkbox v-model="deployTplForm.verifyHealth">部署后自动验证健康检查</el-checkbox>
+          <el-checkbox v-model="deployTplForm.keepDatabase">保留数据库容器（仅 Linux Docker）</el-checkbox>
+        </el-form-item>
+      </el-form>
+      <div class="form-hint">修改部署模板后，引用它的卡片自动部署时将使用最新配置</div>
+      <template #footer>
+        <el-button @click="templateEditVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveTemplateEdit">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 定时构建弹窗 -->
     <el-dialog v-model="scheduleVisible" title="定时构建" width="430px">
@@ -2364,6 +2853,17 @@ onUnmounted(() => {
         <el-button type="primary" :loading="scheduleLoading" @click="saveSchedule">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 长文本输入框聚焦悬浮预览条：fixed 直挂视口，不受卡片层级/滚动容器裁剪影响 -->
+    <transition name="el-fade-in">
+      <div
+        v-if="inputPreview.visible"
+        class="input-preview-pop"
+        :style="{ left: `${inputPreview.left}px`, top: `${inputPreview.top}px`, width: `${inputPreview.width}px` }"
+      >
+        <span class="input-preview-text">{{ inputPreview.text }}</span>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -2453,6 +2953,10 @@ onUnmounted(() => {
 .toolbar {
   display: flex;
   justify-content: flex-end;
+  /* 窄窗口/小屏：按钮自动换行，不挤出视口 */
+  flex-wrap: wrap;
+  gap: 8px;
+  row-gap: 8px;
 }
 
 .build-cards {
@@ -2467,12 +2971,6 @@ onUnmounted(() => {
   cursor: pointer;
   transition: box-shadow 0.2s, border-color 0.2s;
   border: 1px solid transparent;
-}
-
-/* 输入框聚焦悬浮期间：允许伸出卡片边界展示完整内容，并盖在相邻卡片之上 */
-.build-card:focus-within {
-  overflow: visible;
-  z-index: 5;
 }
 
 .build-card:hover {
@@ -2495,18 +2993,15 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
-/* 任务名输入框定位包裹层：聚焦悬浮加宽时不挤压同行元素 */
+/* 任务名输入框容器：header 行内弹性伸缩 */
 .name-input-wrap {
   flex: 1;
   min-width: 0;
-  position: relative;
-  height: 24px;
 }
 
-/* 目录输入框定位包裹层：悬浮展开时行高固定，下方内容不跳动 */
+/* 目录输入框容器 */
 .field-input-wrap {
-  position: relative;
-  height: 24px;
+  min-width: 0;
 }
 
 .card-name-input {
@@ -2553,6 +3048,16 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399;
   margin-bottom: 8px;
+}
+
+/* 压缩包大小：鼠标悬停 tooltip 展示完整路径 */
+.archive-size {
+  cursor: default;
+}
+
+/* 勾选了打压缩包但打包失败：红色提示（成功时为灰色大小 + tooltip 路径） */
+.archive-failed {
+  color: #f56c6c;
 }
 
 .card-field {
@@ -2630,8 +3135,18 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
+/* 部署步骤提示：进度条上方小字，卡档（如 Docker 构建）时也能看出当前在干什么 */
+.deploy-step-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+  margin-bottom: 2px;
+}
+
+/* 卡片操作按钮行：窄卡片下自动换行，不溢出卡片 */
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -2730,6 +3245,11 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+/* 模板详情弹窗：空值/占位说明置灰 */
+.tpl-detail-empty {
+  color: #909399;
+}
+
 .log-terminal {
   background: #1e1e1e;
   color: #d4d4d4;
@@ -2756,6 +3276,71 @@ onUnmounted(() => {
 .log-terminal .log-step { color: #61afef; font-weight: 600; }
 .log-terminal .log-cmd { color: #abb2bf; background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 0 4px; }
 .log-terminal .log-cancel { color: #56b6c2; font-weight: 600; }
+
+/* 输入框聚焦悬浮预览条：fixed 定位直挂视口（脱离卡片层叠上下文与滚动容器裁剪），
+   纯展示不拦截鼠标（点击穿透到下层输入框） */
+.input-preview-pop {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 12px;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.input-preview-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #303133;
+}
+
+/* 历史日志弹层：复用 log-terminal 终端样式，仅加大高度 */
+.history-log-terminal {
+  max-height: 560px;
+}
+
+/* 历史日志弹层：状态与时间摘要行 */
+.history-log-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #909399;
+}
+
+/* 产物清理弹窗：目录行列表 */
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.artifact-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+}
+
+.artifact-info {
+  flex: 1;
+  min-width: 0;
+}
 
 /* 表单验证错误信息改为占位显示，避免与字段下方提示文字重叠 */
 .deploy-form :deep(.el-form-item__error) {

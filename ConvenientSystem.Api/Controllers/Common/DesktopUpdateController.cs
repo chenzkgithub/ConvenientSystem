@@ -87,7 +87,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>管理端：更新指定版本的元数据。</summary>
         [HttpPost]
-        [PermissionAuthorize("desktop-package:upload")]
+        [PermissionAuthorize("desktop-package:edit")]
         public ActionResult Update([FromBody] WebPackageDto dto)
         {
             _service.Update(dto.Id, dto.Version, dto.Description);

@@ -236,7 +236,7 @@ BEGIN
     (28, 24, N'命名转换', N'/code-naming', 1, 1, 0, 1, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4, 1),
     -- 构建发布（一级菜单）
     (61, NULL, N'构建发布', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
-    (59, 61, N'Web版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
+    (59, 61, N'系统版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
     (60, 61, N'通用构建发布', N'/universal-build', 1, 1, 0, 1, 1, N'universal-build', N'/src/common/views/UniversalBuildView.vue', 3, 1),
     -- 常用工具（外链）
     (29, NULL, N'常用工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 6, 0),
@@ -273,9 +273,6 @@ BEGIN
     (54, NULL, N'监控', NULL, 0, 1, 0, 1, 1, NULL, NULL, 12, 0),
     (55, 54, N'网站监控', N'/web-monitor', 0, 1, 0, 1, 1, N'web-monitor', N'/src/common/views/WebMonitorView.vue', 1, 1),
     (56, 54, N'本机监控', N'/local-monitor', 1, 1, 0, 1, 1, N'local-monitor', N'/src/common/views/LocalMonitorView.vue', 2, 1),
-    -- 知识库
-    (57, NULL, N'知识库', NULL, 0, 1, 0, 1, 1, NULL, NULL, 13, 0),
-    (58, 57, N'Python', N'/python-knowledge', 0, 1, 0, 1, 1, N'python-knowledge', N'/src/common/views/PythonKnowledgeView.vue', 1, 1),
     -- Web版本管理、构建与发布、通用构建发布已移至构建发布一级菜单下
 
     SET IDENTITY_INSERT dbo.SysMenu OFF;
@@ -1287,10 +1284,8 @@ BEGIN
     (34, N'local-monitor',    N'本机监控',   N'/src/common/views/LocalMonitorView.vue',      N'/local-monitor',    34),
     -- 其他
     (35, N'attendance',       N'考勤查询',   N'/src/yunhan/views/AttendanceView.vue',       N'/attendance',       35),
-    (36, N'python-knowledge', N'Python知识库',N'/src/common/views/PythonKnowledgeView.vue',  N'/python-knowledge', 36),
     (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37),
-    (38, N'web-package',      N'Web版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
-    (39, N'desktop-package',  N'桌面安装包', N'/src/common/views/WebPackageView.vue',        N'/web-package',      39),
+    (38, N'web-package',      N'系统版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
     (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40);
     SET IDENTITY_INSERT dbo.SysView OFF;
 END
@@ -1390,20 +1385,99 @@ BEGIN
     (66, 16, N'code-editor:create',  N'新建文件', 1),
     (67, 16, N'code-editor:save',   N'保存文件', 2),
     (68, 16, N'code-editor:save-as',N'另存为',   3),
-    -- Web版本管理
-    (69, 38, N'web-package',          N'查看版本列表', 0),
-    (70, 38, N'web-package:upload',   N'上传版本包', 1),
-    (71, 38, N'web-package:activate', N'激活版本', 2),
-    (72, 38, N'web-package:delete',   N'删除版本包', 3),
-    -- 桌面安装包（与 Web版本管理 同页面，作为页签展示）
-    (73, 39, N'desktop-package',          N'查看桌面安装包', 0),
-    (74, 39, N'desktop-package:upload',   N'上传安装包', 1),
-    (75, 39, N'desktop-package:activate', N'激活安装包', 2),
-    (76, 39, N'desktop-package:delete',   N'删除安装包', 3),
+    -- 系统版本管理（Web 前端版本 + 桌面安装包两页签共用一个视图，10 个权限点统一挂此视图下；
+    -- 查看权限 web-package / desktop-package 分别控制两个页签的显隐与对应 List 接口）
+    (69, 38, N'web-package',              N'查看Web前端版本', 0),
+    (70, 38, N'web-package:upload',       N'上传版本包', 1),
+    (71, 38, N'web-package:edit',         N'编辑版本', 2),
+    (72, 38, N'web-package:activate',     N'停用/激活版本', 3),
+    (73, 38, N'web-package:delete',       N'删除版本包', 4),
+    (74, 38, N'desktop-package',          N'查看桌面安装包', 5),
+    (75, 38, N'desktop-package:upload',   N'上传安装包', 6),
+    (76, 38, N'desktop-package:edit',     N'编辑安装包', 7),
+    (77, 38, N'desktop-package:activate', N'停用/激活安装包', 8),
+    (78, 38, N'desktop-package:delete',   N'删除安装包', 9),
     -- 通用构建发布
-    (77, 40, N'universal-build:execute',  N'执行构建', 1),
+    (79, 40, N'universal-build:execute',  N'执行构建', 1),
 
     SET IDENTITY_INSERT dbo.SysViewPermission OFF;
+END
+GO
+
+-- ========== 老库补齐：系统版本管理（原 Web版本管理）单一视图合并（行级幂等） ==========
+-- 上方种子段是整表级幂等（表非空则跳过），老库重跑 init.sql 补不进新行；此处按 Name 行级处理。
+-- 2026-09 调整：原「桌面安装包」独立视图与「Web版本管理」视图合并为一个视图（web-package），
+-- 菜单改叫系统版本管理，10 个权限点（Web 前端版本 ×5 + 桌面安装包 ×5）全部挂此视图下；
+-- 权限码不变（web-package* / desktop-package*），菜单 Name 保持 web-package，页签显隐逻辑不受影响。
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'web-package')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'web-package', N'系统版本管理', N'/src/common/views/WebPackageView.vue', N'/web-package', 38);
+GO
+
+-- 菜单与视图标题统一改为「系统版本管理」（仅改显示文案，不动 Name/权限码/授权关系）
+UPDATE dbo.SysMenu SET Title = N'系统版本管理' WHERE Name = N'web-package' AND Title <> N'系统版本管理';
+UPDATE dbo.SysView SET Title = N'系统版本管理' WHERE Name = N'web-package' AND Title <> N'系统版本管理';
+GO
+
+-- 合并：把旧 desktop-package 视图下的权限点迁移到 web-package 视图（须先迁移再删视图，FK_SysViewPerm_View 约束）
+DECLARE @SysVerViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'web-package');
+DECLARE @OldDesktopViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'desktop-package');
+IF @SysVerViewId IS NOT NULL AND @OldDesktopViewId IS NOT NULL AND @OldDesktopViewId <> @SysVerViewId
+    UPDATE dbo.SysViewPermission SET ViewId = @SysVerViewId WHERE ViewId = @OldDesktopViewId;
+GO
+
+-- 删除已合并的旧 desktop-package 视图（权限点已迁走，ViewService 只按 Name 挂树，无其他引用）
+DELETE FROM dbo.SysView WHERE Name = N'desktop-package';
+GO
+
+-- 权限点逐行补齐（按 Name 幂等，全部挂 web-package 视图下）：
+-- 老库可能只有旧布局 4+4 个权限点（无 :edit），整组判断会漏掉新增行，故逐行 INSERT + 统一标题/排序。
+DECLARE @SysVerViewId2 INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'web-package');
+IF @SysVerViewId2 IS NOT NULL
+BEGIN
+    -- Web 前端版本页签（权限码前缀 web-package）
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'web-package')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'web-package', N'查看Web前端版本', 0);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'web-package:upload')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'web-package:upload', N'上传版本包', 1);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'web-package:edit')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'web-package:edit', N'编辑版本', 2);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'web-package:activate')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'web-package:activate', N'停用/激活版本', 3);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'web-package:delete')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'web-package:delete', N'删除版本包', 4);
+    -- 桌面安装包页签（权限码前缀 desktop-package，与上面同属一个视图）
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'desktop-package')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'desktop-package', N'查看桌面安装包', 5);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'desktop-package:upload')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'desktop-package:upload', N'上传安装包', 6);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'desktop-package:edit')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'desktop-package:edit', N'编辑安装包', 7);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'desktop-package:activate')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'desktop-package:activate', N'停用/激活安装包', 8);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'desktop-package:delete')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@SysVerViewId2, N'desktop-package:delete', N'删除安装包', 9);
+    -- 统一旧库文案与排序（仅更新标题/排序，不动 Id 与授权关系）
+    UPDATE dbo.SysViewPermission SET Title = N'查看Web前端版本', SortOrder = 0 WHERE Name = N'web-package' AND (Title <> N'查看Web前端版本' OR SortOrder <> 0);
+    UPDATE dbo.SysViewPermission SET SortOrder = 1 WHERE Name = N'web-package:upload' AND SortOrder <> 1;
+    UPDATE dbo.SysViewPermission SET SortOrder = 2 WHERE Name = N'web-package:edit' AND SortOrder <> 2;
+    UPDATE dbo.SysViewPermission SET Title = N'停用/激活版本', SortOrder = 3 WHERE Name = N'web-package:activate' AND (Title <> N'停用/激活版本' OR SortOrder <> 3);
+    UPDATE dbo.SysViewPermission SET SortOrder = 4 WHERE Name = N'web-package:delete' AND SortOrder <> 4;
+    UPDATE dbo.SysViewPermission SET SortOrder = 5 WHERE Name = N'desktop-package' AND SortOrder <> 5;
+    UPDATE dbo.SysViewPermission SET SortOrder = 6 WHERE Name = N'desktop-package:upload' AND SortOrder <> 6;
+    UPDATE dbo.SysViewPermission SET SortOrder = 7 WHERE Name = N'desktop-package:edit' AND SortOrder <> 7;
+    UPDATE dbo.SysViewPermission SET Title = N'停用/激活安装包', SortOrder = 8 WHERE Name = N'desktop-package:activate' AND (Title <> N'停用/激活安装包' OR SortOrder <> 8);
+    UPDATE dbo.SysViewPermission SET SortOrder = 9 WHERE Name = N'desktop-package:delete' AND SortOrder <> 9;
 END
 GO
 
@@ -1669,19 +1743,6 @@ EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'HttpStatusCode', N'实际 HTTP
 EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'LatencyMs', N'探测耗时（毫秒）';
 EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'ErrorMsg', N'异常原因';
 EXEC dbo.usp_AddColumnComment N'WebMonitorLog', N'CheckAt', N'探测时间';
-GO
-
--- ========== 知识库菜单 ==========
-IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Title = N'知识库')
-BEGIN
-    INSERT INTO dbo.SysMenu (Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-    VALUES (N'知识库', NULL, 0, 1, 0, 1, NULL, NULL, 10);
-
-    DECLARE @kbId INT = (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'知识库');
-    IF @kbId IS NOT NULL
-        INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Name, Component, SortOrder)
-        VALUES (@kbId, N'Python', N'/python-knowledge', 0, 1, 0, 1, N'python-knowledge', N'/src/common/views/PythonKnowledgeView.vue', 1);
-END
 GO
 
 -- ========== 用户个人配置表 ==========

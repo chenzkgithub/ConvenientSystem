@@ -54,19 +54,34 @@ namespace ConvenientSystem.Service.Common
             }
         }
 
+        /// <summary>
+        /// 描述尾部动态拼接服务器存储路径行（读取时拼接，不写库，历史记录同样生效）。
+        /// </summary>
+        private string? AppendServerPath(string? description, string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return description;
+            var pathLine = $"服务器路径：{Path.Combine(_storageDir, fileName)}";
+            if (string.IsNullOrWhiteSpace(description)) return pathLine;
+            if (description.Contains("服务器路径：")) return description;
+            return $"{description}\n{pathLine}";
+        }
+
         public List<WebPackageDto> GetList()
         {
-            return _configDb.Select<WebPackageEntity>()
+            // 先取实体再内存映射：AppendServerPath 是 C# 方法，写进 ToList 表达式树
+            // FreeSql 会尝试翻译成 SQL（不支持）导致报错
+            var list = _configDb.Select<WebPackageEntity>()
                 .OrderByDescending(p => p.CreateTime)
-                .ToList(p => new WebPackageDto
-                {
-                    Id = p.Id,
-                    Version = p.Version,
-                    FileSize = p.FileSize,
-                    Description = p.Description,
-                    IsActive = p.IsActive,
-                    CreateTime = p.CreateTime,
-                });
+                .ToList();
+            return list.Select(p => new WebPackageDto
+            {
+                Id = p.Id,
+                Version = p.Version,
+                FileSize = p.FileSize,
+                Description = AppendServerPath(p.Description, p.FileName),
+                IsActive = p.IsActive,
+                CreateTime = p.CreateTime,
+            }).ToList();
         }
 
         public WebPackageDto? GetActive()
@@ -80,7 +95,7 @@ namespace ConvenientSystem.Service.Common
                 Id = entity.Id,
                 Version = entity.Version,
                 FileSize = entity.FileSize,
-                Description = entity.Description,
+                Description = AppendServerPath(entity.Description, entity.FileName),
                 IsActive = true,
                 CreateTime = entity.CreateTime,
             };
@@ -105,6 +120,7 @@ namespace ConvenientSystem.Service.Common
             }
 
             // 事务：取消旧激活 + 插入新记录并自动激活
+            // （描述只存用户填写的说明，服务器路径在读取时动态拼接，历史记录同样展示）
             var entity = new WebPackageEntity
             {
                 Version = safeVersion,
@@ -135,7 +151,7 @@ namespace ConvenientSystem.Service.Common
                 Id = entity.Id,
                 Version = entity.Version,
                 FileSize = entity.FileSize,
-                Description = entity.Description,
+                Description = AppendServerPath(entity.Description, entity.FileName),
                 IsActive = true,
                 CreateTime = entity.CreateTime,
             };

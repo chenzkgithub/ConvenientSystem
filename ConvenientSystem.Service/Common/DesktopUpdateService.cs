@@ -17,14 +17,17 @@ namespace ConvenientSystem.Service.Common
     {
         private readonly ILogger<DesktopUpdateService> _logger;
         private readonly IFreeSql _configDb;
+        private readonly INoticeService _noticeService;
         private readonly string _storageDir;
 
         public DesktopUpdateService(
             ILogger<DesktopUpdateService> logger,
-            [FromKeyedServices("ConvenientSystemDb")] IFreeSql configDb)
+            [FromKeyedServices("ConvenientSystemDb")] IFreeSql configDb,
+            INoticeService noticeService)
         {
             _logger = logger;
             _configDb = configDb;
+            _noticeService = noticeService;
             _storageDir = Environment.GetEnvironmentVariable("DESKTOP_PACKAGE_DIR") ?? "/data/desktop-packages";
             if (!Directory.Exists(_storageDir))
             {
@@ -52,7 +55,7 @@ namespace ConvenientSystem.Service.Common
                 Version = p.Version,
                 FileName = p.FileName,
                 FileSize = p.FileSize,
-                Description = p.Description,
+                Description = AppendServerPath(p.Description, p.FileName),
                 IsActive = p.IsActive,
                 CreatedByName = p.CreatedById.HasValue && userMap.TryGetValue(p.CreatedById.Value, out var name) ? name : null,
                 CreateTime = p.CreateTime,
@@ -71,7 +74,7 @@ namespace ConvenientSystem.Service.Common
                 Version = entity.Version,
                 FileName = entity.FileName,
                 FileSize = entity.FileSize,
-                Description = entity.Description,
+                Description = AppendServerPath(entity.Description, entity.FileName),
                 IsActive = true,
                 CreateTime = entity.CreateTime,
             };
@@ -93,7 +96,7 @@ namespace ConvenientSystem.Service.Common
             {
                 HasUpdate = hasUpdate,
                 Version = entity.Version,
-                Description = entity.Description,
+                Description = AppendServerPath(entity.Description, entity.FileName),
                 FileSize = entity.FileSize,
                 DownloadUrl = "/api/Common/DesktopUpdate/Download",
             };
@@ -138,16 +141,49 @@ namespace ConvenientSystem.Service.Common
             _logger.LogInformation("上传桌面安装包 Version={Version} FileName={FileName} Size={Size}",
                 safeVersion, fileName, file.Length);
 
+            // 与 Web 前端版本上传对齐：发一条全员可见的系统通知，在线用户登录后可见
+            NotifyVersionChanged(safeVersion, entity.Description);
+
             return new DesktopPackageDto
             {
                 Id = entity.Id,
                 Version = entity.Version,
                 FileName = entity.FileName,
                 FileSize = entity.FileSize,
-                Description = entity.Description,
+                Description = AppendServerPath(entity.Description, entity.FileName),
                 IsActive = true,
                 CreateTime = entity.CreateTime,
             };
+        }
+
+        /// <summary>发布一条"桌面程序已更新"的系统通知，全员可见且不触发外部推送。</summary>
+        private void NotifyVersionChanged(string version, string? description)
+        {
+            try
+            {
+                var desc = string.IsNullOrWhiteSpace(description) ? "" : $"更新说明：{description.Trim()}";
+                var content = $"系统已上传并激活桌面程序版本 {version}，桌面端下次启动时会弹窗提示安装。{desc}".Trim();
+                _noticeService.CreateSystemNotice(
+                    $"桌面程序已更新至 {version}",
+                    content,
+                    level: 2); // 重要：登录后会触发 NoticeAlert 弹窗提醒
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "桌面版本更新通知发送失败 Version={Version}", version);
+            }
+        }
+
+        /// <summary>
+        /// 描述尾部动态拼接服务器存储路径行（读取时拼接，不写库，历史记录同样生效）。
+        /// </summary>
+        private string? AppendServerPath(string? description, string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return description;
+            var pathLine = $"服务器路径：{Path.Combine(_storageDir, fileName)}";
+            if (string.IsNullOrWhiteSpace(description)) return pathLine;
+            if (description.Contains("服务器路径：")) return description;
+            return $"{description}\n{pathLine}";
         }
 
         public void Activate(int id)

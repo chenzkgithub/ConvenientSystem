@@ -222,7 +222,12 @@ internal static class Program
         builder.Services.AddSingleton<LocalMonitorService>();
         builder.Services.AddSingleton<UniversalBuildService>();
         builder.Services.AddSingleton<DeployService>();
-builder.Services.AddSingleton<SshCredentialStore>();
+        builder.Services.AddSingleton<SshCredentialStore>();
+        // Web 前端 UI 状态持久化（模板/卡片配置等，exe 目录 ui-state.json）
+        builder.Services.AddSingleton<UiStateStore>();
+        // 流水线：定义/历史持久化（pipelines.json）+ 顺序执行引擎（复用构建/部署服务）
+        builder.Services.AddSingleton<PipelineStore>();
+        builder.Services.AddSingleton<PipelineService>();
         builder.Services.AddSingleton<UniversalScheduleService>();
         builder.Services.AddSingleton<GitService>();
         builder.Services.AddControllers()

@@ -59,8 +59,22 @@ if not exist "%TARGET%\ConvenientSystem.exe" (
     goto :failed
 )
 
-REM 结束运行中的程序（避免旧页面缓存；wwwroot 静态文件即改即生效，无需重装）
-taskkill /F /IM ConvenientSystem.exe >nul 2>&1
+REM 结束运行中的程序（wwwroot 静态文件即改即生效，无需重装）
+REM /T 连同 WebView2 子进程（msedgewebview2.exe）一起杀：只杀主进程时子进程会成为孤儿，
+REM 继续持有安装目录下 WebView2 用户数据目录的锁，脚本拉起的新实例 WebView2 初始化异常，
+REM 页面显示“找不到此页”，需手动关闭重开才恢复；等子进程退净后再启动即可避免
+taskkill /F /T /IM ConvenientSystem.exe >nul 2>&1
+
+REM 等待进程树退净（最多 10 秒），再留 2 秒缓冲给个别残留的 WebView2 子进程自行退出
+set /a KILL_WAIT=0
+:wait_exit
+tasklist /FI "IMAGENAME eq ConvenientSystem.exe" 2>nul | find /I "ConvenientSystem.exe" >nul
+if not errorlevel 1 if %KILL_WAIT% LSS 10 (
+    set /a KILL_WAIT+=1
+    timeout /t 1 /nobreak >nul
+    goto :wait_exit
+)
+timeout /t 2 /nobreak >nul
 
 REM robocopy /E 增量覆盖且不删除目标多余文件：
 REM 安装目录的 version.json 得以保留，下次启动不会误判为旧版本而被服务器包覆盖回去

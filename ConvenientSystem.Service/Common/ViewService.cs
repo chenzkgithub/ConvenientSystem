@@ -213,17 +213,20 @@ namespace ConvenientSystem.Service.Common
                 .ToList(m => new MenuPermFlatDto
                 {
                     Id = m.Id, ParentId = m.ParentId, Title = m.Title,
-                    Name = m.Name, Type = m.Type,
+                    Name = m.Name, Type = m.Type, Page = m.Page,
                 });
 
-            // 加载视图权限点（按视图 Name 匹配菜单 Name）
+            // 加载视图权限点：视图按「Name == 菜单 Name」或「RoutePath == 菜单 Page」挂到菜单下。
+            // RoutePath 匹配是兑底：同一页面的多页签视图若拆成多个视图，只有路由能对上，仅按 Name 匹配
+            // 会让其权限点在权限树上不可见（系统版本管理已把多页签权限点合并进单一视图，主要靠 Name 匹配）。
             var menuNames = menus.Where(m => !string.IsNullOrEmpty(m.Name)).Select(m => m.Name!).Distinct().ToList();
-            if (menuNames.Count > 0)
+            var menuPages = menus.Where(m => !string.IsNullOrEmpty(m.Page)).Select(m => m.Page!).Distinct().ToList();
+            if (menuNames.Count > 0 || menuPages.Count > 0)
             {
                 var views = _configDb.Select<SysViewEntity>()
-                    .Where(v => menuNames.Contains(v.Name) && v.Enabled)
-                    .ToList(v => new { v.Id, v.Name });
-                var viewNameToId = views.ToDictionary(v => v.Name, v => v.Id);
+                    .Where(v => v.Enabled && (menuNames.Contains(v.Name) || (v.RoutePath != null && menuPages.Contains(v.RoutePath))))
+                    .OrderBy(v => v.SortOrder)
+                    .ToList(v => new { v.Id, v.Name, v.RoutePath });
                 var viewIds = views.Select(v => v.Id).ToList();
 
                 if (viewIds.Count > 0)
@@ -234,17 +237,23 @@ namespace ConvenientSystem.Service.Common
                         .ToList(p => new { p.Id, p.ViewId, p.Name, p.Title });
                     var permsByView = perms.GroupBy(p => p.ViewId).ToDictionary(g => g.Key, g => g.ToList());
 
-                    // 给匹配的菜单项填充权限点
+                    // 给匹配的菜单项填充权限点（同页面多视图时按视图顺序合并，标题可区分页签）
                     foreach (var menu in menus)
                     {
-                        if (!string.IsNullOrEmpty(menu.Name) && viewNameToId.TryGetValue(menu.Name, out var viewId)
-                            && permsByView.TryGetValue(viewId, out var permList))
+                        var merged = new List<ViewPermNodeDto>();
+                        foreach (var view in views)
                         {
-                            menu.ViewPerms = permList.Select(p => new ViewPermNodeDto
+                            if (view.Name != menu.Name && view.RoutePath != menu.Page)
+                                continue;
+                            if (permsByView.TryGetValue(view.Id, out var permList))
                             {
-                                Id = p.Id, Name = p.Name, Title = p.Title,
-                            }).ToList();
+                                merged.AddRange(permList.Select(p => new ViewPermNodeDto
+                                {
+                                    Id = p.Id, Name = p.Name, Title = p.Title,
+                                }));
+                            }
                         }
+                        if (merged.Count > 0) menu.ViewPerms = merged;
                     }
                 }
             }

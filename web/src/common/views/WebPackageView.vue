@@ -21,10 +21,16 @@ import {
 import { confirmAndRun } from '@/common/utils/confirm'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
+import { usePermission } from '@/common/composables/usePermission'
 
 type PackageTab = 'web' | 'desktop'
 
-const activeTab = ref<PackageTab>('web')
+// 两个页签各自独立的查看权限（控制页签显隐与对应 List 接口；都无权时进不来本页）
+const { has } = usePermission()
+const canViewWeb = computed(() => has('web-package'))
+const canViewDesktop = computed(() => has('desktop-package'))
+
+const activeTab = ref<PackageTab>(canViewWeb.value ? 'web' : 'desktop')
 
 // ========== Web 前端版本 ==========
 const webLoading = ref(false)
@@ -34,7 +40,7 @@ const activeWebPackage = computed(() => webList.value.find((p) => p.isActive) ??
 const webColumns: DataTableColumn<WebPackageDto>[] = [
   { prop: 'version', label: '版本号', minWidth: 120, sortable: true },
   { prop: 'fileSize', label: '文件大小', width: 120, custom: true, sortable: true },
-  { prop: 'description', label: '更新说明', minWidth: 200, showOverflowTooltip: true, sortable: true },
+  { prop: 'description', label: '更新说明 / 服务器路径', minWidth: 240, custom: true, sortable: true },
   { prop: 'isActive', label: '状态', width: 100, custom: true, sortable: true },
   { prop: 'createTime', label: '上传时间', width: 170, type: 'datetime', sortable: true },
 ]
@@ -56,7 +62,7 @@ const activeDesktopPackage = computed(() => desktopList.value.find((p) => p.isAc
 const desktopColumns: DataTableColumn<DesktopPackageDto>[] = [
   { prop: 'version', label: '版本号', minWidth: 120, sortable: true },
   { prop: 'fileSize', label: '文件大小', width: 120, custom: true, sortable: true },
-  { prop: 'description', label: '更新说明', minWidth: 200, showOverflowTooltip: true, sortable: true },
+  { prop: 'description', label: '更新说明 / 服务器路径', minWidth: 240, custom: true, sortable: true },
   { prop: 'isActive', label: '状态', width: 100, custom: true, sortable: true },
   { prop: 'createTime', label: '上传时间', width: 170, type: 'datetime', sortable: true },
 ]
@@ -79,6 +85,22 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** 描述拆行（服务器路径行后端动态拼接，前端渲染为灰色小字） */
+function splitDescLines(description: string | null | undefined): string[] {
+  if (!description || !description.trim()) return ['—']
+  return description.split('\n')
+}
+
+/** 剥离动态拼接的服务器路径行（编辑弹窗只编辑用户说明部分，避免保存回数据库） */
+function stripServerPath(description: string | null | undefined): string {
+  if (!description) return ''
+  return description
+    .split('\n')
+    .filter((line) => !line.startsWith('服务器路径：'))
+    .join('\n')
+    .trim()
 }
 
 // ========== 上传弹窗（Web / 桌面共用） ==========
@@ -182,7 +204,7 @@ const editForm = reactive({
 function openEdit(row: WebPackageDto | DesktopPackageDto) {
   editForm.id = row.id
   editForm.version = row.version
-  editForm.description = row.description ?? ''
+  editForm.description = stripServerPath(row.description)
   editVisible.value = true
 }
 
@@ -204,18 +226,19 @@ async function submitEdit() {
   }
 }
 
-const canUpload = computed(() =>
-  activeTab.value === 'web' ? true : true // 实际权限在按钮处判断
-)
 
-onMounted(loadWebData)
+// 进入页面只加载有权限页签的数据，避免无权页签发起 List 请求报 403 弹窗
+onMounted(() => {
+  if (canViewWeb.value) loadWebData()
+  else if (canViewDesktop.value) loadDesktopData()
+})
 </script>
 
 <template>
   <div class="web-package-page">
     <el-tabs v-model="activeTab" type="border-card" @tab-change="loadCurrentTab">
-      <!-- Web 前端版本 -->
-      <el-tab-pane label="Web 前端版本" name="web">
+      <!-- Web 前端版本（页签由 web-package 查看权限控制显隐） -->
+      <el-tab-pane v-if="canViewWeb" label="Web 前端版本" name="web">
         <div v-if="activeWebPackage" class="active-version-card">
           <div class="avc-left">
             <el-tag type="success" size="small" effect="dark" round>当前激活</el-tag>
@@ -247,13 +270,22 @@ onMounted(loadWebData)
           <template #cell-fileSize="{ row }">
             {{ formatSize((row as WebPackageDto).fileSize) }}
           </template>
+          <template #cell-description="{ row }">
+            <div class="desc-cell">
+              <div
+                v-for="(line, i) in splitDescLines((row as WebPackageDto).description)"
+                :key="i"
+                :class="{ 'desc-path': line.startsWith('服务器路径：') }"
+              >{{ line }}</div>
+            </div>
+          </template>
           <template #cell-isActive="{ row }">
             <el-tag v-if="(row as WebPackageDto).isActive" type="success" size="small">激活中</el-tag>
             <el-tag v-else type="info" size="small">未激活</el-tag>
           </template>
           <template #actions="{ row }">
             <el-button
-              v-if="$has('web-package:upload')"
+              v-if="$has('web-package:edit')"
               link
               type="primary"
               size="small"
@@ -295,8 +327,8 @@ onMounted(loadWebData)
         </CommonDataTable>
       </el-tab-pane>
 
-      <!-- 桌面安装包 -->
-      <el-tab-pane label="桌面安装包" name="desktop">
+      <!-- 桌面安装包（页签由 desktop-package 查看权限控制显隐） -->
+      <el-tab-pane v-if="canViewDesktop" label="桌面安装包" name="desktop">
         <div v-if="activeDesktopPackage" class="active-version-card desktop">
           <div class="avc-left">
             <el-tag type="success" size="small" effect="dark" round>当前激活</el-tag>
@@ -328,13 +360,22 @@ onMounted(loadWebData)
           <template #cell-fileSize="{ row }">
             {{ formatSize((row as DesktopPackageDto).fileSize) }}
           </template>
+          <template #cell-description="{ row }">
+            <div class="desc-cell">
+              <div
+                v-for="(line, i) in splitDescLines((row as DesktopPackageDto).description)"
+                :key="i"
+                :class="{ 'desc-path': line.startsWith('服务器路径：') }"
+              >{{ line }}</div>
+            </div>
+          </template>
           <template #cell-isActive="{ row }">
             <el-tag v-if="(row as DesktopPackageDto).isActive" type="success" size="small">激活中</el-tag>
             <el-tag v-else type="info" size="small">未激活</el-tag>
           </template>
           <template #actions="{ row }">
             <el-button
-              v-if="$has('desktop-package:upload')"
+              v-if="$has('desktop-package:edit')"
               link
               type="primary"
               size="small"
@@ -507,9 +548,22 @@ onMounted(loadWebData)
 .avc-desc {
   font-size: 13px;
   color: #4b5563;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  word-break: break-all;
   min-width: 0;
+}
+
+/* 表格描述列：多行显示（说明正文 + 服务器路径行） */
+.desc-cell {
+  line-height: 1.6;
+  min-width: 0;
+  word-break: break-all;
+  white-space: pre-line;
+}
+
+/* 服务器路径行：灰色小字与说明正文区分 */
+.desc-cell .desc-path {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

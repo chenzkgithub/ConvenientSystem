@@ -63,7 +63,10 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? Name { get; set; }
         public byte Type { get; set; }
 
-        /// <summary>关联视图的权限点（仅当该菜单的 Name 匹配 SysView.Name 时有值）</summary>
+        /// <summary>末级菜单路由（用于把同页面多页签视图的权限点挂到同一菜单下）</summary>
+        public string? Page { get; set; }
+
+        /// <summary>关联视图的权限点（视图 Name 匹配菜单 Name，或视图 RoutePath 匹配菜单 Page 时有值）</summary>
         public List<ViewPermNodeDto>? ViewPerms { get; set; }
     }
 

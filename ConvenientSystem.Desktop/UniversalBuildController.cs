@@ -137,6 +137,29 @@ public class UniversalBuildController : ControllerBase
         return selectedPath;
     }
 
+    /// <summary>弹出 SQL 文件选择对话框，返回选中的文件路径；取消返回 null。</summary>
+    [HttpPost]
+    [Route("SelectSqlFile")]
+    public string? SelectSqlFile()
+    {
+        string? selected = null;
+        var mainForm = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+        mainForm?.Invoke(() =>
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "选择 SQL 脚本文件",
+                Filter = "SQL 脚本 (*.sql)|*.sql|所有文件 (*.*)|*.*",
+                Multiselect = false,
+            };
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                selected = dialog.FileName;
+            }
+        });
+        return selected;
+    }
+
     /// <summary>在资源管理器中打开指定目录（构建输出目录）。</summary>
     [HttpPost]
     [Route("OpenFolder")]
@@ -164,6 +187,47 @@ public class UniversalBuildController : ControllerBase
     [Route("DeployHistory")]
     public IReadOnlyList<DeployHistoryItem> DeployHistory()
         => _deployService.GetHistory();
+
+    /// <summary>读取部署任务的完整日志（仅内存中保留的任务，程序重启后旧条目不可查）。</summary>
+    [HttpPost]
+    [Route("DeployLog")]
+    public IActionResult DeployLog([FromQuery] string jobId)
+    {
+        var job = _deployService.GetJob(jobId);
+        if (job == null)
+            return NotFound(new { message = "日志不存在（程序重启后旧日志会被清除，仅保留本次运行内的任务日志）" });
+        return Ok(new DeployLogResult
+        {
+            Log = job.Log,
+            BuildName = job.BuildName,
+            Status = job.Status.ToString(),
+            StartTime = job.StartTime,
+            CompletedTime = job.CompletedTime,
+        });
+    }
+
+    /// <summary>统计构建产物目录占用（大小/文件数/最后修改时间）。</summary>
+    [HttpPost]
+    [Route("ArtifactUsage")]
+    public IReadOnlyList<ArtifactUsageItem> ArtifactUsage([FromBody] ArtifactUsageRequest request)
+        => _buildService.GetArtifactUsage(request.Dirs);
+
+    /// <summary>清空构建产物目录内容（保留目录本身，删除不可恢复）。</summary>
+    [HttpPost]
+    [Route("ArtifactClean")]
+    public IActionResult ArtifactClean([FromBody] ArtifactCleanRequest request)
+    {
+        try
+        {
+            _buildService.CleanArtifact(request.Dir);
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "清理产物目录失败: {Dir}", request.Dir);
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 
     /// <summary>查询定时构建列表。</summary>
     [HttpPost]
@@ -263,4 +327,27 @@ public sealed class SshCredentialResult
 {
     /// <summary>未保存过或解密失败时为 null。</summary>
     public string? Password { get; set; }
+}
+
+/// <summary>部署任务完整日志（部署历史行查看入口用）。</summary>
+public sealed class DeployLogResult
+{
+    public string Log { get; set; } = string.Empty;
+    public string BuildName { get; set; } = string.Empty;
+    /// <summary>任务状态（Success/Failed/Cancelled/Running）。</summary>
+    public string Status { get; set; } = string.Empty;
+    public DateTime StartTime { get; set; }
+    public DateTime? CompletedTime { get; set; }
+}
+
+/// <summary>产物占用统计请求：目录列表。</summary>
+public sealed class ArtifactUsageRequest
+{
+    public List<string> Dirs { get; set; } = new();
+}
+
+/// <summary>产物清理请求：清空指定目录内容（保留目录本身）。</summary>
+public sealed class ArtifactCleanRequest
+{
+    public string Dir { get; set; } = string.Empty;
 }

@@ -27,6 +27,12 @@ export interface UniversalBuildJobDto {
   progress: number
   /** 排队位置（仅 Waiting 时有值，按启动顺序 1 起） */
   queuePosition?: number | null
+  /** 构建产物总大小（字节，构建成功后统计；失败/未构建为 null） */
+  artifactSize?: number | null
+  /** 构建成功后打包的 zip 路径（勾选打压缩包且成功时有值） */
+  artifactArchivePath?: string
+  /** 构建成功后打包的 zip 大小（字节；未打包为 null） */
+  artifactArchiveSize?: number | null
   log: string
   exitCode?: number
   startTime: string
@@ -42,6 +48,8 @@ export interface UniversalBuildRequest {
   name: string
   /** 构建前先执行 git pull --ff-only 拉取远端最新代码 */
   prePull?: boolean
+  /** 构建成功后把产物目录打包成 zip（落在输出目录的父目录，时间戳命名） */
+  packArtifact?: boolean
 }
 
 /** 检测指定类型环境请求 */
@@ -120,6 +128,12 @@ export interface DeployJobDto {
   completedTime?: string
   /** 部署整体进度（0-100），上传段为字节级真实进度 */
   progress?: number
+  /** 当前步骤序号（1 起，部署 7 步 / 回滚 5 步） */
+  currentStep?: number
+  /** 步骤总数 */
+  totalSteps?: number
+  /** 当前步骤名称（进度条旁显示，如“构建 Docker 镜像”） */
+  stepTitle?: string
   log: string
 }
 
@@ -220,6 +234,11 @@ export function selectFolder() {
   return httpPost<string | null>('/api/Common/UniversalBuild/SelectFolder', {})
 }
 
+/** 弹出 SQL 文件选择对话框，返回选中的文件路径；取消返回 null */
+export function selectSqlFile() {
+  return httpPost<string | null>('/api/Common/UniversalBuild/SelectSqlFile', {})
+}
+
 /** 在资源管理器中打开构建输出目录 */
 export function openOutputFolder(path: string) {
   return httpPost(`/api/Common/UniversalBuild/OpenFolder?path=${encodeURIComponent(path)}`, {})
@@ -234,6 +253,8 @@ export function checkSiteExists(request: CheckSiteExistsRequest) {
 
 /** 部署历史记录 */
 export interface DeployHistoryItem {
+  /** 关联任务 id（查看完整日志用；程序重启后内存任务丢失则不可查） */
+  jobId?: string | null
   buildName: string
   buildType: UniversalBuildType
   targetOS: DeployTargetOS
@@ -250,6 +271,41 @@ export function getDeployHistory() {
   return httpPost<DeployHistoryItem[]>('/api/Common/UniversalBuild/DeployHistory', {})
 }
 
+/** 部署任务完整日志（部署历史行查看入口） */
+export interface DeployLogResult {
+  log: string
+  buildName: string
+  status: string
+  startTime?: string
+  completedTime?: string
+}
+
+/** 读取部署任务的完整日志（仅内存中保留的任务，程序重启后旧条目不可查） */
+export function getDeployLog(jobId: string) {
+  return httpPost<DeployLogResult>(`/api/Common/UniversalBuild/DeployLog?jobId=${encodeURIComponent(jobId)}`, {})
+}
+
+// ============================ 产物占用统计与清理 ============================
+
+/** 产物目录占用统计 */
+export interface ArtifactUsageItem {
+  path: string
+  exists: boolean
+  sizeBytes: number
+  fileCount: number
+  lastWriteTime?: string | null
+}
+
+/** 统计构建产物目录占用（大小/文件数/最后修改时间） */
+export function getArtifactUsage(dirs: string[]) {
+  return httpPost<ArtifactUsageItem[]>('/api/Common/UniversalBuild/ArtifactUsage', { dirs })
+}
+
+/** 清空构建产物目录内容（保留目录本身，删除不可恢复） */
+export function cleanArtifact(dir: string) {
+  return httpPost('/api/Common/UniversalBuild/ArtifactClean', { dir })
+}
+
 /** 定时构建配置 */
 export interface ScheduleItem {
   /** 留空表示新增，有值表示更新 */
@@ -264,7 +320,8 @@ export interface ScheduleItem {
   intervalMinutes: number
   enabled: boolean
   lastRunAt?: string
-  nextRunAt: string
+  /** 下次触发时间（后端计算返回，前端提交时无需传） */
+  nextRunAt?: string
   lastJobId?: string
   lastError?: string
 }

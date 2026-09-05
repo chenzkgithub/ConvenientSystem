@@ -89,6 +89,7 @@ public sealed class DeployService
             StartTime = DateTime.Now,
             Log = new StringBuilder(),
             Cts = new CancellationTokenSource(),
+            TotalSteps = 5,
         };
         _jobs[jobId] = job;
 
@@ -212,11 +213,13 @@ public sealed class DeployService
             var healthUrl = serviceName == "api"
                 ? "http://localhost:51943/api/health"
                 : "http://localhost:80";
-            var healthOutput = ExecuteSshCommand(ssh,
-                $"curl -s -o /dev/null -w \"%{{http_code}}\" --max-time 10 {healthUrl} 2>/dev/null || echo 000");
-            var httpCode = ParseHttpCode(healthOutput);
+            var httpCode = await ProbeHttpLinuxAsync(ssh, healthUrl, job, token);
             job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
-            if (!httpCode.StartsWith("2"))
+            if (httpCode == "404")
+            {
+                job.Log.AppendLine("      ⚠ 服务已响应但无 /api/health 端点（旧版本），跳过深度校验");
+            }
+            else if (!httpCode.StartsWith("2"))
             {
                 job.Log.AppendLine($"      ⚠ 健康检查未通过（HTTP {httpCode}），请检查旧版本可用性或再次回滚");
             }
@@ -234,7 +237,7 @@ public sealed class DeployService
         var elapsed = (int)(job.CompletedTime.Value - job.StartTime).TotalSeconds;
         job.Log.AppendLine();
         job.Log.AppendLine($"===== ✅ 回滚完成！耗时 {elapsed} 秒 =====");
-        job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request, serviceName)}");
+        job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request.Host, request.TargetOS, serviceName)}");
     }
 
     /// <summary>Windows 回滚：停服务 + 三段交换目录 + 启动服务 + 健康检查。</summary>
@@ -320,11 +323,13 @@ public sealed class DeployService
             var healthUrl = serviceName == "ConvenientSystem.Api"
                 ? "http://localhost:51943/api/health"
                 : "http://localhost:8080";
-            var healthOutput = ExecuteSshCommand(ssh,
-                $"powershell -Command \"try {{ (Invoke-WebRequest -Uri '{healthUrl}' -UseBasicParsing -TimeoutSec 10).StatusCode }} catch {{ 'ERR' }}\"");
-            var httpCode = ParseHttpCode(healthOutput);
+            var httpCode = await ProbeHttpWindowsAsync(ssh, healthUrl, job, token);
             job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
-            if (!httpCode.StartsWith("2"))
+            if (httpCode == "404")
+            {
+                job.Log.AppendLine("      ⚠ 服务已响应但无 /api/health 端点（旧版本），跳过深度校验");
+            }
+            else if (!httpCode.StartsWith("2"))
             {
                 job.Log.AppendLine($"      ⚠ 健康检查未通过（HTTP {httpCode}），请检查旧版本可用性或再次回滚");
             }
@@ -342,7 +347,7 @@ public sealed class DeployService
         var elapsed = (int)(job.CompletedTime.Value - job.StartTime).TotalSeconds;
         job.Log.AppendLine();
         job.Log.AppendLine($"===== ✅ 回滚完成！耗时 {elapsed} 秒 =====");
-        job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request, serviceName)}");
+        job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request.Host, request.TargetOS, serviceName)}");
     }
 
     /// <summary>
@@ -609,21 +614,27 @@ public sealed class DeployService
                     $"docker ps --filter name={siteName}-{serviceName} --format \"table {{{{.Names}}}}\\t{{{{.Status}}}}\" 2>&1", job, token);
 
                 // 健康检查：解析 HTTP 状态码，非 2xx 视为新版本不可用 → 抛异常触发自动回滚
+                // 冷启动重试：DotNet 容器初始化可能超过 30 秒，未就绪期间 5 秒一次探测
                 var healthUrl = serviceName == "api"
                     ? "http://localhost:51943/api/health"
                     : "http://localhost:80";
-                var healthOutput = ExecuteSshCommand(ssh,
-                    $"curl -s -o /dev/null -w \"%{{http_code}}\" --max-time 10 {healthUrl} 2>/dev/null || echo 000");
-                var httpCode = ParseHttpCode(healthOutput);
+                var httpCode = await ProbeHttpLinuxAsync(ssh, healthUrl, job, token);
                 job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
-                if (!httpCode.StartsWith("2"))
+                if (httpCode == "404")
+                {
+                    job.Log.AppendLine("      ⚠ 服务已响应但无 /api/health 端点（旧版本），跳过深度校验");
+                }
+                else if (!httpCode.StartsWith("2"))
                 {
                     // 容器已用新版本启动过：还原文件后必须重建容器才能回到旧版本
                     job.Committed = false;
                     job.RestartServiceAfterRollback = true;
                     throw new InvalidOperationException($"健康检查未通过（HTTP {httpCode}），新版本不可用，自动回滚到旧版本");
                 }
-                job.Log.AppendLine($"      ✓ 验证完成");
+                else
+                {
+                    job.Log.AppendLine($"      ✓ 验证完成");
+                }
             }
 
             await ExecuteSshAsync(ssh, $"rm -rf {tempDir}", job, token);
@@ -637,7 +648,7 @@ public sealed class DeployService
             var elapsed = (int)(job.CompletedTime.Value - job.StartTime).TotalSeconds;
             job.Log.AppendLine();
             job.Log.AppendLine($"===== ✅ 部署完成！耗时 {elapsed} 秒 =====");
-            job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request, serviceName)}");
+            job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request.Host, request.TargetOS, serviceName)}");
         }
         finally
         {
@@ -778,22 +789,27 @@ public sealed class DeployService
                     $"powershell -Command \"Get-Service -Name '{serviceName}' | Format-Table Name,Status\"", job, token);
 
                 // 健康检查：解析 HTTP 状态码，非 2xx 视为新版本不可用 → 抛异常触发自动回滚
+                // 冷启动重试：DotNet 服务初始化可能超过 30 秒，未就绪期间 5 秒一次探测
                 var healthUrl = serviceName == "ConvenientSystem.Api"
                     ? "http://localhost:51943/api/health"
                     : "http://localhost:8080";
-                // Invoke-WebRequest 对非 2xx 会抛异常（含连接失败），统一捕获输出 ERR
-                var healthOutput = ExecuteSshCommand(ssh,
-                    $"powershell -Command \"try {{ (Invoke-WebRequest -Uri '{healthUrl}' -UseBasicParsing -TimeoutSec 10).StatusCode }} catch {{ 'ERR' }}\"");
-                var httpCode = ParseHttpCode(healthOutput);
+                var httpCode = await ProbeHttpWindowsAsync(ssh, healthUrl, job, token);
                 job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
-                if (!httpCode.StartsWith("2"))
+                if (httpCode == "404")
+                {
+                    job.Log.AppendLine("      ⚠ 服务已响应但无 /api/health 端点（旧版本），跳过深度校验");
+                }
+                else if (!httpCode.StartsWith("2"))
                 {
                     // 新版本服务已启动过：还原文件后需重启服务才能回到旧版本
                     job.Committed = false;
                     job.RestartServiceAfterRollback = true;
                     throw new InvalidOperationException($"健康检查未通过（HTTP {httpCode}），新版本不可用，自动回滚到旧版本");
                 }
-                job.Log.AppendLine($"      ✓ 验证完成");
+                else
+                {
+                    job.Log.AppendLine($"      ✓ 验证完成");
+                }
             }
 
             await ExecuteSshAsync(ssh,
@@ -808,7 +824,7 @@ public sealed class DeployService
             var elapsed = (int)(job.CompletedTime.Value - job.StartTime).TotalSeconds;
             job.Log.AppendLine();
             job.Log.AppendLine($"===== ✅ 部署完成！耗时 {elapsed} 秒 =====");
-            job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request, serviceName)}");
+            job.Log.AppendLine($"🌐 站点地址: {GetSiteUrl(request.Host, request.TargetOS, serviceName)}");
         }
         finally
         {
@@ -938,11 +954,45 @@ public sealed class DeployService
         }
     }
 
-    /// <summary>记录当前步骤并输出阶段标题（统一按 [N/7] 格式显示）。</summary>
+    /// <summary>
+    /// Linux 健康探测（curl）：服务冷启动（DotNet 容器初始化可达数十秒）期间 5 秒一次重试。
+    /// 返回最终 HTTP 状态码（连接失败为 000）；2xx 与 404 提前返回——404 表示 HTTP 服务
+    /// 已响应但无健康端点（部署目标是旧版本代码），由调用方决定宽容处理。
+    /// </summary>
+    private static async Task<string> ProbeHttpLinuxAsync(SshClient ssh, string healthUrl, DeployJob job, CancellationToken token, int attempts = 7)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var output = ExecuteSshCommand(ssh,
+                $"curl -s -o /dev/null -w \"%{{http_code}}\" --max-time 10 {healthUrl} 2>/dev/null || echo 000");
+            var code = ParseHttpCode(output);
+            if (code.StartsWith("2") || code == "404" || attempt >= attempts) return code;
+            job.Log.AppendLine($"      服务未就绪（HTTP {code}），5 秒后重试（{attempt}/{attempts - 1}）...");
+            await Task.Delay(5000, token);
+        }
+    }
+
+    /// <summary>Windows 健康探测（powershell）：语义同 Linux 版，Invoke-WebRequest 失败输出 ERR → 解析为 000。</summary>
+    private static async Task<string> ProbeHttpWindowsAsync(SshClient ssh, string healthUrl, DeployJob job, CancellationToken token, int attempts = 7)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            // Invoke-WebRequest 对非 2xx 会抛异常（含连接失败），统一捕获输出 ERR
+            var output = ExecuteSshCommand(ssh,
+                $"powershell -Command \"try {{ (Invoke-WebRequest -Uri '{healthUrl}' -UseBasicParsing -TimeoutSec 10).StatusCode }} catch {{ 'ERR' }}\"");
+            var code = ParseHttpCode(output);
+            if (code.StartsWith("2") || code == "404" || attempt >= attempts) return code;
+            job.Log.AppendLine($"      服务未就绪（HTTP {code}），5 秒后重试（{attempt}/{attempts - 1}）...");
+            await Task.Delay(5000, token);
+        }
+    }
+
+    /// <summary>记录当前步骤并输出阶段标题（统一按 [N/总步骤] 格式显示）。</summary>
     private static void SetStep(DeployJob job, int step, string title)
     {
         job.CurrentStep = step;
-        job.Log.AppendLine($"[{step}/7] {title}...");
+        job.StepTitle = title;
+        job.Log.AppendLine($"[{step}/{job.TotalSteps}] {title}...");
     }
 
     /// <summary>记录远程路径到任务（供取消回滚使用）。</summary>
@@ -981,11 +1031,11 @@ public sealed class DeployService
         };
     }
 
-    /// <summary>部署完成后的站点访问地址（Linux 统一走 80 入口，Windows 按服务类型区分端口）。</summary>
-    private static string GetSiteUrl(DeployRequest request, string serviceName)
+    /// <summary>部署完成后的站点访问地址（Linux 统一走 80 入口，Windows 按服务类型区分端口）。部署与回滚共用，只依赖 host/targetOS 两个字段。</summary>
+    private static string GetSiteUrl(string host, DeployTargetOS targetOS, string serviceName)
     {
-        var host = request.Host.Trim();
-        if (request.TargetOS == DeployTargetOS.Windows)
+        host = host.Trim();
+        if (targetOS == DeployTargetOS.Windows)
             return serviceName == "ConvenientSystem.Api" ? $"http://{host}:51943" : $"http://{host}:8080";
         return $"http://{host}";
     }
@@ -1117,6 +1167,7 @@ public sealed class DeployService
             {
                 _history.Add(new DeployHistoryItem
                 {
+                    JobId = job.Id,
                     BuildName = job.BuildName,
                     BuildType = job.BuildType,
                     TargetOS = job.TargetOS,
@@ -1174,6 +1225,9 @@ public sealed class DeployService
             StartTime = job.StartTime,
             CompletedTime = job.CompletedTime,
             Progress = job.Progress,
+            CurrentStep = job.CurrentStep,
+            TotalSteps = job.TotalSteps,
+            StepTitle = job.StepTitle,
             Log = job.Log.ToString(),
         };
     }
@@ -1212,8 +1266,12 @@ public sealed class DeployJob
     public int Progress { get; set; }
     /// <summary>取消信号源。</summary>
     public CancellationTokenSource? Cts { get; set; }
-    /// <summary>当前执行步骤（1-7），用于取消日志定位。</summary>
+    /// <summary>当前执行步骤（1-7 部署 / 1-5 回滚），用于取消日志定位。</summary>
     public int CurrentStep { get; set; }
+    /// <summary>步骤总数（部署 7 步、回滚 5 步），供前端展示 [n/m]。</summary>
+    public int TotalSteps { get; set; } = 7;
+    /// <summary>当前步骤名称（如“SFTP 上传到服务器”），供前端在进度条旁显示。</summary>
+    public string StepTitle { get; set; } = string.Empty;
     /// <summary>正式目录是否已切换为新版本（取消时需换回 .old）。</summary>
     public bool FilesSwapped { get; set; }
     /// <summary>Windows 服务是否已停止（取消时需重启）。</summary>
@@ -1305,12 +1363,20 @@ public sealed class DeployJobDto
     public DateTime? CompletedTime { get; set; }
     /// <summary>整体进度（0-100），上传段为字节级真实进度。</summary>
     public int Progress { get; set; }
+    /// <summary>当前步骤序号（1 起）。</summary>
+    public int CurrentStep { get; set; }
+    /// <summary>步骤总数（部署 7 / 回滚 5）。</summary>
+    public int TotalSteps { get; set; }
+    /// <summary>当前步骤名称（进度条旁显示，如“构建 Docker 镜像”）。</summary>
+    public string StepTitle { get; set; } = string.Empty;
     public string Log { get; set; } = string.Empty;
 }
 
 /// <summary>部署历史记录条目（JSON 持久化，只存摘要不存日志）。</summary>
 public sealed class DeployHistoryItem
 {
+    /// <summary>关联任务 id（查看完整日志用；程序重启后内存任务丢失则不可查）。</summary>
+    public string? JobId { get; set; }
     public string BuildName { get; set; } = string.Empty;
     public UniversalBuildType BuildType { get; set; }
     public DeployTargetOS TargetOS { get; set; }

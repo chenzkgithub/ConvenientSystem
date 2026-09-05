@@ -40,6 +40,13 @@ const UNIVERSAL_BUILD_ROUTE: RouteRecordRaw = {
   component: () => import('@/common/views/UniversalBuildView.vue'),
 }
 
+const PIPELINE_ROUTE: RouteRecordRaw = {
+  // 构建发布流水线（多阶段顺序执行：构建 → 部署）
+  path: '/pipeline',
+  name: 'pipeline',
+  component: () => import('@/common/views/PipelineView.vue'),
+}
+
 const GIT_WORKBENCH_ROUTE: RouteRecordRaw = {
   // Git 代码管理工作台
   path: '/git-workbench',
@@ -57,7 +64,7 @@ const PLACEHOLDER_ROUTE: RouteRecordRaw = {
 export const router = createRouter({
   // hash 模式：由 Kestrel 根提供 index.html，客户端路由无需服务端 fallback
   history: createWebHashHistory(),
-  routes: [HOME_ROUTE, EXTERNAL_ROUTE, LOCK_SCREEN_ROUTE, LOTTERY_SUMMARY_ROUTE, UNIVERSAL_BUILD_ROUTE, GIT_WORKBENCH_ROUTE, PLACEHOLDER_ROUTE],
+  routes: [HOME_ROUTE, EXTERNAL_ROUTE, LOCK_SCREEN_ROUTE, LOTTERY_SUMMARY_ROUTE, UNIVERSAL_BUILD_ROUTE, PIPELINE_ROUTE, GIT_WORKBENCH_ROUTE, PLACEHOLDER_ROUTE],
 })
 
 // 捕获路由懒加载失败：chunk 丢失或网络中断时弹提示，留在当前页面

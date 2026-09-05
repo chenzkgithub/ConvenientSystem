@@ -1,11 +1,8 @@
 /// <reference types="vite/client" />
 
-declare module 'vue' {
-  interface ComponentCustomProperties {
-    /** 按钮级权限检查：模板中 v-if="$has('permission-code')" */
-    $has: (code: string) => boolean
-  }
-}
+// 注意：vue 的 ComponentCustomProperties 扩展（$has 等）放在模块文件 src/types/vue.d.ts 里。
+// 本文件是全局脚本（无顶层 import/export），此处的 declare module 'vue' 会变成环境模块声明，
+// 遮蔽 node_modules 里真实的 vue 类型，导致所有 .vue 报 "Module 'vue' has no exported member 'ref'"。
 
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'

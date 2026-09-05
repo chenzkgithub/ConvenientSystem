@@ -99,7 +99,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>修改版本号和更新说明。</summary>
         [HttpPost]
-        [PermissionAuthorize("web-package:upload")]
+        [PermissionAuthorize("web-package:edit")]
         public ActionResult Update([FromBody] Shared.Model.Common.WebPackageUpdateDto dto)
         {
             _service.Update(dto.Id, dto.Version, dto.Description);
