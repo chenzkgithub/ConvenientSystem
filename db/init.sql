@@ -234,6 +234,7 @@ BEGIN
     (26, 24, N'开发工具集', N'/dev-tools', 1, 1, 0, 1, 1, N'dev-tools', N'/src/common/views/DevToolsView.vue', 2, 1),
     (27, 24, N'SQL查询', N'/sql-query', 1, 1, 0, 1, 1, N'sql-query', N'/src/common/views/SqlQueryView.vue', 3, 1),
     (28, 24, N'命名转换', N'/code-naming', 1, 1, 0, 1, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4, 1),
+    (62, 24, N'API文档生成', N'/api-spec', 0, 1, 0, 1, 1, N'api-spec', N'/src/common/views/ApiSpecView.vue', 5, 1),
     -- 构建发布（一级菜单）
     (61, NULL, N'构建发布', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
     (59, 61, N'系统版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
@@ -1286,7 +1287,8 @@ BEGIN
     (35, N'attendance',       N'考勤查询',   N'/src/yunhan/views/AttendanceView.vue',       N'/attendance',       35),
     (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37),
     (38, N'web-package',      N'系统版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
-    (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40);
+    (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40),
+    (41, N'api-spec',          N'API文档生成',  N'/src/common/views/ApiSpecView.vue',         N'/api-spec',         41);
     SET IDENTITY_INSERT dbo.SysView OFF;
 END
 GO
@@ -1399,6 +1401,9 @@ BEGIN
     (78, 38, N'desktop-package:delete',   N'删除安装包', 9),
     -- 通用构建发布
     (79, 40, N'universal-build:execute',  N'执行构建', 1),
+    -- API文档生成（C# Controller 源码 → OpenAPI/Postman 等格式）
+    (80, 41, N'api-spec',        N'查看API文档生成', 0),
+    (81, 41, N'api-spec:export', N'导出API数据文件', 1),
 
     SET IDENTITY_INSERT dbo.SysViewPermission OFF;
 END
@@ -1479,6 +1484,42 @@ BEGIN
     UPDATE dbo.SysViewPermission SET Title = N'停用/激活安装包', SortOrder = 8 WHERE Name = N'desktop-package:activate' AND (Title <> N'停用/激活安装包' OR SortOrder <> 8);
     UPDATE dbo.SysViewPermission SET SortOrder = 9 WHERE Name = N'desktop-package:delete' AND SortOrder <> 9;
 END
+GO
+
+-- ========== 老库补齐：API 文档生成视图/菜单/权限点（行级幂等） ==========
+-- 上方种子段整表级幂等（表非空跳过），老库按 Name 行级补种；
+-- 权限点补种后由下方「admin 角色自动拥有所有视图权限点」幂等块自动关联，无需手动授权 admin
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'api-spec')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'api-spec', N'API文档生成', N'/src/common/views/ApiSpecView.vue', N'/api-spec', 41);
+GO
+
+DECLARE @ApiSpecViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'api-spec');
+IF @ApiSpecViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'api-spec')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ApiSpecViewId, N'api-spec', N'查看API文档生成', 0);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'api-spec:export')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ApiSpecViewId, N'api-spec:export', N'导出API数据文件', 1);
+END
+GO
+
+-- 菜单：挂「开发工具」组下（按组标题查父 Id，不依赖固定 Id，避免 Identity 偏移错挂）
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'api-spec')
+    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type)
+    SELECT p.Id, N'API文档生成', N'/api-spec', 0, 1, 0, 1, 1, N'api-spec', N'/src/common/views/ApiSpecView.vue', 5, 1
+    FROM (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'开发工具' AND Page IS NULL AND Name IS NULL ORDER BY Id) p;
+GO
+
+-- admin 角色关联新菜单（老库补种段位于文件级 admin 菜单关联块之后，需自行补齐；
+-- 视图权限点无需处理，下方幂等块自动关联）
+INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
+SELECT r.Id, m.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
+WHERE r.Code = N'admin' AND m.Name = N'api-spec'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
 GO
 
 -- admin 角色自动拥有所有视图权限点

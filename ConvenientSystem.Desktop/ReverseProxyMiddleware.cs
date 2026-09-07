@@ -73,10 +73,12 @@ internal sealed class ReverseProxyMiddleware
         // Git 代码管理工作台操作本机仓库（git 命令在本机执行），同样必须走本地控制器
         // UiState：前端 UI 状态持久化（模板/卡片配置存 exe 目录 ui-state.json，不能转发到云）
         // Pipeline：流水线引擎在本机执行构建/部署（依赖本机服务与 SSH 凭据），不能转发到云
+        // WebUpdate：页面内「发现新版本」提示条调用的本地热更新接口（替换本机 wwwroot），不能转发到云
         if (context.Request.Path.StartsWithSegments("/api/Common/Build", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/UniversalBuild", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/UiState", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/Pipeline", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/WebUpdate", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/Git", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);

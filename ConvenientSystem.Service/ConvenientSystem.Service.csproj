@@ -32,4 +32,9 @@
     <ProjectReference Include="..\ConvenientSystem.Shared\ConvenientSystem.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Roslyn 语法分析：API 文档生成器解析 Controller/DTO 源码（纯语法分析，无需 Workspaces/语义模型） -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
+  </ItemGroup>
+
 </Project>

@@ -45,6 +45,12 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // WinForms 全局初始化必须先于任何窗口创建：启动早期的更新弹窗（UpdateDialog）
+        // 会创建窗口，若此时尚未初始化，后续再调 Initialize 会抛
+        // “必须调用 SetCompatibleTextRenderingDefault，才能在应用程序中创建第一个 IWin32Window 对象”，
+        // 导致点「以后再说」后主窗体无法启动（进程直接崩溃退出）。
+        ApplicationConfiguration.Initialize();
+
         // 单实例：通过命名互斥体确保只运行一个实例；若已有实例在跑，则激活已有窗口并退出。
         using var singleInstance = new Mutex(true, SingleInstanceMutexName, out bool createdNew);
         if (!createdNew)
@@ -126,11 +132,12 @@ internal static class Program
                         webUpdate);
 
                     Application.Run(dialog);
-                    // 如果用户点击"以后再说"，继续下面的 Web 静默更新
+                    // 点「以后再说」跳过的只是桌面更新，Web 前端更新由页面内提示条接管（见下方注释）
                 }
 
-                // 没有桌面更新或用户跳过时，静默检查 Web 前端更新
-                WebUpdateService.SilentUpdateAsync(wwwrootDir, remoteBaseUrl).GetAwaiter().GetResult();
+                // Web 前端更新不再启动时静默下载（大包会阻塞启动几十秒）：
+                // 运行中由页面顶部「发现新版本」提示条触发，用户确认后调本地
+                // WebUpdateController.Apply 下载替换 wwwroot 并自动刷新生效（见 UpdateBanner.vue）
             }
         }
 
@@ -158,7 +165,6 @@ internal static class Program
 
         var baseUrl = ResolveBaseUrl(app);
 
-        ApplicationConfiguration.Initialize();
         using (var form = new MainForm(baseUrl))
         {
             Application.Run(form);

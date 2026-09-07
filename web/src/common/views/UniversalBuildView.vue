@@ -365,7 +365,9 @@ async function onNameChange(card: BuildCard) {
 /** 构建前环境检测：结果写入 preLog（与后端构建日志拼接显示；缺失不拦截，由构建本身暴露问题） */
 async function logEnvironmentCheck(card: BuildCard) {
   try {
-    const infos = await checkUniversalEnvironmentForType({ type: card.type })
+    // 后台静默检测：不弹全局 loading（启动阶段的 loading 由卡片内部 v-loading 展示），
+    // 检测失败也不阻塞构建，结果异步写入日志开头
+    const infos = await checkUniversalEnvironmentForType({ type: card.type }, { silent: true })
     if (infos.length === 0) return
     const lines = ['', '===== 环境检测 =====']
     for (const info of infos) {
@@ -381,6 +383,9 @@ async function logEnvironmentCheck(card: BuildCard) {
     /* 检测接口失败不阻塞构建 */
   }
 }
+
+/** 启动构建中的卡片 id：构建启动请求期间在对应卡片内部显示局部 loading（哪个卡片触发遮哪个） */
+const startingCardId = ref<string | null>(null)
 
 async function startBuild(card: BuildCard) {
   if (!card.projectDir.trim()) {
@@ -400,10 +405,12 @@ async function startBuild(card: BuildCard) {
   selectedCardId.value = card.id
   ensureTick()
 
-  // 构建前先做环境检测，把结果写到日志开头
-  await logEnvironmentCheck(card)
-
+  // 启动阶段（环境检测 + 入队请求）只在触发的卡片内部转 loading，不遮罩全局
+  startingCardId.value = card.id
   try {
+    // 构建前先做环境检测，把结果写到日志开头
+    await logEnvironmentCheck(card)
+
     const dto = await startUniversalBuild({
       type: card.type,
       projectDir: card.projectDir.trim(),
@@ -411,7 +418,7 @@ async function startBuild(card: BuildCard) {
       name: card.name.trim(),
       prePull: card.prePull,
       packArtifact: card.packArtifact,
-    })
+    }, { silent: true })
     card.jobId = dto.id
     // 后端并发已满时任务先排队（Waiting），获得构建槽位后才转 Running
     card.status = dto.status || 'Running'
@@ -421,6 +428,10 @@ async function startBuild(card: BuildCard) {
   } catch (err: any) {
     card.status = 'Failed'
     card.log = `>> 启动失败：${err?.message || '未知错误'}`
+    // 请求已 silent（不弹全局 loading），启动失败需要手动提示；卡片日志同时记录错误详情
+    ElMessage.error(`任务「${card.name || '未命名'}」启动失败：${err?.message || '未知错误'}`)
+  } finally {
+    startingCardId.value = null
   }
 }
 
@@ -2365,6 +2376,8 @@ onUnmounted(() => {
       <el-card
         v-for="card in cards"
         :key="card.id"
+        v-loading="startingCardId === card.id"
+        element-loading-text="启动中…"
         class="build-card"
         :class="{ selected: selectedCardId === card.id, running: card.status === 'Running' || card.status === 'Waiting' }"
         shadow="hover"
@@ -3148,6 +3161,13 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* 覆盖 element-plus 相邻按钮默认 12px 左边距：该边距在 flex 换行后仍作用于
+   第二行首个按钮，导致第二行整体缩进与上一行错位（间距同时与 gap 叠加为 20px）；
+   间距统一由上方 gap: 8px 负责（同 PipelineView .row-actions 先例） */
+.card-actions .el-button + .el-button {
+  margin-left: 0;
 }
 
 .log-header {

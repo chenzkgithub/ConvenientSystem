@@ -13,6 +13,8 @@ import {
   Edit,
   Refresh,
   Loading,
+  CircleCheckFilled,
+  CircleCloseFilled,
 } from '@element-plus/icons-vue'
 import {
   getPipelineList,
@@ -58,6 +60,14 @@ function stageStatusText(status: PipelineStageRunStatus): string {
 }
 function stageStatusClass(status?: PipelineStageRunStatus): string {
   return status ? `is-${status.toLowerCase()}` : 'is-pending'
+}
+
+/** 阶段连线状态 = 箭头指向节点的状态（线色表达“流到这一步的结果”） */
+function arrowClass(nextRunStatus?: PipelineStageRunStatus): string {
+  if (nextRunStatus === 'Running') return 'is-active'
+  if (nextRunStatus === 'Success') return 'is-done'
+  if (nextRunStatus === 'Failed') return 'is-failed'
+  return 'is-idle'
 }
 
 // ============================ 列表 ============================
@@ -538,70 +548,64 @@ onUnmounted(() => {
       <span class="toolbar-tip">流水线定义保存在本机 exe 目录 pipelines.json，重装不丢失</span>
     </div>
 
-    <!-- 流水线列表 -->
-    <el-table :data="pipelines" v-loading="listLoading" stripe>
-      <el-table-column label="名称" min-width="180" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span class="pipe-name">{{ row.name }}</span>
-          <el-icon v-if="isPipelineRunning(row as PipelineDefinition)" class="spin run-spin"><Loading /></el-icon>
-        </template>
-      </el-table-column>
-      <el-table-column label="阶段" min-width="220">
-        <template #default="{ row }">
-          <span class="stage-badges">
-            <template v-for="(t, i) in stageBadges(row as PipelineDefinition)" :key="i">
-              <span v-if="i > 0" class="badge-arrow">→</span>
-              <span class="type-badge" :class="`type-${t.toLowerCase()}`" :title="stageTypeLabel[t]">{{ stageTypeLabel[t] }}</span>
-            </template>
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="最近运行" min-width="200">
-        <template #default="{ row }">
-          <template v-if="recentRunOf(row as PipelineDefinition)">
-            <el-tag :type="runStatusTagType(recentRunOf(row as PipelineDefinition)!.status)" size="small" :effect="recentRunOf(row as PipelineDefinition)!.status === 'Running' ? 'dark' : 'light'">
-              {{ runStatusText(recentRunOf(row as PipelineDefinition)!.status) }}
-            </el-tag>
-            <span class="run-meta">{{ formatDateTime(recentRunOf(row as PipelineDefinition)!.startTime) }} · {{ runElapsedText(recentRunOf(row as PipelineDefinition)!) }}</span>
-          </template>
+    <!-- 流水线列表：卡片网格（每条流水线一张卡，与构建页风格统一） -->
+    <div class="pipeline-grid" v-loading="listLoading">
+      <div
+        v-for="p in pipelines"
+        :key="p.id"
+        class="pipeline-card"
+        :class="{ 'is-running': isPipelineRunning(p) }"
+      >
+        <div class="pipe-head">
+          <span class="pipe-name">{{ p.name }}</span>
+          <el-icon v-if="isPipelineRunning(p)" class="spin run-spin"><Loading /></el-icon>
+          <el-tag v-if="recentRunOf(p)" class="pipe-status" :type="runStatusTagType(recentRunOf(p)!.status)" size="small" :effect="recentRunOf(p)!.status === 'Running' ? 'dark' : 'light'">
+            {{ runStatusText(recentRunOf(p)!.status) }}
+          </el-tag>
           <span v-else class="run-none">从未运行</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="更新时间" width="160">
-        <template #default="{ row }">{{ formatDateTime(row.updateTime) }}</template>
-      </el-table-column>
-      <!-- 操作列：5 个圆形按钮实需约 190px（24×5 + 12×4 间距），窄了会截断末尾按钮 -->
-      <el-table-column label="操作" width="215" fixed="right">
-        <template #default="{ row }">
-          <div class="row-actions">
-          <el-tooltip :content="isPipelineRunning(row as PipelineDefinition) ? '查看运行' : '执行'" placement="top">
+        </div>
+
+        <div v-if="p.stages.length" class="pipe-flow">
+          <template v-for="(t, i) in stageBadges(p)" :key="i">
+            <span v-if="i > 0" class="flow-link"></span>
+            <span class="type-badge" :class="`type-${t.toLowerCase()}`" :title="stageTypeLabel[t]">{{ stageTypeLabel[t] }}</span>
+          </template>
+        </div>
+
+        <div class="pipe-meta">
+          <span v-if="recentRunOf(p)" class="pipe-recent">{{ formatDateTime(recentRunOf(p)!.startTime) }} · {{ runElapsedText(recentRunOf(p)!) }}</span>
+          <span class="pipe-update" :title="formatDateTime(p.updateTime)">更新 {{ formatDateTime(p.updateTime) }}</span>
+        </div>
+
+        <div class="pipe-actions">
+          <el-tooltip :content="isPipelineRunning(p) ? '查看运行' : '执行'" placement="top">
             <el-button
               size="small"
               circle
-              :type="isPipelineRunning(row as PipelineDefinition) ? 'warning' : 'success'"
+              :type="isPipelineRunning(p) ? 'warning' : 'success'"
               :icon="VideoPlay"
-              @click="onExecute(row as PipelineDefinition)"
+              @click="onExecute(p)"
             />
           </el-tooltip>
           <el-tooltip content="最近运行详情" placement="top">
-            <el-button size="small" circle :icon="Clock" :disabled="!recentRunOf(row as PipelineDefinition)" @click="onViewRun(row as PipelineDefinition)" />
+            <el-button size="small" circle :icon="Clock" :disabled="!recentRunOf(p)" @click="onViewRun(p)" />
           </el-tooltip>
           <el-tooltip content="运行历史" placement="top">
-            <el-button size="small" circle :icon="Document" @click="openHistory(row as PipelineDefinition)" />
+            <el-button size="small" circle :icon="Document" @click="openHistory(p)" />
           </el-tooltip>
           <el-tooltip content="编辑" placement="top">
-            <el-button size="small" circle type="primary" :icon="Edit" :disabled="isPipelineRunning(row as PipelineDefinition)" @click="openEdit(row as PipelineDefinition)" />
+            <el-button size="small" circle type="primary" :icon="Edit" :disabled="isPipelineRunning(p)" @click="openEdit(p)" />
           </el-tooltip>
           <el-tooltip content="删除" placement="top">
-            <el-button size="small" circle type="danger" :icon="Delete" :disabled="isPipelineRunning(row as PipelineDefinition)" @click="onDeletePipeline(row as PipelineDefinition)" />
+            <el-button size="small" circle type="danger" :icon="Delete" :disabled="isPipelineRunning(p)" @click="onDeletePipeline(p)" />
           </el-tooltip>
-          </div>
-        </template>
-      </el-table-column>
-      <template #empty>
+        </div>
+      </div>
+
+      <div v-if="!listLoading && pipelines.length === 0" class="grid-empty">
         <el-empty description="暂无流水线，点击上方「新建流水线」创建" :image-size="70" />
-      </template>
-    </el-table>
+      </div>
+    </div>
 
     <!-- 新增/编辑流水线弹窗：名称 + 阶段配置 -->
     <el-dialog
@@ -793,7 +797,11 @@ onUnmounted(() => {
           <template v-for="(node, i) in diagramStages" :key="i">
             <div class="stage-node" :class="stageStatusClass(node.run?.status)" :title="node.run?.message || node.name">
               <div class="node-head">
-                <span class="node-index">{{ i + 1 }}</span>
+                <span class="node-index">
+                  <el-icon v-if="node.run?.status === 'Success'"><CircleCheckFilled /></el-icon>
+                  <el-icon v-else-if="node.run?.status === 'Failed'"><CircleCloseFilled /></el-icon>
+                  <template v-else>{{ i + 1 }}</template>
+                </span>
                 <span class="node-name">{{ node.name }}</span>
                 <span v-if="node.type" class="node-type">{{ stageTypeLabel[node.type] }}</span>
               </div>
@@ -806,7 +814,7 @@ onUnmounted(() => {
                 <span v-if="stageElapsedText(node)" class="node-elapsed">{{ stageElapsedText(node) }}</span>
               </div>
             </div>
-            <div v-if="i < diagramStages.length - 1" class="stage-arrow">→</div>
+            <div v-if="i < diagramStages.length - 1" class="stage-arrow" :class="arrowClass(diagramStages[i + 1]?.run?.status)"></div>
           </template>
           <el-empty v-if="diagramStages.length === 0" description="无阶段数据" :image-size="60" />
         </div>
@@ -814,11 +822,12 @@ onUnmounted(() => {
         <!-- 运行摘要条 -->
         <div class="run-summary">
           <el-tag :type="runStatusTagType(currentRun.status)" effect="dark" size="small">{{ runStatusText(currentRun.status) }}</el-tag>
+          <div class="summary-stages" :title="`阶段 ${currentRun.stages.filter((s) => s.status === 'Success').length}/${currentRun.stages.length} 成功`">
+            <span v-for="(s, i) in currentRun.stages" :key="i" class="seg" :class="stageStatusClass(s.status)"></span>
+            <span class="seg-count">{{ currentRun.stages.filter((s) => s.status === 'Success').length }}/{{ currentRun.stages.length }}</span>
+          </div>
           <span class="summary-text">{{ formatDateTime(currentRun.startTime) }}</span>
           <span class="summary-text">耗时 {{ runElapsedText(currentRun) }}</span>
-          <span class="summary-text">
-            阶段 {{ currentRun.stages.filter((s) => s.status === 'Success').length }}/{{ currentRun.stages.length }} 成功
-          </span>
           <span v-if="currentRun.stages.some((s) => s.status === 'Failed')" class="summary-fail">
             失败：{{ currentRun.stages.find((s) => s.status === 'Failed')?.message }}
           </span>
@@ -926,40 +935,127 @@ onUnmounted(() => {
   width: 260px;
 }
 
-/* ============================ 列表 ============================ */
+/* ============================ 列表（卡片网格） ============================ */
 
-/* 操作列：按钮单行紧凑排列，间距由 gap 控制（覆盖 element-plus 相邻按钮默认 12px 边距） */
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 14px;
+  align-content: start;
+  min-height: 120px;
 }
 
-.row-actions .el-button + .el-button {
-  margin-left: 0;
+/* 空态占满整行网格 */
+.grid-empty {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+.pipeline-card {
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.pipeline-card:hover {
+  border-color: #c6e2ff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}
+
+/* 运行中的卡片：蓝色边框呼吸，提示“正在跑” */
+.pipeline-card.is-running {
+  border-color: #409eff;
+  animation: card-breath 2s ease-in-out infinite;
+}
+
+@keyframes card-breath {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.22); }
+  50% { box-shadow: 0 0 0 5px rgba(64, 158, 255, 0.07); }
+}
+
+.pipe-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .pipe-name {
   font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态徽标靠右 */
+.pipe-head .pipe-status,
+.pipe-head .run-none {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .run-spin {
   color: #e6a23c;
-  margin-left: 6px;
-  vertical-align: middle;
+  flex-shrink: 0;
 }
 
-.stage-badges {
-  display: inline-flex;
+/* 卡片内阶段流程条：胶囊 + 短连线 */
+.pipe-flow {
+  display: flex;
   align-items: center;
-  gap: 4px;
   flex-wrap: wrap;
 }
 
-.badge-arrow {
+.flow-link {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: #dcdfe6;
+  margin: 0 5px;
+  flex-shrink: 0;
+}
+
+.pipe-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #909399;
+  min-width: 0;
+}
+
+.pipe-recent {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipe-update {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
   color: #c0c4cc;
-  font-size: 11px;
+}
+
+/* 卡片操作区：细分割线下方、按钮均匀铺开 */
+.pipe-actions {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid #f0f2f5;
+  padding-top: 10px;
+}
+
+.pipe-actions .el-button + .el-button {
+  margin-left: 0;
 }
 
 .type-badge {
@@ -985,12 +1081,6 @@ onUnmounted(() => {
   color: #e6a23c;
   border-color: #f5dab1;
   background: #fdf6ec;
-}
-
-.run-meta {
-  margin-left: 8px;
-  color: #909399;
-  font-size: 12px;
 }
 
 .run-none {
@@ -1052,11 +1142,59 @@ onUnmounted(() => {
   opacity: 0.55;
 }
 
+/* 阶段连线：线色 = 箭头指向节点的状态（绿=已完成 / 蓝虚线流动=进行中 / 红=失败 / 灰=待运行） */
 .stage-arrow {
   align-self: center;
-  color: #c0c4cc;
-  font-size: 18px;
   flex-shrink: 0;
+  width: 26px;
+  height: 2px;
+  position: relative;
+  background: #dcdfe6;
+}
+
+/* 右端箭头三角 */
+.stage-arrow::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid #dcdfe6;
+}
+
+.stage-arrow.is-idle {
+  background: repeating-linear-gradient(90deg, #dcdfe6 0 5px, transparent 5px 10px);
+}
+
+.stage-arrow.is-done {
+  background: #b3e19d;
+}
+
+.stage-arrow.is-done::after {
+  border-left-color: #b3e19d;
+}
+
+.stage-arrow.is-active {
+  background: repeating-linear-gradient(90deg, #409eff 0 5px, transparent 5px 10px);
+  animation: arrow-flow 0.6s linear infinite;
+}
+
+.stage-arrow.is-active::after {
+  border-left-color: #409eff;
+}
+
+.stage-arrow.is-failed {
+  background: #fab6b6;
+}
+
+.stage-arrow.is-failed::after {
+  border-left-color: #fab6b6;
+}
+
+@keyframes arrow-flow {
+  to { background-position: 10px 0; }
 }
 
 .node-head {
@@ -1079,14 +1217,25 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.stage-node.is-success .node-index {
-  background: #67c23a;
+.stage-node.is-running .node-index {
+  background: #409eff;
   color: #fff;
 }
 
+/* 成功/失败：序号圆换彩色结果图标（✓/✕，比数字换底色更直观） */
+.stage-node.is-success .node-index,
 .stage-node.is-failed .node-index {
-  background: #f56c6c;
-  color: #fff;
+  background: transparent;
+}
+
+.stage-node.is-success .node-index .el-icon {
+  color: #67c23a;
+  font-size: 18px;
+}
+
+.stage-node.is-failed .node-index .el-icon {
+  color: #f56c6c;
+  font-size: 18px;
 }
 
 .node-name {
@@ -1153,6 +1302,42 @@ onUnmounted(() => {
   padding: 8px 12px;
   font-size: 13px;
   margin-top: 12px;
+}
+
+/* 阶段分段进度条：每段一色，跑到哪一眼可见 */
+.summary-stages {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.summary-stages .seg {
+  width: 20px;
+  height: 6px;
+  border-radius: 3px;
+  background: #e4e7ed;
+}
+
+.summary-stages .seg.is-running {
+  background: #409eff;
+}
+
+.summary-stages .seg.is-success {
+  background: #67c23a;
+}
+
+.summary-stages .seg.is-failed {
+  background: #f56c6c;
+}
+
+.summary-stages .seg.is-skipped {
+  background: #dcdfe6;
+}
+
+.seg-count {
+  margin-left: 4px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .summary-text {
@@ -1285,16 +1470,34 @@ onUnmounted(() => {
 .history-stage-dots {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   margin-right: 8px;
 }
 
 .mini-dot {
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: 50%;
   background: #dcdfe6;
   display: inline-block;
+  flex-shrink: 0;
+}
+
+/* 点间连线：迷你流水线 */
+.mini-dot + .mini-dot {
+  margin-left: 12px;
+  position: relative;
+}
+
+.mini-dot + .mini-dot::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: #e4e7ed;
 }
 
 .mini-dot.is-running {

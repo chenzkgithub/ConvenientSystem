@@ -6,6 +6,7 @@ import { Lock, Close, User, Delete, SwitchButton, ArrowDown, Search, Fold, Expan
 import MenuTree from '@/common/components/MenuTree.vue'
 import NoticeBell from '@/common/components/NoticeBell.vue'
 import NoticeAlert from '@/common/components/NoticeAlert.vue'
+import UpdateBanner from '@/common/components/UpdateBanner.vue'
 import ProfileDialog from '@/common/components/ProfileDialog.vue'
 import CommandPalette from '@/common/components/CommandPalette.vue'
 import KeyboardHelp from '@/common/components/KeyboardHelp.vue'
@@ -586,12 +587,22 @@ function formatRecentTime(ts: number): string {
           </el-button>
           <NoticeBell />
           <el-button v-if="lock.featureEnabled" :icon="Lock" @click="lock.lock()">立即锁屏</el-button>
-          <!-- 点击头像展开：个人资料 / 清理缓存 / 退出登录 -->
+          <!-- 点击用户名/箭头展开：个人资料 / 清理缓存 / 退出登录；点头像则放大查看 -->
           <el-dropdown trigger="click" @command="onCommand">
             <div class="header-userchip">
-              <!-- 已设头像显示图片，否则回退首字母 -->
+              <!-- 已设头像显示图片（点击放大查看），否则回退首字母；点头像不弹菜单，点用户名/箭头弹菜单 -->
               <div class="header-avatar" :class="{ 'has-img': !!auth.avatar }">
-                <img v-if="auth.avatar" :src="auth.avatar" alt="头像" />
+                <el-image
+                  v-if="auth.avatar"
+                  :src="auth.avatar"
+                  :preview-src-list="[auth.avatar]"
+                  fit="cover"
+                  preview-teleported
+                  hide-on-click-modal
+                  class="header-avatar-img"
+                  alt="头像"
+                  @click.stop
+                />
                 <template v-else>{{ avatarText }}</template>
               </div>
               <div class="header-userbox">
@@ -610,6 +621,8 @@ function formatRecentTime(ts: number): string {
           </el-dropdown>
         </div>
       </el-header>
+      <!-- Web 前端新版本提示条：服务器有更高版本时显示，点击更新后自动刷新生效（仅桌面客户端场景出现） -->
+      <UpdateBanner />
       <!-- 登录后重要/紧急未读通知从右侧依次弹出小窗口提醒（无未读时不弹） -->
       <NoticeAlert />
       <div v-if="showTabsBar" class="tabs-bar">

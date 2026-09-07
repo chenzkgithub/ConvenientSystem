@@ -1,4 +1,5 @@
 using ConvenientSystem.Service.Common;
+using ConvenientSystem.Service.Common.ApiSpec;
 using ConvenientSystem.Service.Common.SqlQuery;
 using ConvenientSystem.Service.Email;
 using ConvenientSystem.Service.Sms;
@@ -336,6 +337,15 @@ namespace ConvenientSystem.Api
 
             // 桌面安装包自更新
             services.AddSingleton<IDesktopUpdateService, DesktopUpdateService>();
+
+            // API 文档生成器（C# Controller 源码 → OpenAPI/Postman/Markdown）
+            services.AddSingleton<IApiSpecService, ApiSpecService>();
+            // 各格式导出器（加格式 = 新实现类 + 注册一行，格式列表自动出现）
+            // 注意：using 父命名空间不会导入子命名空间，必须单独 using ...ApiSpec 才能用这些类型
+            services.AddSingleton<IApiExporter, OpenApiJsonExporter>();
+            services.AddSingleton<IApiExporter, OpenApiYamlExporter>();
+            services.AddSingleton<IApiExporter, PostmanExporter>();
+            services.AddSingleton<IApiExporter, MarkdownExporter>();
         }
     }
 }

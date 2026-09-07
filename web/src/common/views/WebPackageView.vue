@@ -103,6 +103,18 @@ function stripServerPath(description: string | null | undefined): string {
     .trim()
 }
 
+/** 横幅描述拆解：用户说明 + 服务器路径两段（单行展示；说明为空时默认补「最新」占位） */
+function splitDescParts(description: string | null | undefined): { note: string; path: string } {
+  const lines = (description ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+  const path = lines.find((l) => l.startsWith('服务器路径：')) ?? ''
+  const note = lines.filter((l) => !l.startsWith('服务器路径：')).join(' ').trim()
+  return { note: note || '最新', path }
+}
+
+// 两页签激活横幅的描述拆解（computed 避免模板里重复调用）
+const activeWebDesc = computed(() => splitDescParts(activeWebPackage.value?.description))
+const activeDesktopDesc = computed(() => splitDescParts(activeDesktopPackage.value?.description))
+
 // ========== 上传弹窗（Web / 桌面共用） ==========
 const uploadVisible = ref(false)
 const uploadLoading = ref(false)
@@ -245,7 +257,10 @@ onMounted(() => {
             <span class="avc-version">v{{ activeWebPackage.version }}</span>
             <span class="avc-meta">{{ formatSize(activeWebPackage.fileSize) }} · {{ activeWebPackage.createTime?.replace('T', ' ').slice(0, 16) }}</span>
           </div>
-          <div v-if="activeWebPackage.description" class="avc-desc">{{ activeWebPackage.description }}</div>
+          <div v-if="activeWebPackage.description" class="avc-desc">
+            <span class="avc-note">{{ activeWebDesc.note }}</span>
+            <span v-if="activeWebDesc.path" class="avc-path">{{ activeWebDesc.path }}</span>
+          </div>
         </div>
 
         <CommonDataTable
@@ -335,7 +350,10 @@ onMounted(() => {
             <span class="avc-version">v{{ activeDesktopPackage.version }}</span>
             <span class="avc-meta">{{ formatSize(activeDesktopPackage.fileSize) }} · {{ activeDesktopPackage.createTime?.replace('T', ' ').slice(0, 16) }}</span>
           </div>
-          <div v-if="activeDesktopPackage.description" class="avc-desc">{{ activeDesktopPackage.description }}</div>
+          <div v-if="activeDesktopPackage.description" class="avc-desc">
+            <span class="avc-note">{{ activeDesktopDesc.note }}</span>
+            <span v-if="activeDesktopDesc.path" class="avc-path">{{ activeDesktopDesc.path }}</span>
+          </div>
         </div>
 
         <CommonDataTable
@@ -546,11 +564,29 @@ onMounted(() => {
   color: #6b7280;
 }
 .avc-desc {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   color: #4b5563;
-  white-space: pre-line;
-  word-break: break-all;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* 说明正文（为空时默认「最新」），不截断 */
+.avc-note {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+/* 服务器路径：灰色小字跟在说明后面同一行，空间不够时截断省略 */
+.avc-path {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #9ca3af;
 }
 
 /* 表格描述列：多行显示（说明正文 + 服务器路径行） */

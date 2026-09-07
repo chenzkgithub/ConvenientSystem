@@ -78,14 +78,14 @@ export function checkUniversalEnvironment() {
   return httpPost<UniversalEnvironmentInfo[]>('/api/Common/UniversalBuild/Environment', {})
 }
 
-/** 检测指定类型所需环境 */
-export function checkUniversalEnvironmentForType(request: EnvironmentForTypeRequest) {
-  return httpPost<UniversalEnvironmentInfo[]>('/api/Common/UniversalBuild/EnvironmentForType', request)
+/** 检测指定类型所需环境（opts.silent = true 时后台静默检测，不弹 loading，供构建前自动检测用） */
+export function checkUniversalEnvironmentForType(request: EnvironmentForTypeRequest, opts?: { silent?: boolean }) {
+  return httpPost<UniversalEnvironmentInfo[]>('/api/Common/UniversalBuild/EnvironmentForType', request, undefined, undefined, opts)
 }
 
-/** 启动构建任务 */
-export function startUniversalBuild(request: UniversalBuildRequest) {
-  return httpPost<UniversalBuildJobDto>('/api/Common/UniversalBuild/Build', request)
+/** 启动构建任务（opts.silent = true 时不弹全局 loading，供卡片内局部 loading 场景使用） */
+export function startUniversalBuild(request: UniversalBuildRequest, opts?: { silent?: boolean }) {
+  return httpPost<UniversalBuildJobDto>('/api/Common/UniversalBuild/Build', request, undefined, undefined, opts)
 }
 
 /** 获取任务进度 */

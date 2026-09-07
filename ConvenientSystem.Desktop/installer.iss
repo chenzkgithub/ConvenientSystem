@@ -1,10 +1,10 @@
 ; ConvenientSystem 桌面客户端安装程序
-; 使用 Inno Setup 编译：iscc installer.iss
-; 前置条件：先运行 build-installer.cmd 构建 Vue 前端 + dotnet publish 桌面 exe
+; 使用 Inno Setup 编译：在本文件所在目录执行 iscc installer.iss（或项目根执行 iscc ConvenientSystem.Desktop\installer.iss）
+; 前置条件：先运行 build-installer.cmd 构建 Vue 前端 + dotnet publish 桌面 exe（产物在项目根 exe\，本脚本用 ..\exe\ 引用）
 
 [Setup]
 AppName=ConvenientSystem
-AppVersion=1.0.0
+AppVersion=1.0.0.3
 AppPublisher=ConvenientSystem
 DefaultDirName={autopf}\ConvenientSystem
 DefaultGroupName=ConvenientSystem

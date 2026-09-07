@@ -91,7 +91,7 @@ namespace ConvenientSystem.Service.Common
                 SendWebhook = false,
                 Enabled = true,
                 ExpireTime = expireTime,
-                CreatedById = null, // 系统通知：对所有用户可见，不会被"跳过发布人"过滤
+                CreatedById = null, // 系统通知：非用户发布（发布人/未发布人不影响可见性，全员可见）
                 UpdateTime = DateTime.Now
             }).ExecuteIdentity();
 
@@ -215,12 +215,12 @@ namespace ConvenientSystem.Service.Common
             ).ToHashSet();
         }
 
-        /// <summary>用户端：当前用户可见的启用且未过期通知列表（含已读状态，按发布时间倒序；跳过发布人本人）。</summary>
+        /// <summary>用户端：当前用户可见的启用且未过期通知列表（含已读状态，按发布时间倒序；发布人自己也可见）。</summary>
         public List<NoticeUserDto> GetMyList(Guid userId)
         {
             var now = DateTime.Now;
             var notices = _fsql.Select<SysNoticeEntity>()
-                .Where(n => n.Enabled && n.CreatedById != userId)
+                .Where(n => n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)
                 .OrderByDescending(n => n.CreateTime)
                 .Take(UserListLimit)
@@ -249,12 +249,12 @@ namespace ConvenientSystem.Service.Common
             }).ToList();
         }
 
-        /// <summary>用户端：当前用户未读通知数（仅统计对他可见且未过期的通知，跳过发布人本人）。</summary>
+        /// <summary>用户端：当前用户未读通知数（仅统计对他可见且未过期的通知；发布人自己的通知同样计入未读）。</summary>
         public int GetUnreadCount(Guid userId)
         {
             var now = DateTime.Now;
             var noticeIds = _fsql.Select<SysNoticeEntity>()
-                .Where(n => n.Enabled && n.CreatedById != userId)
+                .Where(n => n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)
                 .OrderByDescending(n => n.CreateTime)
                 .Take(UserListLimit)
@@ -291,12 +291,12 @@ namespace ConvenientSystem.Service.Common
             _fsql.Insert(new SysNoticeReadEntity { NoticeId = noticeId, UserId = userId }).ExecuteAffrows();
         }
 
-        /// <summary>用户端：全部未读（启用、未过期、对其可见且非本人发布）通知标记已读。</summary>
+        /// <summary>用户端：全部未读（启用、未过期、对其可见）通知标记已读。</summary>
         public void MarkAllRead(Guid userId)
         {
             var now = DateTime.Now;
             var noticeIds = _fsql.Select<SysNoticeEntity>()
-                .Where(n => n.Enabled && n.CreatedById != userId)
+                .Where(n => n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)
                 .Take(UserListLimit)
                 .ToList(n => n.Id);

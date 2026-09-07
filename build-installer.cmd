@@ -1,75 +1,97 @@
-ï»¿@echo off
-chcp 65001 >nul
-title æ„å»ºå®‰è£…ç¨‹åº - ConvenientSystem æ¡Œé¢å®¢æˆ·ç«¯
+@echo off
+REM ±¾ÎÄ¼ş±ØĞë±£´æÎª ANSI/GBK ±àÂë£¨ÖĞÎÄ Windows cmd µÄÔ­Éú±àÂë£©£¬ÇÒ²»Òª¼Ó BOM¡£
+REM Ô­Òò£ºcmd + chcp 65001 ¶Á UTF-8 ÖĞÎÄÅú´¦Àí»á·¢Éú×Ö½ÚÆ¯ÒÆ£¬°Ñ×¢ÊÍ/°ë½ØÎÄ±¾µ±ÃüÁîÖ´ĞĞ£»
+REM ×ª GBK ºó´ËÎÊÌâÕû×åÏû³ı¡£ÈôĞè±à¼­±¾ÎÄ¼ş£¬¸ÄÍêÇëÈ·±£´æ»Ø ANSI/GBK ±àÂë¡£
+title ¹¹½¨°²×°³ÌĞò - ConvenientSystem ×ÀÃæ¿Í»§¶Ë
 setlocal
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
 set "LOG=%ROOT%build-installer.log"
 echo ======================================== > "%LOG%"
-echo   ConvenientSystem å®‰è£…ç¨‹åºæ„å»º        >> "%LOG%"
+echo   ConvenientSystem °²×°³ÌĞò¹¹½¨        >> "%LOG%"
 echo   %date% %time%                          >> "%LOG%"
 echo ======================================== >> "%LOG%"
 echo.
 
 echo ========================================
-echo   ConvenientSystem å®‰è£…ç¨‹åºæ„å»º
-echo   1. æ„å»º Vue å‰ç«¯
-echo   2. å‘å¸ƒæ¡Œé¢å®¢æˆ·ç«¯ï¼ˆå•æ–‡ä»¶è‡ªåŒ…å«ï¼‰
-echo   3. ç¼–è¯‘ Inno Setup å®‰è£…ç¨‹åº
+echo   ConvenientSystem °²×°³ÌĞò¹¹½¨
+echo   1. ¹¹½¨ Vue Ç°¶Ë
+echo   2. ·¢²¼×ÀÃæ¿Í»§¶Ë£¨µ¥ÎÄ¼ş×Ô°üº¬£©
+echo   3. ±àÒë Inno Setup °²×°³ÌĞò
+echo.
+echo   ÓÃ·¨£ºbuild-installer.cmd [°æ±¾ºÅ]
+echo   - ²»´«°æ±¾ºÅ£º×Ô¶¯È¡µ±Ç°°æ±¾ +0.0.1 µİÔö
+echo   - ´«°æ±¾ºÅ  £ºÈç build-installer.cmd 1.1.0 »ò 1.0.0.3£¨ËÄ¶Î£©
+echo   °æ±¾ºÅ»áÍ¬²½Ğ´Èë csproj / appsettings.json / installer.iss£¬
+echo   ÉÏ´«·şÎñÆ÷Ê±ÇëÌîĞ´½Å±¾Êä³öµÄ°æ±¾ºÅ£¬±ÜÃâ¸üĞÂËÀÑ­»·
 echo ========================================
 echo.
 
-echo [1/3] æ„å»º Vue å‰ç«¯...
-echo [1/3] æ„å»º Vue å‰ç«¯... >> "%LOG%"
+echo [0/3] È·¶¨°æ±¾ºÅ²¢Í¬²½£¨csproj / appsettings.json / installer.iss£©...
+echo [0/3] È·¶¨°æ±¾ºÅ²¢Í¬²½£¨csproj / appsettings.json / installer.iss£©... >> "%LOG%"
+REM °æ±¾ºÅµ¥µãÕæÏàÔ´ = csproj µÄ Version£»Î´´«²ÎÔò patch +1£¬Í¬²½Ğ´Èı´¦ºóÊä³ö¡£
+REM ÕıÔòÓÃ \x22 ±íÊ¾Ë«ÒıºÅ£¬±ÜÃâ cmd Ë«ÒıºÅ°ü¹üµÄÃüÁî´®Àï³öÏÖÂãÒıºÅµ¼ÖÂ½âÎö´íÂÒ¡£
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$v='%~1'; if(!$v){$m=[regex]::Match([IO.File]::ReadAllText('ConvenientSystem.Desktop\ConvenientSystem.Desktop.csproj'),'<Version>([\d\.]+)</Version>'); $p=$m.Groups[1].Value.Split('.'); $p[2]=[int]$p[2]+1; $v=$p -join '.'}; if($v -notmatch '^\d+\.\d+\.\d+(\.\d+)?$'){exit 1}; $e=New-Object Text.UTF8Encoding($false); $f='ConvenientSystem.Desktop\ConvenientSystem.Desktop.csproj'; [IO.File]::WriteAllText($f,[regex]::Replace([IO.File]::ReadAllText($f),'<(Version|FileVersion|AssemblyVersion)>[\d\.]+</(Version|FileVersion|AssemblyVersion)>','<$1>'+$v+'</$1>'),$e); $q=[char]34; $f='ConvenientSystem.Desktop\appsettings.json'; [IO.File]::WriteAllText($f,[regex]::Replace([IO.File]::ReadAllText($f),'\x22DesktopVersion\x22\s*:\s*\x22[\d\.]+\x22',$q+'DesktopVersion'+$q+': '+$q+$v+$q),$e); $f='ConvenientSystem.Desktop\installer.iss'; [IO.File]::WriteAllText($f,[regex]::Replace([IO.File]::ReadAllText($f),'AppVersion=[\d\.]+','AppVersion='+$v),$e); Write-Output $v"`) do set "APPVER=%%V"
+if not defined APPVER (
+    echo   [´íÎó] °æ±¾ºÅÈ·¶¨Ê§°Ü£¨¸ñÊ½Ó¦Îª x.y.z »ò x.y.z.w£¬Èç 1.0.3 / 1.0.0.3£©
+    echo   [´íÎó] °æ±¾ºÅÈ·¶¨Ê§°Ü >> "%LOG%"
+    goto :failed
+)
+echo   - ±¾´Î¹¹½¨°æ±¾£º%APPVER%£¨ÉÏ´«¹ÜÀíÒ³ÃæÊ±ÇëÌîÕâ¸ö°æ±¾ºÅ£©
+echo   - ±¾´Î¹¹½¨°æ±¾£º%APPVER% >> "%LOG%"
+echo.
+
+echo [1/3] ¹¹½¨ Vue Ç°¶Ë...
+echo [1/3] ¹¹½¨ Vue Ç°¶Ë... >> "%LOG%"
 cd web
-REM æå‡ Node å †å†…å­˜ä¸Šé™ï¼Œé¿å… Vite æ„å»ºå¤§é¡¹ç›®æ—¶è§¦å‘ OOMï¼ˆFatal process out of memory: Zoneï¼‰
+REM ÌáÉı Node ¶ÑÄÚ´æÉÏÏŞ£¬±ÜÃâ Vite ¹¹½¨´óÏîÄ¿Ê±´¥·¢ OOM£¨Fatal process out of memory: Zone£©
 set "NODE_OPTIONS=--max-old-space-size=4096"
 if not exist "node_modules" (
-    echo   - ä¾èµ–ç¼ºå¤±ï¼Œæ‰§è¡Œ npm ci ...
-    echo   - ä¾èµ–ç¼ºå¤±ï¼Œæ‰§è¡Œ npm ci ... >> "%LOG%"
+    echo   - ÒÀÀµÈ±Ê§£¬Ö´ĞĞ npm ci ...
+    echo   - ÒÀÀµÈ±Ê§£¬Ö´ĞĞ npm ci ... >> "%LOG%"
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue'; npm ci 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%LOG%' -Append; exit $LastExitCode"
     if errorlevel 1 goto :failed
 ) else (
     if not exist "node_modules\vite" (
-        echo   - ä¾èµ–ä¸å®Œæ•´ï¼Œæ‰§è¡Œ npm install è¡¥å…¨ ...
-        echo   - ä¾èµ–ä¸å®Œæ•´ï¼Œæ‰§è¡Œ npm install è¡¥å…¨ ... >> "%LOG%"
+        echo   - ÒÀÀµ²»ÍêÕû£¬Ö´ĞĞ npm install ²¹È« ...
+        echo   - ÒÀÀµ²»ÍêÕû£¬Ö´ĞĞ npm install ²¹È« ... >> "%LOG%"
         powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue'; npm install 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%LOG%' -Append; exit $LastExitCode"
         if errorlevel 1 goto :failed
     )
 )
-echo   - æ‰§è¡Œ npm run build ...
-echo   - æ‰§è¡Œ npm run build ... >> "%LOG%"
+echo   - Ö´ĞĞ npm run build ...
+echo   - Ö´ĞĞ npm run build ... >> "%LOG%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue'; npm run build 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%LOG%' -Append; exit $LastExitCode"
 if errorlevel 1 goto :failed
 set "NODE_OPTIONS="
 cd ..
-echo   - Vue å‰ç«¯æ„å»ºæˆåŠŸ
-echo   - Vue å‰ç«¯æ„å»ºæˆåŠŸ >> "%LOG%"
+echo   - Vue Ç°¶Ë¹¹½¨³É¹¦
+echo   - Vue Ç°¶Ë¹¹½¨³É¹¦ >> "%LOG%"
 echo.
 
-echo [2/3] å‘å¸ƒæ¡Œé¢å®¢æˆ·ç«¯åˆ° exe\...
-echo [2/3] å‘å¸ƒæ¡Œé¢å®¢æˆ·ç«¯åˆ° exe\... >> "%LOG%"
-REM å‘å¸ƒå‰å…ˆç»“æŸå¯èƒ½æ­£åœ¨è¿è¡Œçš„æ—§ exeï¼Œé¿å…æ–‡ä»¶è¢«å ç”¨å¯¼è‡´ dotnet publish å¤±è´¥
-echo   - å°è¯•ç»“æŸ ConvenientSystem.exe è¿›ç¨‹...
-echo   - å°è¯•ç»“æŸ ConvenientSystem.exe è¿›ç¨‹... >> "%LOG%"
+echo [2/3] ·¢²¼×ÀÃæ¿Í»§¶Ëµ½ exe\...
+echo [2/3] ·¢²¼×ÀÃæ¿Í»§¶Ëµ½ exe\... >> "%LOG%"
+REM ·¢²¼Ç°ÏÈ½áÊø¿ÉÄÜÕıÔÚÔËĞĞµÄ¾É exe£¬±ÜÃâÎÄ¼ş±»Õ¼ÓÃµ¼ÖÂ dotnet publish Ê§°Ü
+echo   - ³¢ÊÔ½áÊø ConvenientSystem.exe ½ø³Ì...
+echo   - ³¢ÊÔ½áÊø ConvenientSystem.exe ½ø³Ì... >> "%LOG%"
 taskkill /F /IM ConvenientSystem.exe /T >> "%LOG%" 2>&1
-REM ç­‰å¾…è¿›ç¨‹é‡Šæ”¾æ–‡ä»¶å¥æŸ„
+REM µÈ´ı½ø³ÌÊÍ·ÅÎÄ¼ş¾ä±ú
 ping -n 3 127.0.0.1 >nul
 if exist "exe" rd /s /q "exe"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue'; dotnet publish 'ConvenientSystem.Desktop\ConvenientSystem.Desktop.csproj' -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SkipVueBuild=true -o 'exe' --nologo -v n 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%LOG%' -Append; exit $LastExitCode"
 if errorlevel 1 goto :failed
-echo   - æ¡Œé¢å®¢æˆ·ç«¯å‘å¸ƒæˆåŠŸ
-echo   - æ¡Œé¢å®¢æˆ·ç«¯å‘å¸ƒæˆåŠŸ >> "%LOG%"
+echo   - ×ÀÃæ¿Í»§¶Ë·¢²¼³É¹¦
+echo   - ×ÀÃæ¿Í»§¶Ë·¢²¼³É¹¦ >> "%LOG%"
 echo.
 
-echo [3/3] ç¼–è¯‘ Inno Setup å®‰è£…ç¨‹åº...
-echo [3/3] ç¼–è¯‘ Inno Setup å®‰è£…ç¨‹åº... >> "%LOG%"
+echo [3/3] ±àÒë Inno Setup °²×°³ÌĞò...
+echo [3/3] ±àÒë Inno Setup °²×°³ÌĞò... >> "%LOG%"
 set "ISCC=iscc"
 where iscc >nul 2>&1
 if not errorlevel 1 goto :found_iscc
 
-REM ä¾æ¬¡æ£€æµ‹ Inno Setup 6/7 å®‰è£…è·¯å¾„
+REM ÒÀ´Î¼ì²â Inno Setup 6/7 °²×°Â·¾¶
 for %%P in (
     "C:\Program Files (x86)\Inno Setup 6\iscc.exe"
     "C:\Program Files\Inno Setup 6\iscc.exe"
@@ -82,39 +104,40 @@ for %%P in (
         goto :found_iscc
     )
 )
-echo   [é”™è¯¯] æœªæ‰¾åˆ° Inno Setupï¼Œè¯·å®‰è£…åé‡è¯•ï¼šhttps://jrsoftware.org/isdl.php
-echo   [é”™è¯¯] æœªæ‰¾åˆ° Inno Setupï¼Œè¯·å®‰è£…åé‡è¯•ï¼šhttps://jrsoftware.org/isdl.php >> "%LOG%"
+echo   [´íÎó] Î´ÕÒµ½ Inno Setup£¬Çë°²×°ºóÖØÊÔ£ºhttps://jrsoftware.org/isdl.php
+echo   [´íÎó] Î´ÕÒµ½ Inno Setup£¬Çë°²×°ºóÖØÊÔ£ºhttps://jrsoftware.org/isdl.php >> "%LOG%"
 goto :failed
 :found_iscc
-echo   - ä½¿ç”¨ ISCC: %ISCC%
-echo   - ä½¿ç”¨ ISCC: %ISCC% >> "%LOG%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue'; & '%ISCC%' 'installer\installer.iss' 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%LOG%' -Append; exit $LastExitCode"
+echo   - Ê¹ÓÃ ISCC: %ISCC%
+echo   - Ê¹ÓÃ ISCC: %ISCC% >> "%LOG%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Continue'; & '%ISCC%' 'ConvenientSystem.Desktop\installer.iss' 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath '%LOG%' -Append; exit $LastExitCode"
 if errorlevel 1 goto :failed
-echo   - å®‰è£…ç¨‹åºç¼–è¯‘æˆåŠŸ
-echo   - å®‰è£…ç¨‹åºç¼–è¯‘æˆåŠŸ >> "%LOG%"
+echo   - °²×°³ÌĞò±àÒë³É¹¦
+echo   - °²×°³ÌĞò±àÒë³É¹¦ >> "%LOG%"
 echo.
 
 echo ========================================
-echo   å®‰è£…ç¨‹åºæ„å»ºå®Œæˆï¼
-echo   è¾“å‡ºæ–‡ä»¶ï¼šinstaller-output\ConvenientSystem-Setup.exe
-echo   å®‰è£…è·¯å¾„ï¼šC:\Program Files\ConvenientSystem
-echo   å¯åŠ¨æ–¹å¼ï¼šå®‰è£…åä»å¼€å§‹èœå•æˆ–æ¡Œé¢å¿«æ·æ–¹å¼å¯åŠ¨
-echo   å®Œæ•´æ—¥å¿—ï¼š%LOG%
+echo   °²×°³ÌĞò¹¹½¨Íê³É£¡
+echo   Êä³öÎÄ¼ş£ºinstaller-output\ConvenientSystem-Setup.exe
+echo   °æ±¾ºÅ£º%APPVER%£¨ÉÏ´«µ½ÏµÍ³°æ±¾¹ÜÀíÊ±±ØĞëÌîÕâ¸öºÅ£¬Ìî´í»áµ¼ÖÂ¿Í»§¶Ë¸üĞÂËÀÑ­»·£©
+echo   °²×°Â·¾¶£ºC:\Program Files\ConvenientSystem
+echo   Æô¶¯·½Ê½£º°²×°ºó´Ó¿ªÊ¼²Ëµ¥»ò×ÀÃæ¿ì½İ·½Ê½Æô¶¯
+echo   ÍêÕûÈÕÖ¾£º%LOG%
 echo ========================================
 echo.
-echo [æˆåŠŸ] æ„å»ºå®Œæˆï¼Œæ­£åœ¨å¯åŠ¨å®‰è£…ç¨‹åº...
-echo [æˆåŠŸ] æ„å»ºå®Œæˆï¼Œæ­£åœ¨å¯åŠ¨å®‰è£…ç¨‹åº... >> "%LOG%"
+echo [³É¹¦] ¹¹½¨Íê³É£¬ÕıÔÚÆô¶¯°²×°³ÌĞò...
+echo [³É¹¦] ¹¹½¨Íê³É£¬ÕıÔÚÆô¶¯°²×°³ÌĞò... >> "%LOG%"
 start "" "%ROOT%installer-output\ConvenientSystem-Setup.exe"
 echo.
-echo å®‰è£…ç¨‹åºå·²å¯åŠ¨ï¼Œæœ¬çª—å£å°†åœ¨ 3 ç§’åè‡ªåŠ¨å…³é—­...
+echo °²×°³ÌĞòÒÑÆô¶¯£¬±¾´°¿Ú½«ÔÚ 3 Ãëºó×Ô¶¯¹Ø±Õ...
 ping -n 4 127.0.0.1 >nul
 exit /b 0
 
 :failed
 echo.
-echo [å¤±è´¥] æ„å»ºå‡ºé”™ï¼Œè¯·æŸ¥çœ‹ä¸Šæ–¹æ—¥å¿—æˆ–æ–‡ä»¶ï¼š
+echo [Ê§°Ü] ¹¹½¨³ö´í£¬Çë²é¿´ÉÏ·½ÈÕÖ¾»òÎÄ¼ş£º
 echo   %LOG%
 echo.
-echo æŒ‰ä»»æ„é”®å…³é—­çª—å£...
+echo °´ÈÎÒâ¼ü¹Ø±Õ´°¿Ú...
 pause >nul
 exit /b 1

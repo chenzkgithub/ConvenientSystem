@@ -156,8 +156,18 @@ async function submitPassword() {
         <el-form :model="basic" label-width="90px">
           <el-form-item label="头像">
             <div class="avatar-edit">
+              <!-- 已设头像：点击图片放大查看（拦截选图，换图用「选择图片」按钮）；无头像：点击整块打开选图 -->
               <div class="avatar-preview" @click="pickAvatar">
-                <img v-if="basic.avatar" :src="basic.avatar" alt="头像" />
+                <el-image
+                  v-if="basic.avatar"
+                  :src="basic.avatar"
+                  :preview-src-list="[basic.avatar]"
+                  fit="cover"
+                  preview-teleported
+                  hide-on-click-modal
+                  alt="头像"
+                  @click.stop
+                />
                 <span v-else-if="avatarText" class="avatar-letter">{{ avatarText }}</span>
                 <el-icon v-else class="avatar-plus"><Plus /></el-icon>
               </div>
@@ -258,7 +268,12 @@ async function submitPassword() {
 .avatar-preview:hover {
   border-color: var(--el-color-primary);
 }
-.avatar-preview img {
+/* 头像放大预览（el-image）：容器铺满圆形区域，:deep 穿透到组件内部 img（scoped 下直接写 img 选择器命中不了） */
+.avatar-preview :deep(.el-image) {
+  width: 100%;
+  height: 100%;
+}
+.avatar-preview :deep(img) {
   width: 100%;
   height: 100%;
   object-fit: cover;

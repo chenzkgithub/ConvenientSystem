@@ -52,7 +52,8 @@ namespace ConvenientSystem.Shared.Jobs
             if (!notice.SendEmail && !notice.SendSms && !notice.SendWebhook) return;
 
             var users = FilterByScope(noticeId, Fsql.Select<SysUserEntity>().Where(u => u.Enabled).ToList());
-            // 发布人本人不接收自己发布的通知（与用户端展示规则一致）
+            // 外部推送（邮件/短信）跳过发布人本人：自己刚发布的内容无需再发到自己的邮箱/手机；
+            // 站内可见性无此排除——发布人同样能看到自己的通知（见 NoticeService.GetMyList）
             users = users.Where(u => u.Id != notice.CreatedById).ToList();
             if (users.Count == 0)
             {

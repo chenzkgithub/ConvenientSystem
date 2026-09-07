@@ -144,15 +144,18 @@ internal static class WebUpdateService
 
         progress?.Report((95, "正在解压..."));
 
-        ZipFile.ExtractToDirectory(tempZip, tempExtract);
-
-        progress?.Report((98, "正在替换文件..."));
-
-        // 原子替换 wwwroot：旧目录重命名后删除，新目录移动到位
-        // 使用带时间戳的备份目录名，避免旧 .bak 残留或锁定导致移动失败
         var backupDir = wwwrootDir + ".bak." + DateTime.Now.ToString("yyyyMMddHHmmssfff");
         try
         {
+            ZipFile.ExtractToDirectory(tempZip, tempExtract);
+
+            // 解包校正：zip 把前端打进了子目录（如压缩了构建输出文件夹本身而非其内容）时
+            // 自动上提一层；校正后仍无 index.html 则抛异常中止，杜绝坏包替换掉能用的前端
+            NormalizeExtractedRoot(tempExtract);
+
+            progress?.Report((98, "正在替换文件..."));
+
+            // 原子替换 wwwroot：旧目录重命名后删除，新目录移动到位
             // 备份当前 wwwroot（加 copy+delete 兜底，处理文件被锁等 Directory.Move 失败场景）
             if (Directory.Exists(wwwrootDir))
                 MoveDirectoryRobust(wwwrootDir, backupDir);
@@ -183,6 +186,34 @@ internal static class WebUpdateService
         await File.WriteAllTextAsync(versionPath, JsonSerializer.Serialize(versionJson, s_jsonOpts));
 
         progress?.Report((100, "更新完成"));
+    }
+
+    /// <summary>
+    /// 解包校正：index.html 不在解压根目录时，若恰有一个含 index.html 的子目录则将其内容
+    /// 上提一层（兼容「压缩了构建输出文件夹本身」的打包方式，多套的那层目录剥掉）；
+    /// 仍找不到则抛异常中止更新——结构异常的更新包不允许替换掉能正常工作的前端。
+    /// </summary>
+    private static void NormalizeExtractedRoot(string tempExtract)
+    {
+        if (File.Exists(Path.Combine(tempExtract, "index.html"))) return; // 标准结构，无需校正
+
+        var candidates = Directory.GetDirectories(tempExtract)
+            .Where(d => File.Exists(Path.Combine(d, "index.html")))
+            .ToList();
+        if (candidates.Count != 1)
+            throw new InvalidOperationException(candidates.Count == 0
+                ? "更新包结构异常：解压后未找到 index.html（疑似压缩了错误的内容），已中止更新并保留当前版本"
+                : "更新包结构异常：多个子目录都含 index.html，无法判定前端根，已中止更新并保留当前版本");
+
+        // 唯一命中：把子目录内容上提到解压根
+        var inner = candidates[0];
+        foreach (var entry in Directory.GetFileSystemEntries(inner))
+        {
+            var dest = Path.Combine(tempExtract, Path.GetFileName(entry));
+            if (Directory.Exists(entry)) MoveDirectoryRobust(entry, dest);
+            else File.Move(entry, dest);
+        }
+        Directory.Delete(inner, recursive: true); // 内容已上提，删掉空壳（recursive 兜住边缘残留）
     }
 
     /// <summary>执行单次 zip 下载（含进度回报）。</summary>
