@@ -1,7 +1,8 @@
 @echo off
-REM 本文件必须保存为 ANSI/GBK 编码（中文 Windows cmd 的原生编码），且不要加 BOM。
-REM 原因：cmd + chcp 65001 读 UTF-8 中文批处理会发生字节漂移，把注释/半截文本当命令执行；
-REM 转 GBK 后此问题整族消除。若需编辑本文件，改完请确保存回 ANSI/GBK 编码。
+chcp 936 >nul
+REM 本文件必须保存为 ANSI/GBK 编码（中文 Windows cmd 原生编码），且不要加 BOM。
+REM chcp 936 强制切到 GBK，无论父进程（如 IDE 终端）继承何种代码页；
+REM 避免字节漂移导致的解析错乱（cmd + chcp 65001 + UTF-8 的已知 bug）。
 title 构建安装程序 - ConvenientSystem 桌面客户端
 setlocal
 set "ROOT=%~dp0"
