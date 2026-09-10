@@ -49,9 +49,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>
         /// 取出 JWT 中的数据库用户 Id。
-        /// 数据库不可用时的兜底登录签发的是 userId 为空 Guid 的令牌（见 LoginService），
-        /// 该会话没有对应的 SysUser 记录，此处返回 400 而非 401——
-        /// 401 会被前端拦截器判定为登录失效并清除会话，对兜底登录不合适。
+        /// 兜底账号（userId=Guid.Empty）允许通过，Service 层对不存在的用户返回空结果或默认值，不报 400。
         /// </summary>
         private bool TryGetDbUserId(out Guid userId, out ActionResult? error)
         {
@@ -62,12 +60,7 @@ namespace ConvenientSystem.Api.Controllers.Common
                 error = Unauthorized();
                 return false;
             }
-            if (id.Value == Guid.Empty)
-            {
-                userId = Guid.Empty;
-                error = BadRequest(new { message = "当前会话未关联数据库账号（数据库不可用时的兜底登录），无法查看或修改个人资料" });
-                return false;
-            }
+            // 兜底账号（userId=Guid.Empty）允许通过，Service 返回空结果
             userId = id.Value;
             error = null;
             return true;

@@ -8,6 +8,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 import { getMyConfig, updateMyConfig, getLauncherItems, saveLauncherItems } from '@/common/api/userConfig'
+import { getApifoxAccessTokenStatus, saveApifoxAccessToken } from '@/common/api/apiSpec'
 import type { UserConfigGroup, LauncherEntry } from '@/common/api/userConfig'
 import { useLockStore } from '@/common/stores/lock'
 
@@ -20,6 +21,12 @@ const CATEGORY_ICONS: Record<string, string> = {
 
 const myGroups = ref<UserConfigGroup[]>([])
 const myLoading = ref(false)
+
+// Apifox Access Token 单独保存，状态接口不会返回令牌明文。
+const apifoxTokenConfigured = ref(false)
+const apifoxAccessToken = ref('')
+const apifoxTokenLoading = ref(false)
+const apifoxTokenSaving = ref(false)
 
 /** 编辑副本：configKey → 当前值 */
 const myEditMap = ref<Record<string, string>>({})
@@ -75,6 +82,58 @@ async function loadMyConfig() {
   }
 }
 
+async function loadApifoxAccessTokenStatus() {
+  apifoxTokenLoading.value = true
+  try {
+    const status = await getApifoxAccessTokenStatus()
+    apifoxTokenConfigured.value = status?.tokenConfigured === true
+  } catch {
+    // request.ts 已弹错误提示；不影响普通个人配置的使用。
+  } finally {
+    apifoxTokenLoading.value = false
+  }
+}
+
+async function saveApifoxToken() {
+  const accessToken = apifoxAccessToken.value.trim()
+  if (!accessToken) {
+    ElMessage.warning('请填写 Apifox Access Token')
+    return
+  }
+
+  apifoxTokenSaving.value = true
+  try {
+    await saveApifoxAccessToken({ accessToken, clearAccessToken: false })
+    apifoxAccessToken.value = ''
+    apifoxTokenConfigured.value = true
+    ElMessage.success('Apifox Access Token 已保存')
+  } catch {
+    // request.ts 已弹错误提示
+  } finally {
+    apifoxTokenSaving.value = false
+  }
+}
+
+async function clearApifoxToken() {
+  try {
+    await ElMessageBox.confirm('清除后将无法导入 Apifox，确定继续吗？', '清除 Access Token', {
+      confirmButtonText: '清除', cancelButtonText: '取消', type: 'warning',
+    })
+  } catch { return }
+
+  apifoxTokenSaving.value = true
+  try {
+    await saveApifoxAccessToken({ clearAccessToken: true })
+    apifoxAccessToken.value = ''
+    apifoxTokenConfigured.value = false
+    ElMessage.success('Apifox Access Token 已清除')
+  } catch {
+    // request.ts 已弹错误提示
+  } finally {
+    apifoxTokenSaving.value = false
+  }
+}
+
 async function saveMyGroup(group: UserConfigGroup) {
   const dirtyItems = group.items
     .filter(item => {
@@ -114,6 +173,7 @@ async function saveMyGroup(group: UserConfigGroup) {
 // keep-alive 下 onMounted 只触发一次；改用 onActivated，每次进入页面都重新拉取最新数据，
 // 确保桌面端/网页端另一侧的修改能及时反映。
 onActivated(loadMyConfig)
+onActivated(loadApifoxAccessTokenStatus)
 
 // ========== 启动器条目管理 ==========
 const launcherLoading = ref(false)
@@ -252,6 +312,20 @@ onActivated(loadLauncherItems)
                 class="config-number"
               />
 
+              <!-- select -->
+              <el-radio-group
+                v-else-if="item.inputType === 'select'"
+                v-model="myEditMap[item.configKey]"
+              >
+                <el-radio-button
+                  v-for="opt in item.options"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </el-radio-button>
+              </el-radio-group>
+
               <!-- text -->
               <el-input
                 v-else
@@ -264,6 +338,63 @@ onActivated(loadLauncherItems)
         </div>
       </el-card>
     </div>
+    <div class="config-card-wrapper" v-loading="apifoxTokenLoading">
+      <el-card shadow="hover" class="config-card">
+        <template #header>
+          <div class="card-header">
+            <span class="card-title">
+              <span class="card-icon">🔑</span>
+              Apifox Access Token
+            </span>
+            <el-button
+              v-if="apifoxTokenConfigured"
+              link
+              type="danger"
+              size="small"
+              :loading="apifoxTokenSaving"
+              @click="clearApifoxToken"
+            >
+              清除令牌
+            </el-button>
+          </div>
+        </template>
+        <div class="config-form">
+          <div class="config-item">
+            <div class="config-label">
+              <span class="config-name">保存状态</span>
+              <span class="config-desc">令牌仅在服务端加密保存，页面不会返回或显示已保存的内容。</span>
+            </div>
+            <div class="config-control">
+              <el-tag :type="apifoxTokenConfigured ? 'success' : 'info'">
+                {{ apifoxTokenConfigured ? '已配置' : '未配置' }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="config-item">
+            <div class="config-label">
+              <span class="config-name">Access Token</span>
+              <span class="config-desc">从 Apifox 个人设置创建并复制。填写后保存即可用于接口文档导入。</span>
+            </div>
+            <div class="config-control">
+              <el-input
+                v-model="apifoxAccessToken"
+                class="config-input"
+                type="password"
+                show-password
+                autocomplete="off"
+                placeholder="请输入新的 Access Token"
+              />
+            </div>
+          </div>
+          <div class="token-actions">
+            <el-button type="primary" :loading="apifoxTokenSaving" @click="saveApifoxToken">
+              {{ apifoxTokenConfigured ? '更新令牌' : '保存令牌' }}
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
     <el-empty v-if="myGroups.length === 0 && !myLoading" description="暂无个人配置" />
 
     <!-- 启动器条目管理 -->
@@ -331,6 +462,9 @@ onActivated(loadLauncherItems)
 
 <style scoped>
 .personal-config-page {
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
   max-width: 720px;
   margin: 0 auto;
   padding: 24px;
@@ -428,6 +562,12 @@ onActivated(loadLauncherItems)
 
 .config-number {
   width: 160px;
+}
+
+.token-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0 20px;
 }
 
 /* 卡片头部背景优化 */

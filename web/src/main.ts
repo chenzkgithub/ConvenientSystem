@@ -27,7 +27,7 @@ app.use(router)
 
 // 全局错误统一弹提示（不再跳错误页）：grouping 合并相同内容提示，避免连环错误刷屏
 function showErrorToast(title: string, message: string) {
-  ElMessage.error({ message: `${title}：${message}`, grouping: true, duration: 6000 })
+  ElMessage.error({ message: `${title}：${message}`, grouping: true, duration: 3000 })
 }
 
 app.config.errorHandler = (err, _vm, info) => {

@@ -13,6 +13,7 @@ import {
   type GitDiscoveredRepo, type GitEnv, type GitFileDiff, type GitLogEntry, type GitMergeState, type GitRepoStatus, type GitStashEntry,
 } from '@/common/api/git'
 import { openOutputFolder, selectFolder } from '@/common/api/universalBuild'
+import { loadUiStateString, saveUiStateString } from '@/common/api/uiState'
 import { GIT_CATEGORY_ALL, gitCategories, gitCommands, type GitCommandEntry } from '@/common/data/gitCommands'
 
 // ============================ 仓库列表 ============================
@@ -24,18 +25,15 @@ const reposLoading = ref(false)
 
 const repoSearch = ref('')
 
-/** 置顶路径集合（存 localStorage，刷新保留） */
+/** 置顶路径集合（存 exe 目录 ui-state.json，清缓存/重装不丢；onMounted 异步加载） */
 const PINS_KEY = 'git-workbench-pins'
-function loadPins(): string[] {
-  try { return JSON.parse(localStorage.getItem(PINS_KEY) ?? '[]') } catch { return [] }
-}
-const pinnedPaths = ref<string[]>(loadPins())
+const pinnedPaths = ref<string[]>([])
 
 function togglePin(path: string) {
   const i = pinnedPaths.value.indexOf(path)
   if (i >= 0) pinnedPaths.value.splice(i, 1)
   else pinnedPaths.value.push(path)
-  localStorage.setItem(PINS_KEY, JSON.stringify(pinnedPaths.value))
+  saveUiStateString(PINS_KEY, JSON.stringify(pinnedPaths.value))
 }
 
 // ============================ 分组 ============================
@@ -44,27 +42,32 @@ const GROUP_ORDER_KEY = 'git-workbench-group-order'
 const GROUP_EXPAND_KEY = 'git-workbench-group-expand'
 const REPO_ORDER_KEY = 'git-workbench-repo-order'
 
-function loadGroupOrder(): string[] {
-  try { return JSON.parse(localStorage.getItem(GROUP_ORDER_KEY) ?? '[]') } catch { return [] }
-}
+const groupOrder = ref<string[]>([])
+const groupExpand = ref<Record<string, boolean>>({})
+/** 仓库拖拽排序（响应式：drop 后写 ref 列表即时重排；旧实现读 localStorage 非响应式，拖完不动） */
+const repoOrder = ref<string[]>([])
+
+/** 侧栏布局状态统一持久化到 exe 目录 ui-state.json（与构建数据同一存储）；
+ *  纯浏览器 web 版时 uiState 兜底回退 localStorage，老数据自动迁移 */
 function saveGroupOrder(order: string[]) {
-  localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(order))
+  saveUiStateString(GROUP_ORDER_KEY, JSON.stringify(order))
 }
-function loadGroupExpand(): Record<string, boolean> {
-  try { return JSON.parse(localStorage.getItem(GROUP_EXPAND_KEY) ?? '{}') } catch { return {} }
-}
-function loadRepoOrder(): string[] {
-  try { return JSON.parse(localStorage.getItem(REPO_ORDER_KEY) ?? '[]') } catch { return [] }
+function saveGroupExpand() {
+  saveUiStateString(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
 }
 function saveRepoOrder(order: string[]) {
-  localStorage.setItem(REPO_ORDER_KEY, JSON.stringify(order))
+  repoOrder.value = order
+  saveUiStateString(REPO_ORDER_KEY, JSON.stringify(order))
 }
-const groupOrder = ref<string[]>(loadGroupOrder())
-const groupExpand = ref<Record<string, boolean>>(loadGroupExpand())
 
 function toggleGroupExpand(group: string) {
   groupExpand.value[group] = !groupExpand.value[group]
-  localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+  saveGroupExpand()
+}
+
+/** 安全解析 JSON 字符串（为空/损坏时返回默认值，避免侧栏状态拉挂页面） */
+function parseJsonOr<T>(raw: string | null, fallback: T): T {
+  try { return JSON.parse(raw ?? '') ?? fallback } catch { return fallback }
 }
 
 /** 过滤后的仓库按分组归类（无分组仓库不在此列，一级平铺） */
@@ -76,7 +79,7 @@ const groupedRepos = computed(() => {
 
   // 按自定义顺序排序（置顶前置，其余按用户拖拽顺序）
   const pinned = pinnedPaths.value
-  const repoOrd = loadRepoOrder()
+  const repoOrd = repoOrder.value
   const sorted = [...list].sort((a, b) => {
     const ap = pinned.includes(a.path) ? 0 : 1
     const bp = pinned.includes(b.path) ? 0 : 1
@@ -125,7 +128,7 @@ const ungroupedRepos = computed(() => {
     ? repos.value.filter(r => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q))
     : repos.value
   const pinned = pinnedPaths.value
-  const repoOrd = loadRepoOrder()
+  const repoOrd = repoOrder.value
   return list.filter(r => !r.group).sort((a, b) => {
     const ap = pinned.includes(a.path) ? 0 : 1
     const bp = pinned.includes(b.path) ? 0 : 1
@@ -352,6 +355,17 @@ function onWindowFocus() {
 }
 
 onMounted(async () => {
+  // 侧栏布局状态（置顶/分组顺序/展开/仓库排序）：ui-state.json 优先，localStorage 老数据自动迁移
+  const [pinsRaw, groupOrderRaw, groupExpandRaw, repoOrderRaw] = await Promise.all([
+    loadUiStateString(PINS_KEY),
+    loadUiStateString(GROUP_ORDER_KEY),
+    loadUiStateString(GROUP_EXPAND_KEY),
+    loadUiStateString(REPO_ORDER_KEY),
+  ])
+  pinnedPaths.value = parseJsonOr(pinsRaw, [])
+  groupOrder.value = parseJsonOr(groupOrderRaw, [])
+  groupExpand.value = parseJsonOr(groupExpandRaw, {})
+  repoOrder.value = parseJsonOr(repoOrderRaw, [])
   await loadRepos()
   if (repos.value.length > 0 && !currentPath.value) {
     currentPath.value = repos.value[0].path
@@ -486,7 +500,7 @@ async function createGroup() {
     groupOrder.value.push(name)
     saveGroupOrder(groupOrder.value)
     groupExpand.value[name] = true
-    localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+    saveGroupExpand()
     ElMessage.success(`分组「${name}」已创建，可拖拽仓库进入`)
   } catch { /* 用户取消 */ }
 }
@@ -522,7 +536,7 @@ async function renameGroup(oldName: string) {
     if (oldName in groupExpand.value) {
       groupExpand.value[newName] = groupExpand.value[oldName]
       delete groupExpand.value[oldName]
-      localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+      saveGroupExpand()
     }
     ElMessage.success(`已重命名为「${newName}」（${members.length} 个仓库）`)
   } catch { /* 用户取消 */ }
@@ -544,7 +558,7 @@ async function dissolveGroup(name: string) {
   groupOrder.value = groupOrder.value.filter(g => g !== name)
   saveGroupOrder(groupOrder.value)
   delete groupExpand.value[name]
-  localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+  saveGroupExpand()
 }
 
 // ---------- 拖拽仓库到分组 ----------
@@ -618,7 +632,7 @@ function onRepoItemDrop(e: DragEvent, targetPath: string) {
   // 只允许同组内排序（组间移动用拖到分组 header / 放置区）
   if ((srcRepo.group || '') !== (tgtRepo.group || '')) return
 
-  const order = loadRepoOrder()
+  const order = [...repoOrder.value]
   // 确保两个路径都在 order 中
   if (!order.includes(srcPath)) order.push(srcPath)
   if (!order.includes(targetPath)) order.push(targetPath)
@@ -661,7 +675,7 @@ async function onGroupDrop(e: DragEvent, group: string) {
     // 目标分组折叠时自动展开，让用户看到移动结果
     if (group && groupExpand.value[group] === false) {
       groupExpand.value[group] = true
-      localStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify(groupExpand.value))
+      saveGroupExpand()
     }
     ElMessage.success(`已移动到「${group || '未分组'}」`)
   } catch {
@@ -836,7 +850,8 @@ function openCloneDialog() {
 }
 
 async function chooseCloneParent() {
-  const path = await selectFolder()
+  // 输入框已有路径时从该位置打开（后端 ResolveInitialDir：目录直用、文件取父目录）
+  const path = await selectFolder(cloneParentDir.value)
   if (path) cloneParentDir.value = path
 }
 

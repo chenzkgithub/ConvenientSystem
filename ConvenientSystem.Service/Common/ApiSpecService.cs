@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using ConvenientSystem.Service.Common.ApiSpec;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Model.Common;
@@ -71,14 +72,129 @@ namespace ConvenientSystem.Service.Common
             return result.OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        public ApiSpecDocumentDto Parse(string rootDir, string files, string? title, string? baseUrl)
+        /// <summary>
+        /// 扫描解决方案内全部接口，返回接口级清单（前端勾选后生成文档）。
+        /// 传 .sln/.slnx 文件：解析项目列表，仅扫描这些项目目录；传目录：按根目录全扫。
+        /// 只做纯语法解析（路由/方法/注释），不建类型索引不展开 DTO，与文件级扫描同等成本。
+        /// </summary>
+        public List<ApiSpecSolutionEndpointDto> ScanSolution(string solutionPath)
         {
-            var dir = ValidateRoot(rootDir);
+            var scope = ResolveSolutionScope(solutionPath);
+            var rootDir = scope.RootDir;
+            var projectDirs = scope.ProjectDirs;
+
+            // 类名索引（跨项目）：基类路由解析用——[Route]/[Area] 可能声明在任意 .cs（如 BaseController.cs）
+            var typeIndex = BuildTypeIndex(projectDirs);
+
+            var result = new List<ApiSpecSolutionEndpointDto>();
+            foreach (var dir in projectDirs)
+            {
+                foreach (var file in EnumerateCsFiles(dir))
+                {
+                    if (!Path.GetFileName(file).EndsWith("Controller.cs", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(file));
+                    foreach (var group in tree.GetCompilationUnitRoot()
+                                 .DescendantNodes().OfType<ClassDeclarationSyntax>()
+                                 .Where(c => c.Identifier.ValueText.EndsWith("Controller", StringComparison.Ordinal))
+                                 .GroupBy(c => c.Identifier.ValueText))
+                    {
+                        // 路由拼接与 ParseController 保持一致：自身 [Route]/[Area] 优先，缺失沿基类链补齐
+                        var controllerToken = group.Key[..^"Controller".Length];
+                        var (routePrefix, area) = ResolveRouteAndArea(group, typeIndex);
+
+                        foreach (var method in group.SelectMany(c => c.Members.OfType<MethodDeclarationSyntax>()))
+                        {
+                            if (!method.Modifiers.Any(m => m.ValueText == "public")) continue;
+                            var httpAttr = GetAttributes(method).FirstOrDefault(a => HttpAttrNames.Contains(a.Name.ToString()));
+                            if (httpAttr == null) continue;
+
+                            var relativeFile = Path.GetRelativePath(rootDir, file).Replace('\\', '/');
+                            result.Add(new ApiSpecSolutionEndpointDto
+                            {
+                                File = relativeFile,
+                                SelectionKey = CreateSelectionKey(relativeFile, method),
+                                Group = group.Key,
+                                Method = httpAttr.Name.ToString()["Http".Length..].ToUpperInvariant(),
+                                Path = CombineRoute(routePrefix, GetLiteral(httpAttr) ?? "", controllerToken, method.Identifier.ValueText, area),
+                                ActionName = method.Identifier.ValueText,
+                                Summary = ExtractSummary(method),
+                                Permission = GetPermission(method),
+                            });
+                        }
+                    }
+                }
+            }
+            if (result.Count == 0) throw new BizException("未扫描到任何接口（需 public 方法带 [HttpGet] 等 HTTP 特性）");
+            return result.OrderBy(e => e.Group, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase).ThenBy(e => e.Method).ToList();
+        }
+
+        /// <summary>解析解决方案文件中的项目相对路径（.slnx 为 XML 格式，.sln 为文本格式）。</summary>
+        private static (string RootDir, List<string> ProjectDirs) ResolveSolutionScope(string solutionPath)
+        {
+            var path = (solutionPath ?? "").Trim().Trim('"');
+            if (path.Length == 0) throw new BizException("请填写解决方案文件路径");
+
+            if (File.Exists(path))
+            {
+                var ext = Path.GetExtension(path).ToLowerInvariant();
+                if (ext != ".sln" && ext != ".slnx") throw new BizException("仅支持 .sln / .slnx 解决方案文件，或直接填目录路径");
+                var rootDir = Path.GetDirectoryName(Path.GetFullPath(path))!;
+                var projectDirs = ParseSolutionProjects(path)
+                    .Select(project => Path.GetDirectoryName(Path.GetFullPath(Path.Combine(rootDir, project)))!)
+                    .Where(Directory.Exists)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (projectDirs.Count == 0) throw new BizException("解决方案里未找到任何项目");
+                return (rootDir, projectDirs);
+            }
+
+            if (Directory.Exists(path))
+            {
+                var rootDir = Path.GetFullPath(path);
+                return (rootDir, new List<string> { rootDir });
+            }
+
+            throw new BizException($"路径不存在：{path}");
+        }
+
+        private static (string RootDir, List<string> ProjectDirs) ResolveParseScope(string rootDir, string? solutionPath)
+        {
+            var root = ValidateRoot(rootDir);
+            if (string.IsNullOrWhiteSpace(solutionPath)) return (root, new List<string> { root });
+
+            var scope = ResolveSolutionScope(solutionPath);
+            if (!string.Equals(Path.TrimEndingDirectorySeparator(scope.RootDir), Path.TrimEndingDirectorySeparator(root), StringComparison.OrdinalIgnoreCase))
+                throw new BizException("解决方案路径与项目根目录不一致，请重新扫描后再生成");
+            return scope;
+        }
+
+        private static List<string> ParseSolutionProjects(string solutionPath)
+        {
+            if (Path.GetExtension(solutionPath).Equals(".slnx", StringComparison.OrdinalIgnoreCase))
+            {
+                return XDocument.Load(solutionPath)
+                    .Descendants("Project")
+                    .Select(p => (string?)p.Attribute("Path"))
+                    .Where(p => !string.IsNullOrWhiteSpace(p) && p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p!.Replace('/', '\\')).ToList();
+            }
+
+            // .sln 文本格式：Project("GUID") = "名称", "相对路径.csproj", "{GUID}"
+            return Regex.Matches(File.ReadAllText(solutionPath),
+                    @"Project\(""[^""]*""\)\s*=\s*""[^""]*"",\s*""(?<path>[^""]+\.csproj)""")
+                .Select(m => m.Groups["path"].Value).ToList();
+        }
+
+        public ApiSpecDocumentDto Parse(string rootDir, string files, string? title, string? baseUrl, string? solutionPath = null)
+        {
+            var scope = ResolveParseScope(rootDir, solutionPath);
+            var dir = scope.RootDir;
             var selected = SplitFiles(files);
             if (selected.Count == 0) throw new BizException("未选择任何 Controller 文件");
 
-            // 全项目类型索引：类型名 → 语法声明（跨文件解析 DTO 字段树的关键）
-            var typeIndex = BuildTypeIndex(dir);
+            // 与扫描阶段使用相同项目范围，避免同名基类解析到不同路由。
+            var typeIndex = BuildTypeIndex(scope.ProjectDirs);
 
             var doc = new ApiSpecDocumentDto
             {
@@ -102,7 +218,7 @@ namespace ConvenientSystem.Service.Common
                              .Where(c => c.Identifier.ValueText.EndsWith("Controller", StringComparison.Ordinal))
                              .GroupBy(c => c.Identifier.ValueText))
                 {
-                    ParseController(doc, typeIndex, group.Key, group);
+                    ParseController(doc, typeIndex, relPath, group.Key, group);
                 }
             }
 
@@ -115,11 +231,32 @@ namespace ConvenientSystem.Service.Common
             return doc;
         }
 
-        public ApiSpecExportDto Export(string rootDir, string files, string format, string? title, string? baseUrl)
+        public ApiSpecExportDto Export(string rootDir, string files, string format, string? title, string? baseUrl,
+            string? only = null, string? solutionPath = null, IEnumerable<string>? selectionKeys = null)
         {
             var exporter = _exporters.FirstOrDefault(e => string.Equals(e.Format, format, StringComparison.OrdinalIgnoreCase))
                 ?? throw new BizException($"不支持的导出格式：{format}");
-            var doc = Parse(rootDir, files, title, baseUrl);
+            var doc = Parse(rootDir, files, title, baseUrl, solutionPath);
+
+            // 优先使用扫描期返回的稳定选择标识，避免路由文本在两次解析间变化造成筛选失配。
+            var selectedKeys = selectionKeys?
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
+            if (selectedKeys is { Count: > 0 })
+            {
+                doc.Endpoints = doc.Endpoints.Where(e => selectedKeys.Contains(e.SelectionKey)).ToList();
+                if (doc.Endpoints.Count == 0) throw new BizException("所选接口未包含在解析结果里，请重新扫描后勾选");
+            }
+            // 兼容已有调用：未传稳定标识时，继续按旧的路由键筛选。
+            else if (!string.IsNullOrWhiteSpace(only))
+            {
+                var picked = new HashSet<string>(
+                    only.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                    StringComparer.Ordinal);
+                doc.Endpoints = doc.Endpoints.Where(e => picked.Contains($"{e.Group}|{e.Method}|{e.Path}")).ToList();
+                if (doc.Endpoints.Count == 0) throw new BizException("所选接口未包含在解析结果里，请重新扫描后勾选");
+            }
+
             return new ApiSpecExportDto
             {
                 FileName = exporter.FileNameBase + exporter.FileExtension,
@@ -131,21 +268,20 @@ namespace ConvenientSystem.Service.Common
 
         // ========== Controller / Action 解析 ==========
 
-        private static void ParseController(ApiSpecDocumentDto doc, Dictionary<string, SyntaxNode> typeIndex, string className, IEnumerable<ClassDeclarationSyntax> declarations)
+        private static string CreateSelectionKey(string sourceFile, MethodDeclarationSyntax method)
+            => $"{sourceFile.Replace('\\', '/')}|{method.SpanStart}";
+
+        private static void ParseController(ApiSpecDocumentDto doc, Dictionary<string, SyntaxNode> typeIndex,
+            string sourceFile, string className, IEnumerable<ClassDeclarationSyntax> declarations)
         {
             var groupName = className;
-            var routePrefix = "";
             var controllerToken = className[..^"Controller".Length];
+
+            // 与 ScanSolution 相同的路由解析：自身 [Route]/[Area] 优先，缺失沿基类链补齐（保证 only 键对齐）
+            var (routePrefix, area) = ResolveRouteAndArea(declarations, typeIndex);
 
             foreach (var cls in declarations)
             {
-                // 类级 [Route("...")]（取第一个）
-                if (routePrefix.Length == 0)
-                {
-                    var routeAttr = GetAttributes(cls).FirstOrDefault(a => a.Name.ToString() == "Route");
-                    routePrefix = GetLiteral(routeAttr) ?? "";
-                }
-
                 foreach (var method in cls.Members.OfType<MethodDeclarationSyntax>())
                 {
                     if (!method.Modifiers.Any(m => m.ValueText == "public")) continue;
@@ -155,7 +291,7 @@ namespace ConvenientSystem.Service.Common
 
                     var verb = httpAttr.Name.ToString()["Http".Length..].ToUpperInvariant();
                     var methodTemplate = GetLiteral(httpAttr) ?? "";
-                    var fullPath = CombineRoute(routePrefix, methodTemplate, controllerToken);
+                    var fullPath = CombineRoute(routePrefix, methodTemplate, controllerToken, method.Identifier.ValueText, area);
 
                     var ep = new ApiSpecEndpointDto
                     {
@@ -165,6 +301,7 @@ namespace ConvenientSystem.Service.Common
                         Summary = ExtractSummary(method),
                         Permission = GetPermission(method),
                         Group = groupName,
+                        SelectionKey = CreateSelectionKey(sourceFile, method),
                         ResponseType = UnwrapReturnType(method.ReturnType?.ToString() ?? ""),
                     };
                     ep.Params = ParseParameters(method, fullPath);
@@ -185,12 +322,24 @@ namespace ConvenientSystem.Service.Common
 
         /// <summary>
         /// 路由拼接（遵循 ASP.NET Core 属性路由规则）：
-        /// 方法模板以 / 或 ~ 开头时忽略类前缀；[controller] 替换为类名去 Controller 后缀；[action] 替换方法名。
+        /// 方法模板以 / 或 ~ 开头时忽略类前缀；[controller] 替换为类名去 Controller 后缀；
+        /// [action] 替换方法名；[area] 替换 [Area] 特性值（缺失时替换为空，并规范化多余斜杠）。
         /// </summary>
-        private static string CombineRoute(string routePrefix, string methodTemplate, string controllerToken)
+        private static string CombineRoute(string routePrefix, string methodTemplate, string controllerToken, string actionName, string area)
         {
-            routePrefix = routePrefix.Replace("[controller]", controllerToken);
-            methodTemplate = methodTemplate.Replace("[controller]", controllerToken);
+            // 无条件替换全部 ASP.NET Core 路由占位符；area 为空时移除占位符本身。
+            routePrefix = routePrefix
+                .Replace("[area]", area)
+                .Replace("[controller]", controllerToken)
+                .Replace("[action]", actionName);
+            methodTemplate = methodTemplate
+                .Replace("[area]", area)
+                .Replace("[controller]", controllerToken)
+                .Replace("[action]", actionName);
+
+            // 清除因空 area 产生的连续/或前后斜杠，例如 "/api//DeptImport" 或 "api/" 等。
+            routePrefix = NormalizeRouteSegment(routePrefix);
+            methodTemplate = NormalizeRouteTemplate(methodTemplate);
 
             string combined;
             if (methodTemplate.StartsWith("~"))
@@ -203,6 +352,76 @@ namespace ConvenientSystem.Service.Common
                 combined = (routePrefix + methodTemplate).Trim('/');
 
             return "/" + combined.Trim('/');
+        }
+
+        private static string NormalizeRouteSegment(string value)
+        {
+            value = value.Trim('/');
+            // 移除空 area 导致的双斜杠：api/[area]/[controller] -> api//Home -> api/Home
+            value = Regex.Replace(value, @"/+", "/");
+            return value;
+        }
+
+        private static string NormalizeRouteTemplate(string value)
+        {
+            if (value.StartsWith("~") || value.StartsWith("/"))
+                return value;
+            value = value.Trim('/');
+            value = Regex.Replace(value, @"/+", "/");
+            return value;
+        }
+
+        /// <summary>
+        /// 解析类级 [Route] 模板与 [Area] 值：自身声明优先（partial 任一声明带特性即生效），
+        /// 缺失时沿基类继承链向上补齐（子类覆盖基类，符合 ASP.NET Core 属性路由语义）。
+        /// 基类可能在任意 .cs 文件（如 BaseController.cs），经全项目类型索引定位；
+        /// 基类在 NuGet 包等扫描范围之外时无法解析，路由将为空。
+        /// </summary>
+        private static (string Route, string Area) ResolveRouteAndArea(IEnumerable<ClassDeclarationSyntax> declarations, Dictionary<string, SyntaxNode> typeIndex)
+        {
+            var route = "";
+            var area = "";
+
+            foreach (var cls in declarations)
+            {
+                var attrs = GetAttributes(cls);
+                if (route.Length == 0)
+                {
+                    var r = attrs.FirstOrDefault(a => a.Name.ToString() == "Route");
+                    if (r != null) route = GetLiteral(r) ?? "";
+                }
+                if (area.Length == 0)
+                {
+                    var ar = attrs.FirstOrDefault(a => a.Name.ToString() == "Area");
+                    if (ar != null) area = GetLiteral(ar) ?? "";
+                }
+            }
+
+            // 沿基类链补齐缺失项（visited 防循环继承；基类名去命名空间前缀与泛型参数后查索引）
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var current = declarations.FirstOrDefault(c => c.BaseList != null);
+            while (current != null && (route.Length == 0 || area.Length == 0))
+            {
+                var baseName = current.BaseList?.Types.FirstOrDefault()?.Type.ToString() ?? "";
+                var simple = baseName.Split('<')[0].Split('.').Last().Trim();
+                if (simple.Length == 0 || !visited.Add(simple)) break;
+                if (!typeIndex.TryGetValue(simple, out var node) || node is not ClassDeclarationSyntax baseCls) break;
+
+                var attrs = GetAttributes(baseCls);
+                if (route.Length == 0)
+                {
+                    var r = attrs.FirstOrDefault(a => a.Name.ToString() == "Route");
+                    if (r != null) route = GetLiteral(r) ?? "";
+                }
+                if (area.Length == 0)
+                {
+                    var ar = attrs.FirstOrDefault(a => a.Name.ToString() == "Area");
+                    if (ar != null) area = GetLiteral(ar) ?? "";
+                }
+                current = baseCls;
+            }
+
+            return (route, area);
         }
 
         /// <summary>返回类型解包：Task&lt;T&gt;/ActionResult&lt;T&gt; 逐层剥壳，IActionResult/ActionResult/void/xxxResult → 空串。</summary>
@@ -298,8 +517,13 @@ namespace ConvenientSystem.Service.Common
 
         /// <summary>全项目类型名索引（class/struct/record/enum 声明，含 Shared/Model 下的 DTO）。</summary>
         private static Dictionary<string, SyntaxNode> BuildTypeIndex(string rootDir)
+            => BuildTypeIndex(new[] { rootDir });
+
+        /// <summary>多目录版索引：解决方案扫描跨多个项目目录建索引（基类路由解析）。</summary>
+        private static Dictionary<string, SyntaxNode> BuildTypeIndex(IEnumerable<string> rootDirs)
         {
             var index = new Dictionary<string, SyntaxNode>(StringComparer.Ordinal);
+            foreach (var rootDir in rootDirs)
             foreach (var file in EnumerateCsFiles(rootDir))
             {
                 SyntaxNode root;
@@ -344,7 +568,8 @@ namespace ConvenientSystem.Service.Common
 
                 if (!typeIndex.TryGetValue(name, out var decl))
                 {
-                    doc.Warnings.Add($"类型 {name} 未在扫描范围内找到，已按 object 处理");
+                    var warning = $"类型 {name} 未在扫描范围内找到，已按 object 处理";
+                    if (!doc.Warnings.Contains(warning)) doc.Warnings.Add(warning);
                     continue;
                 }
 

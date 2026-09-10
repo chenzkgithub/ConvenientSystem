@@ -33,6 +33,8 @@ export default defineConfig(({ command }) => ({
     proxy: {
       '/api': 'http://123.56.68.132',
       '/hangfire': 'http://123.56.68.132',
+      // SignalR WebSocket（聊天实时推送）：ws 开启 Upgrade 头转发，缺这条 dev 环境必降级轮询
+      '/hubs': { target: 'http://123.56.68.132', ws: true },
     },
   },
 }))

@@ -320,13 +320,23 @@ export async function httpGet<T>(url: string, params?: Record<string, unknown>, 
 
 export interface HttpPostOptions {
   silent?: boolean
+  /**
+   * 仅抑制全局 loading 遮罩，错误提示照常弹出。
+   * 用于自带进度条的上传场景：避免遮罩与进度条重复，但失败必须让用户看到原因
+   * （不能用 silent，那会连错误提示一起吞掉，造成无声失败）。
+   */
+  noLoading?: boolean
   headers?: Record<string, string>
+  /** 上传进度回调（0~100），用于文件上传场景 */
+  onUploadProgress?: (progress: number) => void
 }
 
 /** POST JSON 请求；signal 可选用于取消请求（如中止 SQL 执行），timeoutMs 可选用于长耗时接口 */
 export async function httpPost<T>(url: string, body: unknown, signal?: AbortSignal, timeoutMs?: number, opts?: HttpPostOptions): Promise<T> {
   const silent = opts?.silent === true
-  if (!silent) loadingStart()
+  // silent 必然不显示遮罩；noLoading 只关遮罩，保留错误提示
+  const hideLoading = silent || opts?.noLoading === true
+  if (!hideLoading) loadingStart()
   try {
     return await api.post<T>(url, body, {
       signal,
@@ -334,9 +344,14 @@ export async function httpPost<T>(url: string, body: unknown, signal?: AbortSign
       timeout: signal ? 0 : timeoutMs,
       __silent: silent,
       headers: opts?.headers,
+      onUploadProgress: opts?.onUploadProgress
+        ? (e: ProgressEvent) => {
+            if (e.total) opts.onUploadProgress!(Math.round((e.loaded / e.total) * 100))
+          }
+        : undefined,
     } as Record<string, unknown>)
   } finally {
-    if (!silent) loadingEnd()
+    if (!hideLoading) loadingEnd()
   }
 }
 

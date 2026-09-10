@@ -10,15 +10,19 @@ import {
   NOTICE_LEVELS,
   type NoticeUserDto,
 } from '@/common/api/notice'
+import { parseNoticeContent } from '@/common/utils/noticeLink'
 
 // 顶栏系统通知铃铛：展示未读数角标，弹层内查看通知内容并标记已读。
-// 未读数每 60 秒轮询一次；弹层打开时拉取完整通知列表。
+// 未读数实时事件优先（chat store 收到 SignalR NoticeCreated 后派发 notice:created，秒级刷新）；
+// 每 5 分钟轮询一次作对账兜底（断连/多端操作漂移），实时性不依赖轮询。
 
 const unread = ref(0)
 const notices = ref<NoticeUserDto[]>([])
 const loading = ref(false)
 /** 当前展开正文的通知 Id（手风琴式，一次只展开一条） */
 const expandedId = ref<number | null>(null)
+/** 弹层是否展开（决定实时事件到达时是否同步刷新列表） */
+const popoverOpen = ref(false)
 
 const unreadCount = computed(() => unread.value)
 
@@ -42,9 +46,11 @@ async function loadList() {
 // 弹层打开/关闭钩子：不能用 v-model:visible 受控模式（会禁用内部 click 切换导致点击无反应），
 // 改用 @show/@hide 事件：打开时拉列表，关闭时收起已展开条目。
 async function onShow() {
+  popoverOpen.value = true
   await loadList()
 }
 function onHide() {
+  popoverOpen.value = false
   expandedId.value = null
 }
 
@@ -73,7 +79,7 @@ function formatTime(time: string): string {
   return time ? time.replace('T', ' ').slice(0, 16) : ''
 }
 
-// ===== 轮询：挂载时拉取未读数，之后每 60 秒刷新一次 =====
+// ===== 轮询对账 + 实时事件 =====
 let timer: ReturnType<typeof setInterval> | null = null
 
 // 登录后提醒窗（NoticeAlert）确认阅读后会派发 notice:read 事件，立即同步未读数与列表
@@ -82,14 +88,22 @@ function onNoticeRead() {
   if (notices.value.length > 0) void loadList()
 }
 
+// 新系统通知实时到达（SignalR NoticeCreated → chat store 派发）：秒级刷新角标；弹层开着时同步列表
+function onNoticeCreated() {
+  void loadUnread()
+  if (popoverOpen.value) void loadList()
+}
+
 onMounted(() => {
   void loadUnread()
-  timer = setInterval(loadUnread, 60_000)
+  timer = setInterval(loadUnread, 300_000)
   window.addEventListener('notice:read', onNoticeRead)
+  window.addEventListener('notice:created', onNoticeCreated)
 })
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
   window.removeEventListener('notice:read', onNoticeRead)
+  window.removeEventListener('notice:created', onNoticeCreated)
 })
 </script>
 
@@ -134,7 +148,13 @@ onBeforeUnmount(() => {
             <span class="notice-item-title" :title="item.title">{{ item.title }}</span>
             <span class="notice-item-time">{{ formatTime(item.createTime) }}</span>
           </div>
-          <div v-if="expandedId === item.id" class="notice-item-content">{{ item.content }}</div>
+          <!-- 正文分段渲染：含 /api/... 或 http(s) 链接时渲染为可点击下载（同窗导航到附件响应，页面不跳转） -->
+          <div v-if="expandedId === item.id" class="notice-item-content">
+            <template v-for="(seg, i) in parseNoticeContent(item.content)" :key="i">
+              <a v-if="seg.url" :href="seg.url" class="notice-link">点击下载</a>
+              <template v-else>{{ seg.text }}</template>
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -224,5 +244,14 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-all;
+}
+/* 正文内下载链接：蓝色可点击，无需下划线与文字装饰 */
+.notice-link {
+  color: var(--el-color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+.notice-link:hover {
+  opacity: 0.85;
 }
 </style>

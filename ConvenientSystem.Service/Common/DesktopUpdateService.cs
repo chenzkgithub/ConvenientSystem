@@ -19,6 +19,9 @@ namespace ConvenientSystem.Service.Common
         private readonly IFreeSql _configDb;
         private readonly INoticeService _noticeService;
         private readonly string _storageDir;
+        // 展示路径：Docker 命名卷部署时宿主机真实位置与容器内路径不同，
+        // 用环境变量告知运维文件实际存放处；未配置（本地开发/直挂载）时与存储路径一致
+        private readonly string _displayDir;
 
         public DesktopUpdateService(
             ILogger<DesktopUpdateService> logger,
@@ -29,6 +32,7 @@ namespace ConvenientSystem.Service.Common
             _configDb = configDb;
             _noticeService = noticeService;
             _storageDir = Environment.GetEnvironmentVariable("DESKTOP_PACKAGE_DIR") ?? "/data/desktop-packages";
+            _displayDir = Environment.GetEnvironmentVariable("DESKTOP_PACKAGE_DISPLAY_DIR") ?? _storageDir;
             if (!Directory.Exists(_storageDir))
             {
                 try { Directory.CreateDirectory(_storageDir); }
@@ -104,20 +108,52 @@ namespace ConvenientSystem.Service.Common
 
         public DesktopPackageDto Upload(string version, IFormFile file, string? description, Guid? userId)
         {
-            if (string.IsNullOrWhiteSpace(version))
-                throw new ArgumentException("版本号不能为空");
             if (file == null || file.Length == 0)
                 throw new ArgumentException("文件不能为空");
 
-            var safeVersion = version.Trim();
             var ext = Path.GetExtension(file.FileName);
-            var fileName = $"desktop-{safeVersion}-{DateTime.Now:yyyyMMddHHmmss}{ext}";
-            var filePath = Path.Combine(_storageDir, fileName);
 
-            using (var fs = File.Create(filePath))
+            // 先落盘到临时文件，从安装包内嵌的版本信息提取真实版本号。
+            // 人工填写的版本号与安装包内 exe 的实际版本脉开时，会导致桌面端
+            // 装完仍低于服务器记录版本 → 反复提示更新的死循环，因此以安装包为准。
+            var tempPath = Path.Combine(_storageDir, $"upload-{Guid.NewGuid():N}{ext}");
+            using (var fs = File.Create(tempPath))
             {
                 file.CopyTo(fs);
             }
+
+            string safeVersion;
+            try
+            {
+                var embeddedVersion = TryReadEmbeddedVersion(tempPath);
+                if (!string.IsNullOrEmpty(embeddedVersion))
+                {
+                    safeVersion = embeddedVersion;
+                    var inputVersion = version?.Trim();
+                    if (!string.IsNullOrEmpty(inputVersion) && inputVersion != safeVersion)
+                    {
+                        _logger.LogWarning("上传桌面安装包的手填版本号 {Input} 与安装包内嵌版本 {Embedded} 不一致，已改用内嵌版本", inputVersion, safeVersion);
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(version))
+                {
+                    // 非 Windows PE 文件或未嵌入版本信息时，退回使用手填版本号
+                    safeVersion = version.Trim();
+                }
+                else
+                {
+                    throw new ArgumentException("版本号不能为空（安装包未嵌入版本信息，请手动填写）");
+                }
+            }
+            catch
+            {
+                TryDeleteFile(tempPath);
+                throw;
+            }
+
+            var fileName = $"desktop-{safeVersion}-{DateTime.Now:yyyyMMddHHmmss}{ext}";
+            var filePath = Path.Combine(_storageDir, fileName);
+            File.Move(tempPath, filePath, overwrite: true);
 
             var entity = new DesktopPackageEntity
             {
@@ -156,6 +192,33 @@ namespace ConvenientSystem.Service.Common
             };
         }
 
+        /// <summary>
+        /// 读取 Windows 可执行文件内嵌的四段式版本号（如 1.0.0.8）。
+        /// installer.iss 的 VersionInfoVersion 取自桌面 exe 的 AssemblyVersion，
+        /// 因此 Setup.exe 内嵌版本就是客户端装完后上报的版本，两边必然一致。
+        /// 无版本信息或非 PE 文件时返回 null。
+        /// </summary>
+        private string? TryReadEmbeddedVersion(string path)
+        {
+            try
+            {
+                var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                var version = $"{info.FileMajorPart}.{info.FileMinorPart}.{info.FileBuildPart}.{info.FilePrivatePart}";
+                return version == "0.0.0.0" ? null : version;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "读取安装包内嵌版本号失败 Path={Path}", path);
+                return null;
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch { /* 临时文件清理失败不影响主流程 */ }
+        }
+
         /// <summary>发布一条"桌面程序已更新"的系统通知，全员可见且不触发外部推送。</summary>
         private void NotifyVersionChanged(string version, string? description)
         {
@@ -180,7 +243,8 @@ namespace ConvenientSystem.Service.Common
         private string? AppendServerPath(string? description, string? fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) return description;
-            var pathLine = $"服务器路径：{Path.Combine(_storageDir, fileName)}";
+            // 拼展示路径而非容器内存储路径：Docker 命名卷部署时运维拿它去宿主机找文件
+            var pathLine = $"服务器路径：{Path.Combine(_displayDir, fileName)}";
             if (string.IsNullOrWhiteSpace(description)) return pathLine;
             if (description.Contains("服务器路径：")) return description;
             return $"{description}\n{pathLine}";

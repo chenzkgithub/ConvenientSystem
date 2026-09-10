@@ -15,23 +15,26 @@ namespace ConvenientSystem.Api
             Guid UserId,
             string Account,
             string? DisplayName,
+            string? Avatar,
             string Ip,
             DateTime LoginTime,
             DateTime LastHeartbeat,
             DateTime LastActive);
 
         /// <summary>更新（或新增）用户的在线记录。lastActiveAt 为前端传来的真实操作时间。</summary>
-        public void Track(Guid userId, string account, string? displayName, string ip, DateTime? lastActiveAt = null)
+        public void Track(Guid userId, string account, string? displayName, string? avatar, string ip, DateTime? lastActiveAt = null)
         {
             _sessions.AddOrUpdate(
                 userId,
-                _ => new OnlineEntry(userId, account, displayName, ip, DateTime.Now, DateTime.Now, lastActiveAt ?? DateTime.Now),
+                _ => new OnlineEntry(userId, account, displayName, avatar, ip, DateTime.Now, DateTime.Now, lastActiveAt ?? DateTime.Now),
                 (_, old) =>
                 {
                     var newActive = lastActiveAt.HasValue && lastActiveAt.Value > old.LastActive
                         ? lastActiveAt.Value
                         : old.LastActive;
-                    return old with { LastHeartbeat = DateTime.Now, LastActive = newActive, Ip = ip };
+                    // 心跳时更新头像：若 claim 中无头像则保留旧值，避免重新登录前清空。
+                    var newAvatar = string.IsNullOrEmpty(avatar) ? old.Avatar : avatar;
+                    return old with { LastHeartbeat = DateTime.Now, LastActive = newActive, Ip = ip, Avatar = newAvatar };
                 });
         }
 

@@ -143,6 +143,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public Guid UserId { get; set; }
         public string Account { get; set; } = string.Empty;
         public string? DisplayName { get; set; }
+        /// <summary>用户头像：data:image/...;base64 内联图片或 URL；为空时前端回退显示首字母。</summary>
+        public string? Avatar { get; set; }
         public string Ip { get; set; } = string.Empty;
         public DateTime LoginTime { get; set; }
         /// <summary>最后真实操作时间。</summary>

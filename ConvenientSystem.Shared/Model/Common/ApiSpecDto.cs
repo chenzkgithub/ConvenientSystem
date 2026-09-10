@@ -20,6 +20,27 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Description { get; set; }
     }
 
+    /// <summary>解决方案扫描出的接口条目（接口级清单，前端勾选后生成文档）。</summary>
+    public class ApiSpecSolutionEndpointDto
+    {
+        /// <summary>所属 Controller 文件（相对解决方案目录的路径，正斜杠分隔）。</summary>
+        public string File { get; set; }
+        /// <summary>扫描期生成的稳定接口选择标识，用于避免路由文本变化导致筛选失配。</summary>
+        public string SelectionKey { get; set; }
+        /// <summary>Controller 类名（分组名）。</summary>
+        public string Group { get; set; }
+        /// <summary>HTTP 方法（GET/POST/PUT/DELETE/PATCH）。</summary>
+        public string Method { get; set; }
+        /// <summary>接口路径（如 /api/Notice/List）。</summary>
+        public string Path { get; set; }
+        /// <summary>Action 方法名。</summary>
+        public string ActionName { get; set; }
+        /// <summary>XML 注释摘要。</summary>
+        public string Summary { get; set; }
+        /// <summary>PermissionAuthorize 权限码（无则空）。</summary>
+        public string Permission { get; set; }
+    }
+    
     /// <summary>扫描到的 Controller 文件项（相对根目录的路径 + 接口数预览）。</summary>
     public class ApiSpecFileDto
     {
@@ -61,6 +82,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Permission { get; set; }
         /// <summary>分组名（Controller 类名，如 NoticeController）。</summary>
         public string Group { get; set; }
+        /// <summary>扫描期生成的稳定接口选择标识。</summary>
+        public string SelectionKey { get; set; }
         /// <summary>参数列表（含 path/query/body）。</summary>
         public List<ApiSpecParamDto> Params { get; set; } = new();
         /// <summary>响应体类型文本（无响应体为空串）。</summary>
@@ -126,5 +149,58 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Content { get; set; }
         /// <summary>解析警告。</summary>
         public List<string> Warnings { get; set; } = new();
+    }
+
+    /// <summary>生成预览/导出请求体：将长 only 参数从 URL 移到 body，避免 HTTP 414。</summary>
+    public class ApiSpecPreviewRequest
+    {
+        public string RootDir { get; set; } = "";
+        public string Files { get; set; } = "";
+        public string Format { get; set; } = "";
+        public string? Title { get; set; }
+        public string? BaseUrl { get; set; }
+        /// <summary>原始解决方案文件或目录路径，用于保持扫描与生成的项目范围一致。</summary>
+        public string? SolutionPath { get; set; }
+        /// <summary>扫描期返回的接口选择标识集合，优先于兼容字段 Only 使用。</summary>
+        public List<string> SelectionKeys { get; set; } = new();
+        /// <summary>旧版接口筛选键，保留以兼容已有调用。</summary>
+        public string? Only { get; set; }
+    }
+
+    /// <summary>当前用户的 Apifox Access Token 保存状态，不返回任何令牌内容。</summary>
+    public class ApifoxAccessTokenStatusDto
+    {
+        public bool TokenConfigured { get; set; }
+    }
+
+    /// <summary>保存或清除当前用户的 Apifox Access Token。</summary>
+    public class ApifoxAccessTokenSaveRequest
+    {
+        public string? AccessToken { get; set; }
+        public bool ClearAccessToken { get; set; }
+    }
+
+    /// <summary>向 Apifox 导入 OpenAPI 数据的请求。内容由桌面端本地解析生成，导入选项仅本次使用。</summary>
+    public class ApifoxImportRequest
+    {
+        public string Content { get; set; } = "";
+        public string ProjectId { get; set; } = "";
+        public long? TargetEndpointFolderId { get; set; }
+        public long? TargetBranchId { get; set; }
+        public string EndpointOverwriteBehavior { get; set; } = "AUTO_MERGE";
+    }
+
+    /// <summary>Apifox 导入结果摘要。</summary>
+    public class ApifoxImportResultDto
+    {
+        public int EndpointCreated { get; set; }
+        public int EndpointUpdated { get; set; }
+        public int EndpointFailed { get; set; }
+        public int EndpointIgnored { get; set; }
+        public int SchemaCreated { get; set; }
+        public int SchemaUpdated { get; set; }
+        public int SchemaFailed { get; set; }
+        public int SchemaIgnored { get; set; }
+        public List<string> Errors { get; set; } = new();
     }
 }

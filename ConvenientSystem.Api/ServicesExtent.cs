@@ -17,6 +17,8 @@ using FreeSql;
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.Sqlite;
 
 namespace ConvenientSystem.Api
@@ -34,6 +36,14 @@ namespace ConvenientSystem.Api
         {
             // 全局异常过滤器：Service 层抛出的 BizException 统一转为 { message } 响应体。
             services.AddControllers(options => options.Filters.Add<BizExceptionFilter>());
+
+            // 服务端敏感个人配置（如 Apifox Access Token）使用 Data Protection 加密后才落 UserConfig。
+            services.AddDataProtection().SetApplicationName("ConvenientSystem");
+            services.AddHttpClient("Apifox", client =>
+            {
+                client.BaseAddress = new Uri("https://api.apifox.com/");
+                client.Timeout = TimeSpan.FromMinutes(2);
+            });
 
             // 当前用户上下文：供 Service 层读取登录用户与管理员标记，用于数据权限隔离。
             services.AddHttpContextAccessor();
@@ -127,8 +137,27 @@ namespace ConvenientSystem.Api
                 .AddJwtBearer(options =>
                 {
                     options.TokenValidationParameters = JwtHelper.BuildValidationParameters(jwtKey);
+
+                    // SignalR WebSocket 连接无法携带 Authorization 头：从 query 的 access_token 读取（仅限聊天 Hub 路径）
+                    options.Events = new JwtBearerEvents
+                    {
+                        OnMessageReceived = context =>
+                        {
+                            var accessToken = context.Request.Query["access_token"];
+                            var path = context.HttpContext.Request.Path;
+                            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/chat"))
+                            {
+                                context.Token = accessToken;
+                            }
+                            return Task.CompletedTask;
+                        }
+                    };
                 });
             services.AddAuthorization();
+
+            // 聊天实时推送：Hub 连接的用户标识（从 JWT claim 取 Guid，供 Clients.User 定向推送）
+            services.AddSignalR();
+            services.AddSingleton<IUserIdProvider, SignalRUserIdProvider>();
         }
 
         /// <summary>
@@ -298,9 +327,14 @@ namespace ConvenientSystem.Api
 
             // 用户个人配置（当前登录用户的个性化配置，覆盖全局 SysConfig）
             services.AddScoped<IUserConfigService, UserConfigService>();
+            // Apifox 配置存于当前用户 UserConfig，Token 仅在服务端解密并代调官方导入接口。
+            services.AddScoped<IApifoxImportService, ApifoxImportService>();
 
             // 外部公开页面（免登录 standalone=1 页面管理）
             services.AddSingleton<ISysPublicPageService, SysPublicPageService>();
+
+            // 即时聊天（企业通讯录模式单聊：会话/消息/屏蔽，实时推送由 Api 层 ChatHub 编排）
+            services.AddSingleton<IChatService, ChatService>();
 
             // 代码命名转换（百度翻译 API 优先，MyMemory 回退，前端拼音兜底）
             services.AddSingleton<ICodeNamingService, CodeNamingService>();

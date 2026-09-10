@@ -19,6 +19,9 @@ namespace ConvenientSystem.Service.Common
         private readonly IFreeSql _configDb;
         private readonly INoticeService _noticeService;
         private readonly string _storageDir;
+        // 展示路径：Docker 命名卷部署时宿主机真实位置与容器内路径不同，
+        // 用环境变量告知运维文件实际存放处；未配置（本地开发/直挂载）时与存储路径一致
+        private readonly string _displayDir;
 
         public WebPackageService(
             ILogger<WebPackageService> logger,
@@ -29,6 +32,7 @@ namespace ConvenientSystem.Service.Common
             _configDb = configDb;
             _noticeService = noticeService;
             _storageDir = Environment.GetEnvironmentVariable("WEB_PACKAGE_DIR") ?? "/data/web-packages";
+            _displayDir = Environment.GetEnvironmentVariable("WEB_PACKAGE_DISPLAY_DIR") ?? _storageDir;
             if (!Directory.Exists(_storageDir))
             {
                 try { Directory.CreateDirectory(_storageDir); }
@@ -60,7 +64,8 @@ namespace ConvenientSystem.Service.Common
         private string? AppendServerPath(string? description, string? fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) return description;
-            var pathLine = $"服务器路径：{Path.Combine(_storageDir, fileName)}";
+            // 拼展示路径而非容器内存储路径：Docker 命名卷部署时运维拿它去宿主机找文件
+            var pathLine = $"服务器路径：{Path.Combine(_displayDir, fileName)}";
             if (string.IsNullOrWhiteSpace(description)) return pathLine;
             if (description.Contains("服务器路径：")) return description;
             return $"{description}\n{pathLine}";

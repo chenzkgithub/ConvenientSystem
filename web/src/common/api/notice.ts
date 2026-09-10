@@ -79,6 +79,11 @@ export function markAllNoticeRead() {
   return httpPost<void>('/api/Common/Notice/MarkAllRead', {})
 }
 
+/** 构建/部署完成后创建一条系统通知（铃铛可见 + 右上角弹卡片，level=2 重要） */
+export function notifyBuildComplete(title: string, content: string) {
+  return httpPost<void>('/api/Common/Notice/BuildNotify', { title, content }, undefined, undefined, { silent: true })
+}
+
 /** 通知级别文案与标签色 */
 export const NOTICE_LEVELS: Record<number, { label: string; type: 'info' | 'warning' | 'danger' }> = {
   1: { label: '普通', type: 'info' },

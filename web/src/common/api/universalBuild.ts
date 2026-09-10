@@ -29,10 +29,6 @@ export interface UniversalBuildJobDto {
   queuePosition?: number | null
   /** 构建产物总大小（字节，构建成功后统计；失败/未构建为 null） */
   artifactSize?: number | null
-  /** 构建成功后打包的 zip 路径（勾选打压缩包且成功时有值） */
-  artifactArchivePath?: string
-  /** 构建成功后打包的 zip 大小（字节；未打包为 null） */
-  artifactArchiveSize?: number | null
   log: string
   exitCode?: number
   startTime: string
@@ -48,8 +44,6 @@ export interface UniversalBuildRequest {
   name: string
   /** 构建前先执行 git pull --ff-only 拉取远端最新代码 */
   prePull?: boolean
-  /** 构建成功后把产物目录打包成 zip（落在输出目录的父目录，时间戳命名） */
-  packArtifact?: boolean
 }
 
 /** 检测指定类型环境请求 */
@@ -229,14 +223,35 @@ export function startRollback(request: RollbackRequest) {
   return httpPost<DeployJobDto>('/api/Common/UniversalBuild/Rollback', request)
 }
 
-/** 弹出文件夹选择对话框，返回用户选择的目录路径 */
-export function selectFolder() {
-  return httpPost<string | null>('/api/Common/UniversalBuild/SelectFolder', {})
+/** 弹出文件夹选择对话框，返回用户选择的目录路径；initialDir 有值时对话框从该路径打开（文件路径自动取所在目录） */
+export function selectFolder(initialDir?: string) {
+  const q = initialDir?.trim() ? `?initialDir=${encodeURIComponent(initialDir.trim())}` : ''
+  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectFolder${q}`, {})
 }
 
-/** 弹出 SQL 文件选择对话框，返回选中的文件路径；取消返回 null */
-export function selectSqlFile() {
-  return httpPost<string | null>('/api/Common/UniversalBuild/SelectSqlFile', {})
+/** 弹出 SQL 文件选择对话框，返回选中的文件路径；取消返回 null。initialDir 语义同 selectFolder */
+export function selectSqlFile(initialDir?: string) {
+  const q = initialDir?.trim() ? `?initialDir=${encodeURIComponent(initialDir.trim())}` : ''
+  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectSqlFile${q}`, {})
+}
+
+/** 独立打压缩包请求 */
+export interface PackFolderRequest {
+  /** 要打包的本地文件夹完整路径 */
+  sourceDir: string
+  /** 目标 zip 完整路径；留空 = 源文件夹同级 {文件夹名}_{时间戳}.zip 不覆盖旧包 */
+  targetZip?: string
+}
+
+/** 独立打压缩包结果 */
+export interface PackFolderResult {
+  path: string
+  size: number
+}
+
+/** 把本地文件夹打包成 zip（与构建流程解耦）；大目录耗时较长，可传 timeoutMs 放宽超时 */
+export function packFolderToZip(request: PackFolderRequest, timeoutMs?: number) {
+  return httpPost<PackFolderResult>('/api/Common/UniversalBuild/PackFolder', request, undefined, timeoutMs)
 }
 
 /** 在资源管理器中打开构建输出目录 */

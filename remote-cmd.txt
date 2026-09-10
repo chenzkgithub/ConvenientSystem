@@ -1,0 +1,11 @@
+echo ===WEB-NESTED===
+ls /opt/convenient/web/web/ | head -5
+ls /opt/convenient/web/web.old/ | head -5
+echo ===WEB-CONTAINER===
+docker images convenient-web --format 'built={{.CreatedAt}}'
+docker inspect convenient-web --format 'started={{.State.StartedAt}}'
+docker exec convenient-web sh -c 'ls /usr/share/nginx/html/ | head -8'
+docker exec convenient-web sh -c 'ls /usr/share/nginx/html/web 2>/dev/null | head -3'
+echo ===NOTICE-LEVEL-CHECK===
+docker exec convenient-api sh -c 'strings /app/ConvenientSystem.dll 2>/dev/null | head -1'
+echo ===DONE===

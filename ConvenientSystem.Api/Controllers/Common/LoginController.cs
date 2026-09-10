@@ -48,6 +48,7 @@ namespace ConvenientSystem.Api.Controllers.Common
                 _tracker.Track(result.UserId,
                     result.Account ?? request?.account ?? string.Empty,
                     result.DisplayName,
+                    result.Avatar,
                     ip);
 
                 // 挤号：注册新令牌的 JTI，覆盖该用户之前的会话。
@@ -78,17 +79,19 @@ namespace ConvenientSystem.Api.Controllers.Common
 
             if (status.Enabled)
             {
-                // 更新在线足迹（IP 可能随起发更新）。
+                // 更新在线足迹（IP 可能随起发更新）。avatar/displayName 从数据库查询结果取，
+                // 不再从 JWT claim 读取（JWT 已不嵌入 avatar，避免 Authorization 头超大导致 nginx 400）。
                 var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
                 var account = User.FindFirst(ConvenientSystem.Shared.Common.Security.JwtHelper.AccountClaim)?.Value ?? string.Empty;
-                var displayName = User.FindFirst(ConvenientSystem.Shared.Common.Security.JwtHelper.DisplayNameClaim)?.Value;
+                var displayName = status.DisplayName;
+                var avatar = status.Avatar;
 
                 DateTime? lastActiveAt = null;
                 if (!string.IsNullOrWhiteSpace(lastActivity)
                     && DateTime.TryParse(lastActivity, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
                     lastActiveAt = parsed;
 
-                _tracker.Track(userId.Value, account, displayName, ip, lastActiveAt);
+                _tracker.Track(userId.Value, account, displayName, avatar, ip, lastActiveAt);
             }
 
             return Ok(status);

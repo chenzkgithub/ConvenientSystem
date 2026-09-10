@@ -1,45 +1,35 @@
 import { ref } from 'vue'
-import { httpGet } from '@/api/request'
 
 /**
- * 当前激活的前端版本包信息（全局单例）。
- * 多处（登录页、主框架、版本管理页）共用同一份数据，只发一次请求。
+ * 本地已安装的前端版本信息（全局单例）。
+ * 从 wwwroot/version.json 读取本地版本指纹，页面侧栏/登录页展示的是
+ * 用户实际运行的前端版本，而非服务器激活版本。
+ * version.json 由 WebUpdateService.DownloadAndExtractAsync 在下载 Web 包后写入。
  */
 
-interface ActiveVersionInfo {
+interface LocalVersionInfo {
   version: string
-  description?: string | null
-  fileSize?: number
-  createTime?: string
 }
 
-const data = ref<ActiveVersionInfo | null>(null)
-let pending: Promise<ActiveVersionInfo | null> | null = null
+const data = ref<LocalVersionInfo | null>(null)
+let pending: Promise<LocalVersionInfo | null> | null = null
 
-async function fetch() {
+// 注意：内部函数不能命名为 fetch，否则会遮蔽全局 fetch 造成递归调用自身。
+async function load(): Promise<LocalVersionInfo | null> {
   if (data.value) return data.value
   if (pending) return pending
 
   pending = (async () => {
     try {
-      const res = await httpGet<{
-        hasVersion: boolean
-        version: string
-        description?: string | null
-        fileSize?: number
-        createTime?: string
-      }>('/api/Common/WebPackage/GetActive')
-
-      if (res?.hasVersion) {
-        data.value = {
-          version: res.version,
-          description: res.description,
-          fileSize: res.fileSize,
-          createTime: res.createTime,
+      const res = await window.fetch('/version.json', { cache: 'no-store' })
+      if (res.ok) {
+        const json = await res.json()
+        if (json?.version) {
+          data.value = { version: String(json.version) }
         }
       }
     } catch {
-      // 接口不可用时静默，不影响页面正常渲染
+      // version.json 不存在时（安装包未含版本指纹）静默跳过
     } finally {
       pending = null
     }
@@ -49,7 +39,7 @@ async function fetch() {
   return pending
 }
 
-/** 获取当前激活的前端版本信息（带缓存，多次调用只请求一次） */
+/** 获取本地已安装的前端版本信息（带缓存，多次调用只请求一次） */
 export function useAppVersion() {
-  return { data, fetch }
+  return { data, fetch: load }
 }

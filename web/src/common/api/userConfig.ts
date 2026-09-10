@@ -1,5 +1,11 @@
 import { httpGet, httpPut, httpPost } from '@/api/request'
 
+/** 用户个人配置枚举选项 */
+export interface UserConfigOption {
+  value: string
+  label: string
+}
+
 /** 用户个人配置项（前端展示用） */
 export interface UserConfigItem {
   configKey: string
@@ -9,6 +15,7 @@ export interface UserConfigItem {
   inputType: string
   category: string
   sortOrder: number
+  options?: UserConfigOption[]
 }
 
 /** 用户个人配置分组 */

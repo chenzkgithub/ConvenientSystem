@@ -13,10 +13,14 @@ import { ElMessage } from 'element-plus'
 const POLL_INTERVAL = 5 * 60_000
 /** 本次会话内已关闭提示的版本号（sessionStorage key） */
 const DISMISS_KEY = 'update_banner_dismissed_v1'
+/** 热更新完成标记（sessionStorage key）：刷新前写入新版本号，刷新后弹成功提示并清除 */
+const APPLIED_KEY = 'update_banner_applied_v1'
 
 const visible = ref(false)
 const remoteVersion = ref('')
 const updating = ref(false)
+/** 更新已完成、即将刷新页面（横幅切换为成功文案） */
+const applied = ref(false)
 
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -62,12 +66,22 @@ async function applyUpdate() {
   updating.value = true
   try {
     const res = await fetch('/api/Common/WebUpdate/Apply', { method: 'POST' })
-    const data = res.ok ? await res.json().catch(() => null) : null
+    // 失败响应（500）同样带 message（如「更新包结构异常」），一并读出展示真实原因
+    const data = await res.json().catch(() => null)
     if (data?.updated) {
+      // 版本号传给刷新后的页面，用于弹出「已更新到 vX」的成功提示
+      sessionStorage.setItem(APPLIED_KEY, remoteVersion.value)
+      applied.value = true
+      // 停留片刻展示完成文案，避免页面“闪一下就没了”
+      await new Promise((resolve) => setTimeout(resolve, 800))
       window.location.reload()
     } else if (res.status === 409) {
       ElMessage.warning('更新正在进行中，请稍候')
+    } else if (!res.ok) {
+      // 更新失败（下载/包结构校验/替换异常）：展示后端原因，横幅保留便于重试
+      ElMessage.error(data?.message || '更新失败，请稍后重试')
     } else {
+      // 真正的无需更新（远程版本不高于本地）才提示“已是最新”并关闭横幅
       ElMessage.info('当前已是最新版本')
       visible.value = false
     }
@@ -85,6 +99,12 @@ function dismiss() {
 }
 
 onMounted(() => {
+  // 刷新前的热更新结果：读出即清除（防止再刷新重复弹），成功提示数秒自动消失
+  const appliedVersion = sessionStorage.getItem(APPLIED_KEY)
+  if (appliedVersion) {
+    sessionStorage.removeItem(APPLIED_KEY)
+    ElMessage.success(`已成功更新到 v${appliedVersion}`)
+  }
   void check()
   timer = setInterval(check, POLL_INTERVAL)
 })
@@ -95,17 +115,22 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="visible" class="update-banner">
-    <el-alert type="warning" show-icon @close="dismiss">
+    <el-alert :type="applied ? 'success' : 'warning'" show-icon @close="dismiss">
       <template #title>
-        <span class="update-banner-text">发现新版本 v{{ remoteVersion }}，更新后自动刷新生效</span>
+        <span class="update-banner-text">
+          {{ applied
+            ? `已成功更新到 v${remoteVersion}，正在刷新…`
+            : `发现新版本 v${remoteVersion}，更新后自动刷新生效` }}
+        </span>
         <el-button
+          v-if="!applied"
           class="update-banner-btn"
           type="primary"
           size="small"
           :loading="updating"
           @click="applyUpdate"
         >
-          {{ updating ? '正在下载…' : '立即更新' }}
+          {{ updating ? `正在下载 v${remoteVersion} …` : '立即更新' }}
         </el-button>
       </template>
     </el-alert>

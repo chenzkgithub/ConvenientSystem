@@ -25,6 +25,7 @@ import {
   Collection,
   AlarmClock,
   Brush,
+  Box,
 } from '@element-plus/icons-vue'
 import {
   checkUniversalEnvironment,
@@ -57,10 +58,12 @@ import {
   getDeployLog,
   getArtifactUsage,
   cleanArtifact,
+  packFolderToZip,
   type DeployLogResult,
 } from '@/common/api/universalBuild'
 import { selectFolder, openOutputFolder } from '@/common/api/universalBuild'
 import { loadUiStateString, saveUiStateString } from '@/common/api/uiState'
+import { notifyBuildComplete } from '@/common/api/notice'
 
 /** 部署配置快照：手动部署成功启动时记录，构建成功后自动部署复用 */
 /** 部署模版：一套完整部署配置（不含密码），存 exe 目录 ui-state.json（清缓存/重装不丢）；弹窗填充与自动部署复用 */
@@ -118,8 +121,6 @@ interface BuildCard {
   outputDirCustom: boolean
   /** 构建前先 git pull 拉取远端最新代码 */
   prePull: boolean
-  /** 构建成功后把产物目录打包成 zip（落在输出目录的父目录，时间戳命名） */
-  packArtifact: boolean
   /** 构建成功后自动用上次部署配置部署 */
   autoDeploy: boolean
   /** 上次成功启动部署的参数快照（自动部署用，不持久化） */
@@ -128,9 +129,6 @@ interface BuildCard {
   deployTemplateId: string
   /** 构建产物总大小（字节，构建成功后由后端统计） */
   artifactSize: number | null
-  /** 构建成功后打包的 zip 路径/大小（勾选打压缩包且成功时有值，运行态不持久化） */
-  artifactArchivePath: string
-  artifactArchiveSize: number | null
   /** 本次构建开始/结束时间戳（毫秒，进行中实时计时） */
   startTime: number | null
   endTime: number | null
@@ -238,13 +236,10 @@ function createCard(): BuildCard {
     deployDisplayProgress: 0,
     outputDirCustom: false,
     prePull: false,
-    packArtifact: false,
     autoDeploy: false,
     lastDeployConfig: null,
     deployTemplateId: '',
     artifactSize: null,
-    artifactArchivePath: '',
-    artifactArchiveSize: null,
     startTime: null,
     endTime: null,
     deployStartTime: null,
@@ -297,7 +292,8 @@ function openEnvDialog() {
 
 async function pickProjectDir(card: BuildCard) {
   try {
-    const path = await selectFolder()
+    // 对话框从当前已填路径打开（已填则免从头翻目录）
+    const path = await selectFolder(card.projectDir)
     if (path) {
       card.projectDir = path
       await updateDefaultOutputDir(card)
@@ -324,7 +320,8 @@ async function openOutputDir(card: BuildCard) {
 
 async function pickOutputDir(card: BuildCard) {
   try {
-    const path = await selectFolder()
+    // 对话框从当前已填路径打开（已填则免从头翻目录）
+    const path = await selectFolder(card.outputDir)
     if (path) {
       card.outputDir = path
       card.outputDirCustom = true
@@ -354,12 +351,21 @@ async function onTypeChange(card: BuildCard) {
   await updateDefaultOutputDir(card)
 }
 
-async function onNameChange(card: BuildCard) {
+const nameChangeTimers = new Map<string, number>()
+
+function onNameChange(card: BuildCard) {
   // 卡片名称变化时，重新生成默认输出目录（末级文件夹跟名称走）
-  // 手动选择了输出目录的则不覆盖
-  if (!card.outputDirCustom) {
-    await updateDefaultOutputDir(card)
-  }
+  // 手动选择了输出目录且已有路径的则不覆盖；为空时仍然跟随名称
+  if (card.outputDirCustom && card.outputDir.trim()) return
+
+  // 输入过程中防抖，避免高频请求
+  const existing = nameChangeTimers.get(card.id)
+  if (existing) window.clearTimeout(existing)
+  const timer = window.setTimeout(() => {
+    nameChangeTimers.delete(card.id)
+    void updateDefaultOutputDir(card)
+  }, 300)
+  nameChangeTimers.set(card.id, timer)
 }
 
 /** 构建前环境检测：结果写入 preLog（与后端构建日志拼接显示；缺失不拦截，由构建本身暴露问题） */
@@ -400,8 +406,6 @@ async function startBuild(card: BuildCard) {
   card.preLog = ''
   card.startTime = Date.now()
   card.endTime = null
-  card.artifactArchivePath = ''
-  card.artifactArchiveSize = null
   selectedCardId.value = card.id
   ensureTick()
 
@@ -417,7 +421,6 @@ async function startBuild(card: BuildCard) {
       outputDir: card.outputDir.trim(),
       name: card.name.trim(),
       prePull: card.prePull,
-      packArtifact: card.packArtifact,
     }, { silent: true })
     card.jobId = dto.id
     // 后端并发已满时任务先排队（Waiting），获得构建槽位后才转 Running
@@ -427,6 +430,7 @@ async function startBuild(card: BuildCard) {
     startPolling()
   } catch (err: any) {
     card.status = 'Failed'
+    card.endTime = Date.now()
     card.log = `>> 启动失败：${err?.message || '未知错误'}`
     // 请求已 silent（不弹全局 loading），启动失败需要手动提示；卡片日志同时记录错误详情
     ElMessage.error(`任务「${card.name || '未命名'}」启动失败：${err?.message || '未知错误'}`)
@@ -458,19 +462,20 @@ function startPolling() {
           card.progress = dto.progress
           card.queuePosition = dto.queuePosition ?? 0
           card.artifactSize = dto.artifactSize ?? null
-          card.artifactArchivePath = dto.artifactArchivePath ?? ''
-          card.artifactArchiveSize = dto.artifactArchiveSize ?? null
           const wasActive = prevStatus === 'Running' || prevStatus === 'Waiting'
           if (wasActive && dto.status !== 'Running' && dto.status !== 'Waiting') {
             card.endTime = Date.now()
+            if (dto.status === 'Failed') {
+              ElMessage.error(`构建失败：${card.name}，请查看日志定位原因`)
+            }
             notifyDone(dto.status === 'Success' ? '构建成功' : `构建${statusText(dto.status)}`, card.name, dto.status === 'Success' ? 'success' : 'error')
-            // 勾选了打压缩包：打包结果单独提示（成功带大小与路径，失败引导看日志）
-            if (dto.status === 'Success' && card.packArtifact) {
-              if (card.artifactArchiveSize != null) {
-                notifyDone('压缩包已生成', `${card.name} · ${formatSize(card.artifactArchiveSize)}\n${card.artifactArchivePath}`, 'success')
-              } else {
-                notifyDone('压缩包打包失败', `${card.name}：详见构建日志末尾的 ⚠ 提示`, 'error')
-              }
+            // 构建终态时发系统通知（铃铛可见）
+            if (dto.status === 'Success' || dto.status === 'Failed') {
+              const elapsed = card.startTime ? formatElapsed(card.endTime! - card.startTime) : ''
+              const typeLabel = typeLabelMap[card.type] || card.type
+              const title = dto.status === 'Success' ? `构建完成：${card.name}` : `构建失败：${card.name}`
+              const content = `[${typeLabel}] ${card.name} ${dto.status === 'Success' ? '构建成功' : '构建失败'}${elapsed ? `，耗时 ${elapsed}` : ''}`
+              notifyBuildComplete(title, content).catch(() => { /* 通知失败不影响主流程 */ })
             }
             stopTickIfIdle()
             // 构建成功且卡片勾选“成功后自动部署”：用上次部署配置链式部署
@@ -661,7 +666,8 @@ const logFilterStat = computed(() => {
   return { shown: filterLogLines(lines).length, total: lines.length }
 })
 
-/** 格式化日志为带颜色的 HTML（先按过滤条件筛行）：优先还原 ANSI 原生色，其次按结构化标记着色 */
+/** 格式化日志为带颜色的 HTML（先按过滤条件筛行）：优先还原 ANSI 原生色，其次按结构化标记着色；
+ *  路径不做交互（识别不准且丑），纯文本展示 */
 function formatLogHtml(log: string): string {
   return filterLogLines(log.split('\n')).map(line => {
     if (line.includes('\u001b')) return ansiLineToHtml(line)
@@ -908,10 +914,10 @@ watch(
   },
 )
 
-/** 选择部署产物目录 */
+/** 选择部署产物目录（对话框从当前已填路径打开） */
 async function pickDeployOutputDir() {
   try {
-    const path = await selectFolder()
+    const path = await selectFolder(deployForm.outputDir)
     if (path) {
       deployForm.outputDir = path
     }
@@ -1123,6 +1129,13 @@ function startDeployPolling() {
           if (prevStatus === 'Running' && dto.status !== 'Running') {
             card.deployEndTime = Date.now()
             notifyDone(dto.status === 'Success' ? '部署成功' : `部署${deployStatusText(dto.status)}`, card.name, dto.status === 'Success' ? 'success' : 'error')
+            // 部署终态时发系统通知（铃铛可见）
+            if (dto.status === 'Success' || dto.status === 'Failed') {
+              const elapsed = card.deployStartTime ? formatElapsed(card.deployEndTime! - card.deployStartTime) : ''
+              const title = dto.status === 'Success' ? `部署完成：${card.name}` : `部署失败：${card.name}`
+              const content = `${card.name} ${dto.status === 'Success' ? '部署成功' : '部署失败'}${card.deployHost ? ` → ${card.deployHost}` : ''}${elapsed ? `，耗时 ${elapsed}` : ''}`
+              notifyBuildComplete(title, content).catch(() => { /* 通知失败不影响主流程 */ })
+            }
             stopTickIfIdle()
           }
         }
@@ -1229,7 +1242,6 @@ function persistCards() {
     outputDir: c.outputDir,
     outputDirCustom: c.outputDirCustom,
     prePull: c.prePull,
-    packArtifact: c.packArtifact,
     autoDeploy: c.autoDeploy,
     deployTemplateId: c.deployTemplateId,
   }))
@@ -1262,7 +1274,6 @@ async function restoreCards(): Promise<boolean> {
       card.outputDir = item.outputDir || ''
       card.outputDirCustom = !!item.outputDirCustom
       card.prePull = !!item.prePull
-      card.packArtifact = !!item.packArtifact
       card.autoDeploy = !!item.autoDeploy
       card.deployTemplateId = item.deployTemplateId || ''
       cards.push(card)
@@ -1277,7 +1288,7 @@ async function restoreCards(): Promise<boolean> {
 // 配置字段变化时延迟保存（避免输入过程中高频写存储；日志/状态变化不触发）
 let persistTimer: number | null = null
 watch(
-  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.packArtifact}|${c.autoDeploy}|${c.deployTemplateId}`).join('\n'),
+  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.autoDeploy}|${c.deployTemplateId}`).join('\n'),
   () => {
     if (persistTimer) window.clearTimeout(persistTimer)
     persistTimer = window.setTimeout(persistCards, 500)
@@ -1320,7 +1331,6 @@ function exportConfig() {
       outputDir: c.outputDir,
       outputDirCustom: c.outputDirCustom,
       prePull: c.prePull,
-      packArtifact: c.packArtifact,
       autoDeploy: c.autoDeploy,
     })),
     templates: templates.value,
@@ -1367,7 +1377,6 @@ async function importConfig(e: Event) {
         card.outputDir = item.outputDir || ''
         card.outputDirCustom = !!item.outputDirCustom
         card.prePull = !!item.prePull
-        card.packArtifact = !!item.packArtifact
         card.autoDeploy = !!item.autoDeploy
         cards.push(card)
         cardCount++
@@ -1699,6 +1708,72 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+// ============================ 独立打压缩包 ============================
+
+/** 打压缩包弹窗状态（与构建流程解耦：任意本地文件夹随时可打包） */
+const packVisible = ref(false)
+const packLoading = ref(false)
+const packForm = reactive({
+  /** 要打包的本地文件夹 */
+  sourceDir: '',
+  /** 目标 zip 完整路径；留空 = 源文件夹同级 {文件夹名}_{时间戳}.zip */
+  targetZip: '',
+})
+
+function openPackDialog() {
+  // 默认预填选中卡片的输出目录（有的话），省去手输
+  const selected = selectedCard.value
+  packForm.sourceDir = selected?.outputDir?.trim() || ''
+  packForm.targetZip = ''
+  packVisible.value = true
+}
+
+/** 选择源文件夹（对话框从当前已填路径打开） */
+async function pickPackSourceDir() {
+  try {
+    const path = await selectFolder(packForm.sourceDir)
+    if (path) packForm.sourceDir = path
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 在资源管理器中打开源文件夹（目录不存在时由后端返回提示） */
+async function openPackSourceDir() {
+  const dir = packForm.sourceDir.trim()
+  if (!dir) {
+    ElMessage.warning('请先填写源文件夹路径')
+    return
+  }
+  try {
+    await openOutputFolder(dir)
+  } catch {
+    // 失败提示由请求拦截器统一弹出
+  }
+}
+
+/** 执行打包：大目录耗时较长，10 分钟超时；成功弹带路径与大小的通知 */
+async function packFolder() {
+  const sourceDir = packForm.sourceDir.trim()
+  if (!sourceDir) {
+    ElMessage.warning('请填写或选择要打包的文件夹')
+    return
+  }
+  packLoading.value = true
+  try {
+    const res = await packFolderToZip(
+      { sourceDir, targetZip: packForm.targetZip.trim() || undefined },
+      10 * 60_000,
+    )
+    notifyDone('压缩包已生成', `${formatBytes(res.size)}\n${res.path}`, 'success')
+    packVisible.value = false
+  } catch {
+    // 错误提示由请求拦截器统一弹出，弹窗保留便于修正后重试
+  } finally {
+    packLoading.value = false
+  }
 }
 
 /** 时间格式化：MM-dd HH:mm（历史列表/定时提示用） */
@@ -2323,6 +2398,8 @@ onUnmounted(() => {
   stopDeployPolling()
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
   if (persistTimer) { window.clearTimeout(persistTimer); persistTimer = null }
+  for (const timer of nameChangeTimers.values()) window.clearTimeout(timer)
+  nameChangeTimers.clear()
 })
 </script>
 
@@ -2339,6 +2416,7 @@ onUnmounted(() => {
       <el-button :icon="Clock" @click="openHistory">部署历史</el-button>
       <el-button :icon="Promotion" @click="gotoPipeline">流水线</el-button>
       <el-button :icon="Brush" @click="openArtifactDialog">产物清理</el-button>
+      <el-button :icon="Box" @click="openPackDialog">打压缩包</el-button>
       <el-button :icon="Download" @click="exportConfig">导出配置</el-button>
       <el-button :icon="Upload" @click="triggerImport">导入配置</el-button>
       <el-button type="primary" :icon="Plus" @click="addCard">新增构建</el-button>
@@ -2421,7 +2499,7 @@ onUnmounted(() => {
         <div class="card-field">
           <div class="field-label">输出目录</div>
           <div class="field-input-wrap">
-            <el-input v-model="card.outputDir" class="output-dir-input" placeholder="默认输出路径（可手动修改）" size="small" @focus="showInputPreview" @blur="hideInputPreview" @input="card.outputDirCustom = true; refreshInputPreviewText($event)">
+            <el-input v-model="card.outputDir" class="output-dir-input" placeholder="默认输出路径（可手动修改）" size="small" @focus="showInputPreview" @blur="hideInputPreview" @input="refreshInputPreviewText($event)" @change="card.outputDirCustom = true">
               <template #append>
                 <el-button :icon="FolderOpened" :disabled="isRunning(card)" @click.stop="pickOutputDir(card)">选择</el-button>
               </template>
@@ -2440,7 +2518,6 @@ onUnmounted(() => {
         <!-- 构建行为选项：拉取最新代码 / 成功后自动部署 + 自动部署模版（构建中锁定） -->
         <div class="card-options">
           <el-checkbox v-model="card.prePull" size="small" :disabled="isRunning(card)" @click.stop>构建前 git pull</el-checkbox>
-          <el-checkbox v-model="card.packArtifact" size="small" :disabled="isRunning(card)" @click.stop>成功后打压缩包</el-checkbox>
           <el-checkbox v-model="card.autoDeploy" size="small" :disabled="isRunning(card)" @click.stop>成功后自动部署</el-checkbox>
           <el-select
             v-if="card.autoDeploy && deployTemplates.length > 0"
@@ -2462,10 +2539,6 @@ onUnmounted(() => {
           <el-tag v-if="card.deployStatus && card.deployStatus !== 'Running'" :type="deployStatusType(card.deployStatus)" size="small" effect="dark">{{ deployStatusText(card.deployStatus) }}</el-tag>
           <span v-if="buildElapsed(card)">构建耗时 {{ buildElapsed(card) }}</span>
           <span v-if="card.artifactSize">产物 {{ formatSize(card.artifactSize) }}</span>
-          <el-tooltip v-if="card.artifactArchiveSize" :content="card.artifactArchivePath" placement="top">
-            <span class="archive-size">压缩包 {{ formatSize(card.artifactArchiveSize) }}</span>
-          </el-tooltip>
-          <span v-else-if="card.status === 'Success' && card.packArtifact" class="archive-failed">压缩包打包失败</span>
           <span v-if="deployElapsed(card)">部署耗时 {{ deployElapsed(card) }}</span>
         </div>
 
@@ -2728,6 +2801,32 @@ onUnmounted(() => {
       <template #footer>
         <el-button @click="artifactVisible = false">关闭</el-button>
         <el-button type="danger" :loading="artifactCleaning" @click="cleanSelectedArtifacts">清理所选</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 独立打压缩包弹窗：任意本地文件夹随时打包，与构建流程解耦 -->
+    <el-dialog v-model="packVisible" title="打压缩包" width="560px" :close-on-click-modal="false">
+      <el-form label-width="90px" size="small" @submit.prevent>
+        <el-form-item label="源文件夹">
+          <el-input v-model="packForm.sourceDir" placeholder="要打包的本地文件夹路径" clearable>
+            <template #append>
+              <el-button :icon="FolderOpened" @click="pickPackSourceDir">选择</el-button>
+            </template>
+            <template #suffix>
+              <el-tooltip content="打开目录" placement="top">
+                <el-icon class="copy-icon" @click="openPackSourceDir"><Folder /></el-icon>
+              </el-tooltip>
+            </template>
+          </el-input>
+        </el-form-item>
+        <el-form-item label="保存位置">
+          <el-input v-model="packForm.targetZip" placeholder="留空 = 源文件夹同级，命名 {文件夹名}_{时间戳}.zip" clearable />
+          <div class="form-hint">手填完整 zip 路径时，同名旧包将被覆盖</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="packVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="packLoading" @click="packFolder">{{ packLoading ? '正在打包...' : '开始打包' }}</el-button>
       </template>
     </el-dialog>
 
@@ -3061,16 +3160,6 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399;
   margin-bottom: 8px;
-}
-
-/* 压缩包大小：鼠标悬停 tooltip 展示完整路径 */
-.archive-size {
-  cursor: default;
-}
-
-/* 勾选了打压缩包但打包失败：红色提示（成功时为灰色大小 + tooltip 路径） */
-.archive-failed {
-  color: #f56c6c;
 }
 
 .card-field {

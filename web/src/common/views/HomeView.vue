@@ -517,7 +517,13 @@ function getGroupIcon(title: string): unknown {
         <div class="panel-body">
           <div v-if="onlineUsers.length === 0" class="panel-empty">暂无在线用户</div>
           <div v-for="u in onlineUsers.slice(0, 8)" :key="u.userId" class="online-item">
-            <div class="online-avatar">{{ (u.displayName || u.account || '?').slice(0, 1).toUpperCase() }}</div>
+            <el-avatar
+              v-if="u.avatar"
+              :size="40"
+              :src="u.avatar"
+              class="online-avatar online-avatar-img"
+            />
+            <div v-else class="online-avatar">{{ (u.displayName || u.account || '?').slice(0, 1).toUpperCase() }}</div>
             <div class="online-info">
               <div class="online-name">{{ u.displayName || u.account }}</div>
               <div class="online-meta">{{ relTime(u.lastActive) }} · {{ u.ip }}</div>
@@ -984,6 +990,10 @@ function getGroupIcon(title: string): unknown {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.online-avatar-img {
+  background: transparent;
 }
 .online-info { flex: 1; min-width: 0; }
 .online-name { font-size: 14px; font-weight: 500; color: var(--text-main); }

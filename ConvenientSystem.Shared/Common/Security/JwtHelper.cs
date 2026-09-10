@@ -22,6 +22,8 @@ namespace ConvenientSystem.Shared.Common.Security
         public const string AdminClaim = "isAdmin";
         /// <summary>数据范围 claim（值为 DataScope 整数值）。</summary>
         public const string DataScopeClaim = "dataScope";
+        /// <summary>用户头像 claim（值为 data:image/...;base64 内联图片或 URL）。</summary>
+        public const string AvatarClaim = "avatar";
         /// <summary>超级管理员角色编码：拥有全部菜单与接口权限。</summary>
         public const string AdminRole = "admin";
         /// <summary>普通用户角色编码：新注册用户自动赋予。</summary>
@@ -41,7 +43,8 @@ namespace ConvenientSystem.Shared.Common.Security
             IEnumerable<string> menuCodes,
             TimeSpan? lifetime = null,
             bool isAdmin = false,
-            DataScope dataScope = DataScope.Self)
+            DataScope dataScope = DataScope.Self,
+            string? avatar = null)
         {
             var claims = new List<Claim>
             {
@@ -57,6 +60,9 @@ namespace ConvenientSystem.Shared.Common.Security
             };
             if (!string.IsNullOrEmpty(displayName))
                 claims.Add(new Claim(DisplayNameClaim, displayName));
+            // avatar 不再嵌入 JWT：base64 头像可达几十 KB，
+            // 塞入 Authorization 头后整请求超 nginx large_client_header_buffers 限制（默认 32 KB），
+            // 导致 "400 Request Header Or Cookie Too Large"。头像改由登录响应体和心跳接口返回。
             foreach (var role in roleCodes.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct())
                 claims.Add(new Claim(ClaimTypes.Role, role));
 

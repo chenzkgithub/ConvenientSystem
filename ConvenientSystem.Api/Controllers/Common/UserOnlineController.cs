@@ -28,6 +28,7 @@ namespace ConvenientSystem.Api.Controllers.Common
                 UserId = e.UserId,
                 Account = e.Account,
                 DisplayName = e.DisplayName,
+                Avatar = e.Avatar,
                 Ip = e.Ip,
                 LoginTime = e.LoginTime,
                 LastActive = e.LastActive,

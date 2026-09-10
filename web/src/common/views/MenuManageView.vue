@@ -22,7 +22,7 @@ const dirty = ref(false)
 // 编辑弹窗
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
-const editForm = ref({ title: '', page: '', name: '', component: '', external: false, float: false, visible: true, editable: true, enabled: true })
+const editForm = ref({ title: '', page: '', name: '', component: '', external: false, float: false, visible: true, editable: true, enabled: true, parentPath: [] as number[] })
 // 存储编辑目标：用路径数组表示层级，如 [0, 2] 表示 rawMenus[0].children[2]
 const editPath = ref<number[]>([])
 const editIsNew = ref(false)
@@ -121,6 +121,7 @@ async function handleSave(successMsg = '已保存') {
 async function addRootMenu() {
   dialogTitle.value = '新增顶级菜单'
   resetEditForm()
+  editForm.value.parentPath = []
   editPath.value = []
   editIsNew.value = true
   await nextTick(() => { dialogVisible.value = true })
@@ -130,13 +131,14 @@ async function addRootMenu() {
 async function addChildMenu(parentPath: number[]) {
   dialogTitle.value = '新增子菜单'
   resetEditForm()
+  editForm.value.parentPath = [...parentPath]
   editPath.value = parentPath
   editIsNew.value = true
   await nextTick(() => { dialogVisible.value = true })
 }
 
 function resetEditForm() {
-  editForm.value = { title: '', page: '', name: '', component: '', external: false, float: false, visible: true, editable: true, enabled: true }
+  editForm.value = { title: '', page: '', name: '', component: '', external: false, float: false, visible: true, editable: true, enabled: true, parentPath: [] }
 }
 
 /** 编辑表单当前匹配的视图 Name（自动高亮下拉选项） */
@@ -172,11 +174,28 @@ function editMenu(path: number[]) {
     visible: info.node.visible !== false,
     editable: info.node.editable !== false,
     enabled: info.node.enabled !== false,
+    parentPath: path.length > 1 ? path.slice(0, -1) : [],
   }
   editPath.value = [...path]
   editIsNew.value = false
   dialogVisible.value = true
 }
+
+/** 上级菜单选项（排除外链菜单；编辑时额外排除当前节点及其子孙，避免循环） */
+const parentOptions = computed(() => {
+  const targets: { path: number[]; label: string }[] = []
+  function collect(nodes: MenuNode[], parentPath: number[], prefix: string) {
+    for (let i = 0; i < nodes.length; i++) {
+      const nodePath = [...parentPath, i]
+      if (!editIsNew.value && (arraysEqual(nodePath, editPath.value) || isDescendantOf(nodePath, editPath.value))) continue
+      if (nodes[i].external) continue
+      targets.push({ path: nodePath, label: prefix + nodes[i].title })
+      if (nodes[i].children?.length) collect(nodes[i].children!, nodePath, prefix + nodes[i].title + ' / ')
+    }
+  }
+  collect(rawMenus.value, [], '')
+  return targets
+})
 
 // 删除菜单
 async function deleteMenu(path: number[]) {
@@ -234,9 +253,16 @@ async function confirmEdit() {
   const page = editForm.value.page.trim()
   const name = editForm.value.name.trim()
   const component = editForm.value.component.trim()
+  const targetParentPath = editForm.value.parentPath
 
-  const targetArr = getChildrenByPath(editPath.value)
+  // 编辑时禁止把自己或子孙选为父级
+  if (!editIsNew.value && (arraysEqual(targetParentPath, editPath.value) || isDescendantOf(targetParentPath, editPath.value))) {
+    ElMessage.warning('不能选择当前菜单或其子菜单作为上级菜单')
+    return
+  }
+
   if (editIsNew.value) {
+    const targetArr = getChildrenByPath(targetParentPath)
     targetArr.push({
       title,
       page: page || undefined,
@@ -276,6 +302,16 @@ async function confirmEdit() {
     }
     // 同级全部同状态时同步父级
     syncParentEnabled(editPath.value, editForm.value.enabled)
+
+    // 父级变更时移动节点（保留 children）
+    const oldParentPath = editPath.value.slice(0, -1)
+    if (!arraysEqual(oldParentPath, targetParentPath)) {
+      const nodeToMove = { ...node }
+      const oldArr = oldParentPath.length === 0 ? rawMenus.value : getNodeByPath(oldParentPath)!.node.children!
+      oldArr.splice(editPath.value[editPath.value.length - 1], 1)
+      const newArr = getChildrenByPath(targetParentPath)
+      newArr.push(nodeToMove)
+    }
   }
   dialogVisible.value = false
   dirty.value = true
@@ -588,6 +624,21 @@ provide('menuActions', {
       @closed="resetEditForm"
     >
       <el-form :model="editForm" label-width="90px">
+        <el-form-item label="上级菜单">
+          <el-select
+            v-model="editForm.parentPath"
+            placeholder="选择上级菜单"
+            style="width: 100%"
+          >
+            <el-option label="顶级菜单" :value="[]" />
+            <el-option
+              v-for="opt in parentOptions"
+              :key="opt.path.join('-')"
+              :label="opt.label"
+              :value="opt.path"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="菜单标题">
           <el-input v-model="editForm.title" placeholder="请输入菜单标题" />
         </el-form-item>

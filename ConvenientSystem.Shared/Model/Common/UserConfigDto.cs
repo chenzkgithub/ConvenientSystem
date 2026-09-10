@@ -10,6 +10,16 @@ namespace ConvenientSystem.Shared.Model.Common
         public string InputType { get; set; } = "text";
         public string Category { get; set; } = string.Empty;
         public int SortOrder { get; set; }
+
+        /// <summary>枚举选项（inputType 为 select 时有效）</summary>
+        public List<UserConfigOptionDto>? Options { get; set; }
+    }
+
+    /// <summary>用户配置枚举选项</summary>
+    public class UserConfigOptionDto
+    {
+        public string Value { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
     }
 
     /// <summary>分组配置 DTO（按 Category 聚合）</summary>

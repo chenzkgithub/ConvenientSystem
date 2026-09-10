@@ -1,3 +1,4 @@
+using ConvenientSystem.Api.Hubs;
 using ConvenientSystem.Api.Middleware;
 using Microsoft.AspNetCore.Http.Features;
 using ConvenientSystem.Shared.Common;
@@ -114,6 +115,9 @@ internal static class Program
 
         // 控制器路由：api/{area}/{controller}/{action}（见 Controllers/BaseController.cs）。
         app.MapControllers();
+
+        // 聊天实时推送（SignalR WebSocket）：反向代理需放行 Upgrade；桌面壳反代暂不支持时前端自动降级轮询
+        app.MapHub<ChatHub>("/hubs/chat");
 
         // Hangfire Dashboard 响应编码修正：确保 Content-Type 含 charset=utf-8，避免中文任务名乱码
         app.Use(async (context, next) =>

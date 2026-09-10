@@ -73,7 +73,7 @@ router.onError((err, to) => {
   ElMessage.error({
     message: `页面加载失败：无法加载页面“${to.fullPath}”，请检查网络连接或刷新后重试`,
     grouping: true,
-    duration: 6000,
+    duration: 3000,
   })
 })
 

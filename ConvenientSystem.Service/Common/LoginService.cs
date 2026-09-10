@@ -109,7 +109,7 @@ namespace ConvenientSystem.Service.Common
                 var sessionTimeoutMinutes = ReadSessionTimeoutMinutes();
                 // 0 表示会话永不过期（兼容历史行为），否则按配置时长签发 JWT
                 TimeSpan? tokenLifetime = sessionTimeoutMinutes > 0 ? TimeSpan.FromMinutes(sessionTimeoutMinutes) : null;
-                var token = JwtHelper.GenerateToken(_jwtKey.Key, user.Id, user.Account, user.DisplayName, roleCodes, menuCodes, lifetime: tokenLifetime, isAdmin: isAdmin, dataScope: dataScope);
+                var token = JwtHelper.GenerateToken(_jwtKey.Key, user.Id, user.Account, user.DisplayName, roleCodes, menuCodes, lifetime: tokenLifetime, isAdmin: isAdmin, dataScope: dataScope, avatar: user.Avatar);
                 _logger.LogInformation("登录校验，账号：{Account}，结果：{Result}，会话超时：{Timeout}分钟", reqAccount, true, sessionTimeoutMinutes);
                 return new LoginVerifyDto
                 {
@@ -138,7 +138,12 @@ namespace ConvenientSystem.Service.Common
                 var user = await _configDb.Select<SysUserEntity>()
                     .Where(u => u.Id == userId)
                     .FirstAsync();
-                return new LoginStatusDto { Enabled = user != null && user.Enabled && !user.IsDeleted };
+                return new LoginStatusDto
+                {
+                    Enabled = user != null && user.Enabled && !user.IsDeleted,
+                    Avatar = user?.Avatar,
+                    DisplayName = user?.DisplayName,
+                };
             }
             catch (Exception ex)
             {

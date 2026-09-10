@@ -32,27 +32,33 @@ namespace ConvenientSystem.Api.Controllers.Common
         public ActionResult<List<ApiSpecFileDto>> Controllers([FromQuery] string rootDir)
             => Ok(_service.ScanControllers(rootDir));
 
+        /// <summary>扫描解决方案（.sln/.slnx）或目录内全部接口，返回接口级清单。</summary>
+        [HttpGet]
+        [PermissionAuthorize("api-spec")]
+        public ActionResult<List<ApiSpecSolutionEndpointDto>> ScanSolution([FromQuery] string solutionPath)
+            => Ok(_service.ScanSolution(solutionPath));
+
         /// <summary>解析选中 Controller → 接口清单 + DTO 类型树（前端预览面板）。</summary>
         [HttpGet]
         [PermissionAuthorize("api-spec")]
         public ActionResult<ApiSpecDocumentDto> Parse([FromQuery] string rootDir, [FromQuery] string files,
-            [FromQuery] string? title, [FromQuery] string? baseUrl)
-            => Ok(_service.Parse(rootDir, files, title, baseUrl));
+            [FromQuery] string? title, [FromQuery] string? baseUrl, [FromQuery] string? solutionPath)
+            => Ok(_service.Parse(rootDir, files, title, baseUrl, solutionPath));
 
-        /// <summary>生成内容预览（返回字符串，不触发浏览器下载）。</summary>
-        [HttpGet]
+        /// <summary>生成内容预览（返回字符串，不触发浏览器下载）。选择标识放 body，避免接口多时 URL 过长导致 HTTP 414。</summary>
+        [HttpPost]
         [PermissionAuthorize("api-spec")]
-        public ActionResult<ApiSpecExportDto> Preview([FromQuery] string rootDir, [FromQuery] string files,
-            [FromQuery] string format, [FromQuery] string? title, [FromQuery] string? baseUrl)
-            => Ok(_service.Export(rootDir, files, format, title, baseUrl));
+        public ActionResult<ApiSpecExportDto> Preview([FromBody] ApiSpecPreviewRequest req)
+            => Ok(_service.Export(req.RootDir, req.Files, req.Format, req.Title, req.BaseUrl,
+                req.Only, req.SolutionPath, req.SelectionKeys));
 
         /// <summary>下载生成的 API 数据文件（Content-Disposition 附件）。</summary>
         [HttpGet]
         [PermissionAuthorize("api-spec:export")]
         public IActionResult Export([FromQuery] string rootDir, [FromQuery] string files,
-            [FromQuery] string format, [FromQuery] string? title, [FromQuery] string? baseUrl)
+            [FromQuery] string format, [FromQuery] string? title, [FromQuery] string? baseUrl, [FromQuery] string? only)
         {
-            var result = _service.Export(rootDir, files, format, title, baseUrl);
+            var result = _service.Export(rootDir, files, format, title, baseUrl, only);
             var bytes = Encoding.UTF8.GetBytes(result.Content);
             return File(bytes, result.ContentType, result.FileName);
         }

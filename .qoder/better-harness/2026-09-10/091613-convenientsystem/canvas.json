@@ -1,0 +1,365 @@
+{
+  "schemaVersion": 2,
+  "summary": {
+    "evidenceMode": "session-limited",
+    "evidenceBoundary": {
+      "manifest": {
+        "schemaVersion": 2,
+        "sourceFingerprint": "659a300dbd49ee99",
+        "adapterVersion": "qoder-task-loop-source-v2",
+        "platform": "qoder",
+        "selection": {
+          "strategy": "all-eligible",
+          "eligibleCount": 0,
+          "analyzedCount": 0,
+          "confidence": "Low"
+        }
+      },
+      "episodeCoverage": {
+        "episodeCount": 0,
+        "editedEpisodeCount": 0,
+        "closedEpisodeCount": 0,
+        "recoveredEpisodeCount": 0
+      },
+      "deliveryEvidenceLevels": [],
+      "sourceGaps": []
+    },
+    "semanticFacets": {
+      "schemaVersion": 1,
+      "status": "supplementary",
+      "entries": [
+        {
+          "id": "session-insight:source-coverage",
+          "kind": "redacted-summary",
+          "episodeRef": null,
+          "status": "candidate",
+          "labels": [
+            "source-coverage",
+            "Low"
+          ],
+          "summary": "Analyzed 0 of 0 sessions; 2/6 enabled source roots exist. Use this as the current workspace evidence boundary for final insight cards.",
+          "evidenceRefs": [],
+          "modelVersion": "session-insights-v1"
+        },
+        {
+          "id": "session-insight:validation-behavior",
+          "kind": "redacted-summary",
+          "episodeRef": null,
+          "status": "candidate",
+          "labels": [
+            "validation-behavior",
+            "Low"
+          ],
+          "summary": "No validation command category was observed in the analyzed session sample. Inspect more sessions or add explicit validation guidance before claiming validation-after-edit behavior.",
+          "evidenceRefs": [],
+          "modelVersion": "session-insights-v1"
+        },
+        {
+          "id": "session-insight:post-edit-validation",
+          "kind": "rework-correction",
+          "episodeRef": null,
+          "status": "candidate",
+          "labels": [
+            "post-edit-validation",
+            "Low"
+          ],
+          "summary": "No edit event was observed in the analyzed sample. Inspect more sessions before making claims about edit or validation habits.",
+          "evidenceRefs": [],
+          "modelVersion": "session-insights-v1"
+        },
+        {
+          "id": "session-insight:execution-friction",
+          "kind": "friction-taxonomy",
+          "episodeRef": null,
+          "status": "candidate",
+          "labels": [
+            "execution-friction",
+            "Low"
+          ],
+          "summary": "No strong execution friction signal in the analyzed sample. Keep friction claims narrow unless additional failed commands, rejected actions, or warnings are inspected.",
+          "evidenceRefs": [],
+          "modelVersion": "session-insights-v1"
+        }
+      ]
+    },
+    "learningCapture": {
+      "schemaVersion": 1,
+      "state": "N/A",
+      "summary": "暂不适用——需要两个可比的观察窗口和一次改进对比。",
+      "interventions": []
+    },
+    "aiAgentPractice": {
+      "inspectedSurfaces": [
+        "Workflows",
+        "Skills",
+        "MCP"
+      ],
+      "coverageRows": [
+        {
+          "surface": "Skills",
+          "scopes": [
+            "Plugin"
+          ],
+          "count": 3,
+          "paths": [
+            "~/.qoder/plugins/cache/qoder-bundler/better-harness/skills/better-harness/SKILL.md",
+            "~/.qoder/plugins/cache/qoder-bundler/computer-use/skills/computer-use/SKILL.md",
+            "~/.qoder/plugins/cache/qoder-bundler/qoder-create-plugin/skills/create-plugin/SKILL.md"
+          ]
+        },
+        {
+          "surface": "MCP",
+          "scopes": [
+            "Plugin"
+          ],
+          "count": 1,
+          "paths": [
+            "~/.qoder/plugins/cache/qoder-bundler/computer-use/.mcp.json"
+          ]
+        },
+        {
+          "surface": "Workflows",
+          "scopes": [
+            "Project"
+          ],
+          "count": 1,
+          "paths": [
+            ".github/workflows/deploy.yml"
+          ]
+        },
+        {
+          "surface": "Plugins",
+          "scopes": [
+            "Plugin"
+          ],
+          "count": 3,
+          "paths": [
+            "~/.qoder/plugins/cache/qoder-bundler/better-harness/.qoder-plugin/plugin.json",
+            "~/.qoder/plugins/cache/qoder-bundler/computer-use/.qoder-plugin/plugin.json",
+            "~/.qoder/plugins/cache/qoder-bundler/qoder-create-plugin"
+          ]
+        },
+        {
+          "surface": "Memories",
+          "scopes": [
+            "Global"
+          ],
+          "count": 5
+        },
+        {
+          "surface": "Rules",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        },
+        {
+          "surface": "Hooks",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        },
+        {
+          "surface": "Commands",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        },
+        {
+          "surface": "Custom Agents",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        }
+      ],
+      "repositorySourceRows": [],
+      "memoryDetails": {
+        "contentPolicy": "metadata-only",
+        "scanState": "scanned-present",
+        "scopeCounts": [
+          {
+            "scope": "Global",
+            "count": 5
+          }
+        ],
+        "integrity": {
+          "status": "reviewed",
+          "titleCount": 5,
+          "reviewedTitleCount": 5,
+          "truncated": false,
+          "exactCollisionGroups": 0,
+          "similarityCandidates": 0
+        }
+      }
+    },
+    "projectName": "ConvenientSystem",
+    "locale": "zh-CN",
+    "modelId": "agent-work-loop-v4",
+    "reportContractVersion": 26,
+    "overview": "项目文档、环境命令面与恢复设计成体系，但生产部署流水线存在三处确定性缺陷（打包引用缺失文件、健康检查不阻断、类型检查未接线），数据库管理员凭据明文入库，且约 4 万行变更处于无回滚点的未提交状态。",
+    "strengths": [
+      "代码内中文注释密度高：触发、边界、失败与恢复路径的决策理由可读（登录挤号、中间件 fail-open、聊天 Hub 并发防泄漏等）",
+      "环境就绪命令面完整：三步搭建文档、七个场景化启动脚本、幂等数据库初始化脚本",
+      "运行时日志消费闭环：内存环形缓冲、关键字与级别过滤查询、前端实时查看，查看与清空权限分离",
+      "恢复设计成体系：启动补偿器、端口占用自动回退、三路全局异常兜底与致命错误对话框、桌面端单实例守卫",
+      "经验知识结构化沉淀：开发规范的流程硬约束与踩坑、决策、任务总结记忆库，数据库迁移双维护规则在当前变更中被实际遵守"
+    ],
+    "dimensions": [
+      {
+        "id": "task-understanding",
+        "label": "任务理解",
+        "score": 62,
+        "summary": "开发规范.md 实际承担代理指令角色（含五条流程硬约束与踩坑、决策、任务总结记忆库），项目说明.md 提供结构图但部分目录描述已过时；缺少机器可发现的 AGENTS.md 类标准入口，上下文路由依赖人工指定，会话侧无使用证据。",
+        "findingRefs": []
+      },
+      {
+        "id": "controlled-execution",
+        "label": "可控执行",
+        "score": 68,
+        "summary": "环境就绪入口可用：三步搭建、七个场景化启动脚本、幂等数据库初始化、端口占用自动回退与三路全局异常兜底；无环境自检命令，且跟踪配置中存在明文数据库凭据（见对应 finding）。",
+        "findingRefs": [
+          "db-credentials-committed"
+        ]
+      },
+      {
+        "id": "change-validation",
+        "label": "改动验证",
+        "score": 48,
+        "summary": "验证信号只有编译与类型层：后端依赖 dotnet 编译即时报错，前端 type-check 脚本存在但未接入任何入口；仓库零测试文件、CI 无测试与 lint 步骤，行为级回归按项目声明的流程由用户人工验证。",
+        "findingRefs": [
+          "frontend-typecheck-not-wired"
+        ]
+      },
+      {
+        "id": "reliable-delivery",
+        "label": "可靠交付",
+        "score": 42,
+        "summary": "交付路线存在但断裂：部署流水线打包步骤引用已删除的文件、健康检查失败不阻断、无回滚步骤；当前 175 个文件约 4 万行变更全部未提交，既无修订绑定的验收证据也无回滚点。",
+        "findingRefs": [
+          "deploy-pipeline-missing-docker-files",
+          "deploy-health-check-non-blocking",
+          "mass-change-uncommitted"
+        ]
+      },
+      {
+        "id": "learning-capture",
+        "label": "经验沉淀",
+        "score": 40,
+        "summary": "会话受限评审：30 天窗口内零合格会话，重复工作识别与学习闭环的应用效果在本窗口无从观测；项目侧存在人工维护的经验记忆库作为知识沉淀 owner，但无检索与后续结果证据。",
+        "findingRefs": []
+      }
+    ],
+    "atAGlance": {
+      "priorityMoves": [
+        {
+          "findingRef": "deploy-pipeline-missing-docker-files",
+          "dimensionRef": "reliable-delivery",
+          "move": "从 git 历史恢复流水线引用的三个 Docker 配置文件，让构建型部署路线重新可用",
+          "expectedUnlock": "打包步骤可成功完成，生产镜像与容器配置恢复经流水线更新"
+        },
+        {
+          "findingRef": "db-credentials-committed",
+          "dimensionRef": "controlled-execution",
+          "move": "连接串凭据改为环境变量注入并轮换已暴露的 sa 密码",
+          "expectedUnlock": "仓库读取权限不再等价于内网数据库管理员权限"
+        },
+        {
+          "findingRef": "frontend-typecheck-not-wired",
+          "dimensionRef": "change-validation",
+          "move": "在 Build Frontend 步骤接入已存在的 npm run type-check",
+          "expectedUnlock": "前端获得部署入口的第一个机械验证信号，类型错误被拦截在构建之前"
+        }
+      ]
+    },
+    "assignmentSummaries": []
+  },
+  "findings": [
+    {
+      "id": "deploy-pipeline-missing-docker-files",
+      "title": "构建型生产部署在打包步骤必然失败：流水线引用的 Docker 配置文件已不在仓库中",
+      "severity": "High",
+      "reason": ".github/workflows/deploy.yml 的打包步骤执行 tar -czf docker-config.tar.gz Dockerfile Dockerfile.web docker-compose.yml nginx/nginx.conf docker/init-db.sh db/init.sql，其中三个根级文件（Dockerfile、Dockerfile.web、docker-compose.yml）在工作区与 git 索引中均已不存在（git 历史显示它们曾被提交后删除；nginx/nginx.conf、docker/init-db.sh、db/init.sql 仍存在）。CI 检出后执行同一命令，tar 对缺失文件返回非零退出码，流水线在上传与远程部署之前中断。后果：当前仓库状态下无法通过该流水线完成构建型部署，远端镜像与容器配置也无法再经此路线更新。未核项：CI 历史运行结果与文件被删除的意图。",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ],
+      "subdimensionRefs": [
+        "acceptance-evidence"
+      ],
+      "expectedArtifact": "Workflow",
+      "expectedOutput": [
+        "Update the existing Workflow owner identified by the reviewed evidence and retain a focused validation result."
+      ],
+      "aiFixPrompt": "/better-harness 修复这个问题\n\n对齐 .github/workflows/deploy.yml 打包步骤与仓库现状：步骤引用的 Dockerfile、Dockerfile.web、docker-compose.yml 已不在仓库，但存在于 git 历史（用 git log --oneline -- Dockerfile Dockerfile.web docker-compose.yml 定位删除前的提交，从该提交恢复这三个文件），或者按当前实际部署方式修正 tar 清单。保留仍存在的 nginx/nginx.conf、docker/init-db.sh、db/init.sql 引用，不改动流水线其余步骤。\n\n## Validation\n\n- git ls-files 确认三个文件已被跟踪（或打包清单不再引用任何缺失文件）\n- 在仓库根目录按流水线同一命令本地演练打包 docker-config.tar.gz，退出码为 0 且归档内容完整"
+    },
+    {
+      "id": "deploy-health-check-non-blocking",
+      "title": "部署健康检查失败不阻断流水线，异常上线仍被报告为部署完成",
+      "severity": "Medium",
+      "reason": "deploy.yml 远程部署脚本的健康检查段：HTTP 状态码为 200/401 时打印通过；其他状态码只输出警告与容器日志后继续执行，最终打印部署完成；curl 失败被「|| echo 000」兜底，整个脚本退出码恒为 0。后果：API 容器未就绪或启动失败时，流水线以成功收尾，人工验收被误导，也不会触发回滚或告警。属脚本确定性行为，非运行时推测。",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ],
+      "subdimensionRefs": [
+        "acceptance-evidence"
+      ],
+      "expectedArtifact": "Workflow",
+      "expectedOutput": [
+        "Update the existing Workflow owner identified by the reviewed evidence and retain a focused validation result."
+      ],
+      "aiFixPrompt": "/better-harness 修复这个问题\n\n修改 .github/workflows/deploy.yml 远程部署脚本的健康检查段：HTTP 状态码不是 200/401 时让脚本以非零退出码结束（当前仅 echo 警告后继续走到部署完成）。保留 curl 的 000 兜底输出与 docker logs 排障信息，不改动其余部署步骤。\n\n## Validation\n\n- 通读修改后的 workflow：非 200/401 分支明确产生失败退出\n- 在本地 shell 中以 200、401、503、000 四种输入模拟该判断片段，确认只有前两种继续、后两种失败退出"
+    },
+    {
+      "id": "frontend-typecheck-not-wired",
+      "title": "前端类型检查未接入部署流水线，类型错误可直达生产构建产物",
+      "severity": "Medium",
+      "reason": "web/package.json 已配置 type-check 脚本（vue-tsc -b），但 .github/workflows/deploy.yml 的 Build Frontend 步骤只执行 npm ci 与 npm run build，而 vite build 不做类型检查。三个接线事实齐备：已配置的能力（type-check 脚本）、活跃入口（Build Frontend 步骤）、缺失的连接（流水线无类型检查步骤）。后果：vue-tsc 可捕获的类型错误绕过全部机械检查进入生产产物，故障点前移到用户浏览器。",
+      "dimensionRefs": [
+        "change-validation"
+      ],
+      "subdimensionRefs": [
+        "relevant-check"
+      ],
+      "expectedArtifact": "Workflow",
+      "expectedOutput": [
+        "Update the existing Workflow owner identified by the reviewed evidence and retain a focused validation result."
+      ],
+      "aiFixPrompt": "/better-harness 修复这个问题\n\n在 .github/workflows/deploy.yml 的 Build Frontend 步骤中，npm run build 之前加入 npm run type-check（该脚本已存在于 web/package.json）。保持步骤的 skip_build 条件与其余逻辑不变。\n\n## Validation\n\n- 通读修改后的 workflow：Build Frontend 在构建前执行类型检查\n- 在 web 目录本地运行 npm run type-check 确认当前代码基线通过；若存在存量类型错误，先报告数量与位置，不在本修复中擅自大范围重构"
+    },
+    {
+      "id": "db-credentials-committed",
+      "title": "明文提交的数据库管理员凭据让仓库读取权限等价于内网数据库管理员权限",
+      "severity": "High",
+      "reason": "ConvenientSystem.Api/appsettings.json 被 git 跟踪，其中一条连接串以内网服务器地址加 sa 账号明文密码的形式保存（另一条本地 LocalDB 连接串同样内置账号密码）。后果：任何能读取该仓库的人直接获得内网数据库 sysadmin 级凭据与服务器地址，且密码已随历史提交留存，仅删除当前文件不能使其失效。属版本库中确定存在的明文凭据，非推测风险。",
+      "dimensionRefs": [
+        "controlled-execution"
+      ],
+      "subdimensionRefs": [
+        "permission-boundary"
+      ],
+      "expectedArtifact": "Config",
+      "expectedOutput": [
+        "Update the existing Config owner identified by the reviewed evidence and retain a focused validation result."
+      ],
+      "aiFixPrompt": "/better-harness 修复这个问题\n\n把 ConvenientSystem.Api/appsettings.json 两个连接串中的账号密码移出 git 跟踪文件：改为环境变量或部署侧注入（项目内已有先例——ConvenientSystem.Api/ServicesExtent.cs 对 JWT 密钥采用环境变量优先的回退模式，可按同样方式在配置读取处注入连接串），本地开发值放入不入库的位置。同时检查其他被跟踪的 appsettings 副本是否含相同凭据。凭据修复必须包含吊销或轮换：轮换已暴露的内网 sa 密码；历史提交中的旧密码只能靠轮换失效，不要尝试改写 git 历史。\n\n## Validation\n\n- git grep 在所有跟踪文件中检索原密码，结果为 0\n- 应用以注入后的连接串启动并成功连接数据库\n- 内网 sa 密码已轮换，旧密码验证失效"
+    },
+    {
+      "id": "mass-change-uncommitted",
+      "title": "约 4 万行新功能与重构未提交，成果无回滚点且工作区损坏即丢失",
+      "severity": "Medium",
+      "reason": "证据包工作树差异度量：175 个变更文件、40941 行（125 个核心文件命中），其中 84 个未跟踪文件承载桌面端重组后的全部新目录结构与聊天功能全链路，91 个已跟踪文件被修改，没有任何提交边界覆盖这批变更。后果：成果只存在于工作区副本，磁盘故障或误操作将造成不可恢复的丢失；也无法按提交粒度回滚、对比或在流水线中获得修订绑定的验收。属当前仓库状态的事实。",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ],
+      "subdimensionRefs": [
+        "rollback-recovery"
+      ],
+      "expectedOutput": [
+        "Update the existing Document owner identified by the reviewed evidence and retain a focused validation result."
+      ],
+      "aiFixPrompt": "/better-harness 修复这个问题\n\n把当前未提交的大规模变更按功能边界分批提交：桌面端目录重组、聊天功能全链路（Hub、Controller、Service、实体、迁移脚本、前端页面）、API 在线追踪等各自成为独立提交，提交说明写清每批内容；先 git add 对应路径再逐批 commit。不要把全部文件一次性粗放提交；bin、exe、构建日志等构建产物与本次评审产生的报告文件不入库，以当前忽略规则与 git status 实际输出为准。\n\n## Validation\n\n- git status 干净（无未跟踪源码、无未提交修改）\n- git log --oneline 展示按功能划分的提交序列\n- 抽查任一批次 git show --stat 确认该提交只含对应功能文件"
+    }
+  ]
+}

@@ -26,14 +26,23 @@ namespace ConvenientSystem.Service.Common
         /// <summary>
         /// 可个性化配置项清单（硬编码元数据 + 默认值）。
         /// </summary>
-        private static readonly (string Key, string DisplayName, string? Description, string InputType, string Category, int SortOrder, string DefaultValue)[] ConfigMetadata =
+        private static readonly (string Key, string DisplayName, string? Description, string InputType, string Category, int SortOrder, string DefaultValue, List<UserConfigOptionDto>? Options)[] ConfigMetadata =
         {
-            ("AppSettings.EnableLock", "锁屏功能", "开启后空闲超时自动锁屏", "switch", "锁屏设置", 1, "true"),
-            ("AppSettings.LockTimeout", "锁屏超时(秒)", "无操作多久后自动锁屏", "number", "锁屏设置", 2, "120"),
-            ("UI.SidebarCollapsed", "侧栏折叠", "左侧菜单是否折叠", "switch", "界面偏好", 1, "true"),
-            ("UI.RememberTabs", "标签记忆", "刷新后是否恢复上次打开的标签", "switch", "界面偏好", 2, "true"),
-            ("UI.NavMode", "导航模式", "breadcrumb(面包屑) / tabs(多标签)", "text", "界面偏好", 3, "breadcrumb"),
-            ("UI.ThemeMode", "主题模式", "light / dark / system", "text", "界面偏好", 4, "light"),
+            ("AppSettings.EnableLock", "锁屏功能", "开启后空闲超时自动锁屏", "switch", "锁屏设置", 1, "true", null),
+            ("AppSettings.LockTimeout", "锁屏超时(秒)", "无操作多久后自动锁屏", "number", "锁屏设置", 2, "120", null),
+            ("UI.SidebarCollapsed", "侧栏折叠", "左侧菜单是否折叠", "switch", "界面偏好", 1, "true", null),
+            ("UI.RememberTabs", "标签记忆", "刷新后是否恢复上次打开的标签", "switch", "界面偏好", 2, "true", null),
+            ("UI.NavMode", "导航模式", "面包屑 / 多标签", "select", "界面偏好", 3, "breadcrumb", new List<UserConfigOptionDto>
+            {
+                new() { Value = "breadcrumb", Label = "面包屑" },
+                new() { Value = "tabs", Label = "多标签" },
+            }),
+            ("UI.ThemeMode", "主题模式", "浅色 / 深色 / 跟随系统", "select", "界面偏好", 4, "light", new List<UserConfigOptionDto>
+            {
+                new() { Value = "light", Label = "浅色" },
+                new() { Value = "dark", Label = "深色" },
+                new() { Value = "system", Label = "跟随系统" },
+            }),
         };
 
         public List<UserConfigGroupDto> GetMyConfig()
@@ -69,6 +78,7 @@ namespace ConvenientSystem.Service.Common
                     InputType = m.InputType,
                     Category = m.Category,
                     SortOrder = m.SortOrder,
+                    Options = m.Options,
                 };
             }).ToList();
 

@@ -49,5 +49,11 @@ namespace ConvenientSystem.Shared.Model.Common
     public class LoginStatusDto
     {
         public bool Enabled { get; set; }
+
+        /// <summary>用户头像（JWT 不再嵌入头像，心跳接口代而从此字段返回给在线追踪器）。</summary>
+        public string? Avatar { get; set; }
+
+        /// <summary>显示名称（心跳接口用于更新在线追踪器）。</summary>
+        public string? DisplayName { get; set; }
     }
 }

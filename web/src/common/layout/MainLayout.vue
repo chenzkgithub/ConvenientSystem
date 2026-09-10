@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Lock, Close, User, Delete, SwitchButton, ArrowDown, Search, Fold, Expand, Refresh, Operation, Sunny, Moon, Collection, Document } from '@element-plus/icons-vue'
 import MenuTree from '@/common/components/MenuTree.vue'
+import ChatBell from '@/common/components/ChatBell.vue'
+import ChatDialog from '@/common/components/ChatDialog.vue'
 import NoticeBell from '@/common/components/NoticeBell.vue'
 import NoticeAlert from '@/common/components/NoticeAlert.vue'
 import UpdateBanner from '@/common/components/UpdateBanner.vue'
@@ -16,6 +18,7 @@ import { useAuthStore } from '@/common/stores/auth'
 import { useTabsStore } from '@/common/stores/tabs'
 import { useThemeStore } from '@/common/stores/theme'
 import { useRecentStore } from '@/common/stores/recent'
+import { useChatStore } from '@/common/stores/chat'
 import { useUserPrefs } from '@/common/composables/useUserPrefs'
 import { useAppVersion } from '@/common/composables/useAppVersion'
 import {
@@ -36,6 +39,7 @@ const auth = useAuthStore()
 const tabsStore = useTabsStore()
 const themeStore = useThemeStore()
 const recentStore = useRecentStore()
+const chatStore = useChatStore()
 const { data: appVersion, fetch: fetchVersion } = useAppVersion()
 
 // ===== 侧栏折叠状态 =====
@@ -450,6 +454,9 @@ watch(
 
 onMounted(async () => {
   if (!menuStore.loaded) menuStore.load()
+  // 启动聊天实时连接（幂等：ChatView 进入时重复调用安全；
+  // 实时通道不可用时 store 内部自动降级为 REST 轮询）
+  void chatStore.start()
   // 拉取当前前端版本号（侧栏展示）
   await fetchVersion()
   // 登录后从数据库加载 UI 偏好并同步各 store
@@ -585,6 +592,8 @@ function formatRecentTime(ts: number): string {
               <component :is="tabsStore.rememberTabs ? Collection : Document" />
             </el-icon>
           </el-button>
+          <ChatBell />
+          <ChatDialog />
           <NoticeBell />
           <el-button v-if="lock.featureEnabled" :icon="Lock" @click="lock.lock()">立即锁屏</el-button>
           <!-- 点击用户名/箭头展开：个人资料 / 清理缓存 / 退出登录；点头像则放大查看 -->

@@ -1,7 +1,9 @@
+using ConvenientSystem.Api.Hubs;
 using ConvenientSystem.Service.Common;
 using ConvenientSystem.Shared.Model.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace ConvenientSystem.Api.Controllers.Common
 {
@@ -9,16 +11,19 @@ namespace ConvenientSystem.Api.Controllers.Common
     /// 系统通知用户端接口：任何已登录用户查看通知列表/未读数并标记已读。
     /// 仅要求已登录（[Authorize]），不挂菜单权限码——通知是所有用户的公共功能。
     /// 目标用户恒取自 JWT，不接受请求体传入，避免越权代他人标记已读。
+/// 新通知创建后通过 ChatHub 推 NoticeCreated 广播，前端秒级刷新铃铛/弹卡片。
     /// </summary>
     [Area("Common")]
     [Authorize]
     public class NoticeController : BaseController
     {
         private readonly INoticeService _service;
+        private readonly IHubContext<ChatHub> _hubContext;
 
-        public NoticeController(INoticeService service)
+        public NoticeController(INoticeService service, IHubContext<ChatHub> hubContext)
         {
             _service = service;
+            _hubContext = hubContext;
         }
 
         /// <summary>当前用户可见的通知列表（仅启用的，含已读状态）。</summary>
@@ -56,7 +61,25 @@ namespace ConvenientSystem.Api.Controllers.Common
         }
 
         /// <summary>
-        /// 取出 JWT 中的数据库用户 Id（与 ProfileController 一致：兜底登录返回 400 而非 401）。
+        /// 构建/部署完成通知：任何已登录用户可调用，创建一条系统通知（level=2 重要，前端 NoticeAlert 弹右上角卡片，不触发外部推送）。
+        /// 桌面端构建服务运行在本机，无法直接访问 INoticeService，故由前端检测到终态后代理调用。
+/// 创建后向全部在线连接推 NoticeCreated（无参数），前端秒级刷新铃铛/弹卡片。
+        /// </summary>
+        [HttpPost]
+        public async Task<IActionResult> BuildNotify([FromBody] BuildNotifyRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.Title)) return BadRequest(new { message = "标题不能为空" });
+            _service.CreateSystemNotice(
+                request.Title.Trim(),
+                (request.Content ?? string.Empty).Trim(),
+                level: 2);
+            await _hubContext.Clients.All.SendAsync("NoticeCreated");
+            return Ok();
+        }
+
+        /// <summary>
+        /// 取出 JWT 中的数据库用户 Id。兜底账号（userId=Guid.Empty）允许通过，
+        /// Service 层对不存在的用户返回空结果（0 条通知、空列表），不报 400。
         /// </summary>
         private bool TryGetDbUserId(out Guid userId, out ActionResult? error)
         {
@@ -67,15 +90,17 @@ namespace ConvenientSystem.Api.Controllers.Common
                 error = Unauthorized();
                 return false;
             }
-            if (id.Value == Guid.Empty)
-            {
-                userId = Guid.Empty;
-                error = BadRequest(new { message = "当前会话未关联数据库账号（数据库不可用时的兜底登录），无法查看通知" });
-                return false;
-            }
+            // 兜底账号（userId=Guid.Empty）允许通过，Service 返回空结果
             userId = id.Value;
             error = null;
             return true;
         }
     }
+}
+
+/// <summary>构建/部署完成通知请求体。</summary>
+public sealed class BuildNotifyRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
 }

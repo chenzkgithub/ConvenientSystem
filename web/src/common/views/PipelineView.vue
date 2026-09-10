@@ -7,6 +7,7 @@ import {
   Delete,
   ArrowUp,
   ArrowDown,
+  ArrowRight,
   Clock,
   Folder,
   Document,
@@ -31,7 +32,8 @@ import {
   type PipelineRunStatus,
   type PipelineStageRunStatus,
 } from '@/common/api/pipeline'
-import { selectFolder, selectSqlFile, type UniversalBuildType, type DeployTargetOS } from '@/common/api/universalBuild'
+import { selectFolder, selectSqlFile, getUniversalDefaultOutputDir, type UniversalBuildType, type DeployTargetOS } from '@/common/api/universalBuild'
+import { notifyBuildComplete } from '@/common/api/notice'
 
 // ============================ 常量 ============================
 
@@ -99,6 +101,8 @@ async function loadAll() {
       if (run.pipelineId && !(run.pipelineId in map)) map[run.pipelineId] = run
     }
     recentRuns.value = map
+    // 页面加载/刷新时接管运行中的流水线（含定时触发的运行，结束后能收到完成通知）
+    for (const run of Object.values(map)) watchRun(run)
   } catch (e: any) {
     ElMessage.error(`加载流水线列表失败：${e?.message || e}`)
   } finally {
@@ -106,9 +110,45 @@ async function loadAll() {
   }
 }
 
-/** 列表"阶段"列：类型徽标序列（构建→部署→数据库） */
-function stageBadges(p: PipelineDefinition): PipelineStageType[] {
-  return p.stages.map((s) => s.type)
+/** 列表"阶段"列：徽标显示步骤名称（空则回退子类型标签），颜色按阶段类型区分，悬停显示"名称 · 子类型" */
+function stageBadges(p: PipelineDefinition): { type: PipelineStageType; label: string; title: string }[] {
+  return p.stages.map((s) => {
+    const sub = stageSubLabel(s)
+    const name = s.name?.trim()
+    return {
+      type: s.type,
+      label: name || sub,
+      title: `${name || stageTypeLabel[s.type]} · ${sub}`,
+    }
+  })
+}
+
+/** 运行中流水线当前正在执行的阶段信息（含进度与步骤文本，阶段类型决定进度条颜色） */
+function runningStageInfo(p: PipelineDefinition): { current: number; total: number; name: string; percent?: number; stepText?: string; stageType?: PipelineStageType } | null {
+  const run = recentRunOf(p)
+  if (!run || run.status !== 'Running' || !run.stages?.length) return null
+  const idx = run.stages.findIndex((s) => s.status === 'Running')
+  const stage = run.stages[idx]
+  if (!stage) return null
+  return {
+    current: idx + 1,
+    total: run.stages.length,
+    name: stage.name,
+    percent: stage.progress,
+    stepText: stage.stepText,
+    stageType: p.stages[idx]?.type,
+  }
+}
+
+/** 阶段左侧导航里的子类型标签 */
+function stageSubLabel(stage: PipelineStage): string {
+  if (stage.type === 'Build') {
+    return buildTypeOptions.find((o) => o.value === stage.buildType)?.label ?? stage.buildType ?? '构建'
+  }
+  if (stage.type === 'Deploy') {
+    return stage.targetOS ?? '部署'
+  }
+  return stage.dbType ?? '数据库'
 }
 
 async function onDeletePipeline(p: PipelineDefinition) {
@@ -147,8 +187,8 @@ function createStage(type: PipelineStageType): PipelineStage {
     buildType: 'Web',
     projectDir: '',
     outputDir: '',
+    outputDirCustom: false,
     prePull: true,
-    packArtifact: false,
     explicitOutputDir: '',
     deployBuildType: 'Web',
     serviceName: '',
@@ -172,6 +212,8 @@ function openCreate() {
   editing.id = ''
   editing.name = '新流水线'
   editing.stages = [createStage('Build')]
+  activeStageIndex.value = 0
+  activeStage.value = editing.stages[0]
   editVisible.value = true
 }
 
@@ -183,6 +225,8 @@ function openEdit(p: PipelineDefinition) {
   editing.id = p.id ?? ''
   editing.name = p.name
   editing.stages = p.stages.map((s) => ({ ...s }))
+  activeStageIndex.value = 0
+  activeStage.value = editing.stages[0] ?? null
   editVisible.value = true
 }
 
@@ -207,8 +251,10 @@ function addStage(type: PipelineStageType) {
   editing.stages.push(createStage(type))
 }
 
-function removeStage(index: number) {
-  editing.stages.splice(index, 1)
+function addStageAndFocus(type: PipelineStageType) {
+  addStage(type)
+  activeStageIndex.value = editing.stages.length - 1
+  activeStage.value = editing.stages[activeStageIndex.value]
 }
 
 function moveStage(index: number, dir: -1 | 1) {
@@ -216,21 +262,106 @@ function moveStage(index: number, dir: -1 | 1) {
   if (target < 0 || target >= editing.stages.length) return
   const [item] = editing.stages.splice(index, 1)
   editing.stages.splice(target, 0, item)
+  // 如果移动的是当前选中阶段，同步索引与引用
+  if (activeStageIndex.value === index) {
+    activeStageIndex.value = target
+  } else if (activeStageIndex.value === target) {
+    activeStageIndex.value = index
+  }
+  activeStage.value = editing.stages[activeStageIndex.value] ?? null
 }
 
 async function pickStageDir(stage: PipelineStage, field: 'projectDir' | 'outputDir' | 'explicitOutputDir' | 'sqlSource') {
   try {
-    const dir = await selectFolder()
-    if (dir) stage[field] = dir
+    // 输入框已有路径时从该位置打开（后端 ResolveInitialDir：目录直用、文件取父目录）
+    const dir = await selectFolder(stage[field])
+    if (dir) {
+      stage[field] = dir
+      if (field === 'outputDir') stage.outputDirCustom = true
+    }
   } catch { /* 用户取消 */ }
 }
 
 /** 选择单个 SQL 脚本文件填入 sqlSource */
 async function pickSqlFile(stage: PipelineStage) {
   try {
-    const file = await selectSqlFile()
+    const file = await selectSqlFile(stage.sqlSource)
     if (file) stage.sqlSource = file
   } catch { /* 用户取消 */ }
+}
+
+/** 编辑弹窗当前选中的阶段索引 */
+const activeStageIndex = ref(0)
+/** 当前选中阶段的 ref（与 editing.stages[index] 保持同步，避免 computed 对象属性写入不可靠导致表单改不动） */
+const activeStage = ref<PipelineStage | null>(null)
+
+watch(
+  () => activeStageIndex.value,
+  (index) => {
+    activeStage.value = editing.stages[index] ?? null
+  },
+  { immediate: true },
+)
+
+/** 当前编辑阶段之前是否存在构建阶段：部署类型/服务名/远程目录默认值自动跟随最近构建产物 */
+const hasBuildBeforeActive = computed(() =>
+  editing.stages.slice(0, activeStageIndex.value).some((s) => s.type === 'Build'))
+
+/** 当前编辑阶段之前最近构建阶段的类型（跟随提示展示用） */
+const precedingBuildType = computed<UniversalBuildType | null>(() => {
+  for (let i = activeStageIndex.value - 1; i >= 0; i--) {
+    const s = editing.stages[i]
+    if (s.type === 'Build') return s.buildType ?? 'Web'
+  }
+  return null
+})
+
+/** 构建类型的中文标签（跟随提示展示用） */
+function buildTypeLabel(t: UniversalBuildType | null): string {
+  return buildTypeOptions.find((o) => o.value === t)?.label ?? t ?? ''
+}
+
+/** Build 阶段输出目录未手动指定时，根据阶段名和构建类型自动生成默认输出路径 */
+watch(
+  () => activeStage.value && activeStage.value.type === 'Build'
+    ? {
+        name: activeStage.value.name,
+        buildType: activeStage.value.buildType ?? 'Web',
+        outputDirCustom: activeStage.value.outputDirCustom ?? false,
+      }
+    : null,
+  async (cur, prev) => {
+    if (!cur || cur.outputDirCustom) return
+    if (prev && cur.name === prev.name && cur.buildType === prev.buildType) return
+    try {
+      const dir = await getUniversalDefaultOutputDir({ type: cur.buildType, name: cur.name })
+      const stage = activeStage.value
+      if (stage && stage.type === 'Build' && !(stage.outputDirCustom ?? false)) {
+        stage.outputDir = dir
+      }
+    } catch { /* 生成失败则保持空，由后端自动推断 */ }
+  },
+  { immediate: true },
+)
+
+/** 阶段类型切换时，若名称仍是默认标签则同步更新 */
+watch(
+  () => activeStage.value?.type,
+  (newType, oldType) => {
+    if (!activeStage.value || !newType || !oldType) return
+    if (activeStage.value.name === stageTypeLabel[oldType]) {
+      activeStage.value.name = stageTypeLabel[newType]
+    }
+  },
+)
+
+/** 删除阶段并自动切换到相邻阶段 */
+function removeStageWithSwitch(index: number) {
+  editing.stages.splice(index, 1)
+  if (activeStageIndex.value >= editing.stages.length) {
+    activeStageIndex.value = Math.max(0, editing.stages.length - 1)
+  }
+  activeStage.value = editing.stages[activeStageIndex.value] ?? null
 }
 
 async function onSave() {
@@ -242,20 +373,25 @@ async function onSave() {
     ElMessage.warning('至少配置一个阶段')
     return
   }
-  for (const s of editing.stages) {
+  for (let i = 0; i < editing.stages.length; i++) {
+    const s = editing.stages[i]
     if (!s.name.trim()) {
+      activeStageIndex.value = i
       ElMessage.warning('阶段名称不能为空')
       return
     }
     if (s.type === 'Build' && !s.projectDir?.trim()) {
+      activeStageIndex.value = i
       ElMessage.warning(`阶段【${s.name}】未配置项目目录`)
       return
     }
     if (s.type === 'Deploy' && !s.host?.trim()) {
+      activeStageIndex.value = i
       ElMessage.warning(`阶段【${s.name}】未配置服务器地址`)
       return
     }
     if (s.type === 'Sql' && !s.connectionString?.trim()) {
+      activeStageIndex.value = i
       ElMessage.warning(`阶段【${s.name}】未配置数据库连接串`)
       return
     }
@@ -295,13 +431,7 @@ function startPolling() {
       if (run) currentRun.value = run
       if (run && run.status !== 'Running') {
         stopPolling()
-        const ok = run.status === 'Success'
-        notifyDone(
-          ok ? '流水线运行成功' : `流水线${runStatusText(run.status)}`,
-          `${run.pipelineName} · ${runElapsedText(run)}`,
-          ok ? 'success' : 'error',
-        )
-        // 运行结束：刷新列表"最近运行"列
+        // 运行结束：刷新列表"最近运行"列（完成通知由视图级运行监听统一发送，弹窗开不开都能收到且不重复）
         void refreshRecentRuns()
       }
     } catch { /* 网络抖动静默，下次轮询重试 */ }
@@ -335,6 +465,7 @@ async function onExecute(p: PipelineDefinition) {
     currentRun.value = recent
     runVisible.value = true
     startPolling()
+    watchRun(recent)
     await nextTick()
     scrollToLogBottom()
     return
@@ -345,6 +476,7 @@ async function onExecute(p: PipelineDefinition) {
     recentRuns.value = { ...recentRuns.value, [p.id]: run }
     runVisible.value = true
     startPolling()
+    watchRun(run)
     ElMessage.success(`流水线【${run.pipelineName}】已启动`)
     await nextTick()
     scrollToLogBottom()
@@ -408,6 +540,8 @@ interface PipelineRunStageLite {
   message?: string
   startTime?: string
   completedTime?: string
+  progress?: number
+  stepText?: string
 }
 
 const diagramStages = computed<StageNode[]>(() => {
@@ -418,7 +552,7 @@ const diagramStages = computed<StageNode[]>(() => {
   return run.stages.map((s) => ({
     name: s.name,
     type: typeById.get(s.stageId),
-    run: { status: s.status, message: s.message, startTime: s.startTime, completedTime: s.completedTime },
+    run: { status: s.status, message: s.message, startTime: s.startTime, completedTime: s.completedTime, progress: s.progress, stepText: s.stepText },
   }))
 })
 
@@ -468,11 +602,33 @@ function formatDateTime(v?: string): string {
   return t == null ? '' : new Date(t).toLocaleString('zh-CN', { hour12: false })
 }
 
+/** 时刻文本（HH:mm:ss） */
+function formatClock(v?: string): string {
+  const t = parseTime(v)
+  return t == null ? '' : new Date(t).toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+/** 起止区间：运行中显示"开始时刻 → 运行中"；跨天时两端补日期（如 9/9 22:10 → 9/10 00:03） */
+function formatRunRange(run: PipelineRun): string {
+  const start = parseTime(run.startTime)
+  if (start == null) return ''
+  const s = new Date(start)
+  const startText = `${s.getMonth() + 1}/${s.getDate()} ${formatClock(run.startTime)}`
+  if (run.status === 'Running') return `${startText} → 运行中`
+  const end = parseTime(run.completedTime)
+  if (end == null) return startText
+  const e = new Date(end)
+  const sameDay = s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth() && s.getDate() === e.getDate()
+  const endText = `${sameDay ? '' : `${e.getMonth() + 1}/${e.getDate()} `}${formatClock(run.completedTime)}`
+  return `${startText} → ${endText}`
+}
+
 function formatDuration(ms: number): string {
   if (ms < 0) ms = 0
   const s = Math.floor(ms / 1000)
   if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m${String(s % 60).padStart(2, '0')}s`
 }
 
 function runElapsedText(run: PipelineRun): string {
@@ -489,12 +645,86 @@ function stageElapsedText(node: StageNode): string {
   return formatDuration(end - start)
 }
 
+/** 阶段节点状态行文本：开始时刻 · 耗时（运行中耗时跳动） */
+function stageClockText(node: StageNode): string {
+  const clock = formatClock(node.run?.startTime)
+  const elapsed = stageElapsedText(node)
+  if (clock && elapsed) return `${clock} · ${elapsed}`
+  return clock || elapsed
+}
+
+/** 节点悬浮详情：名称 + 起止时刻 + 耗时 + 消息 */
+function stageNodeTitle(node: StageNode): string {
+  const lines = [node.name]
+  if (node.run?.startTime) lines.push(`开始 ${formatDateTime(node.run.startTime)}`)
+  if (node.run?.completedTime) lines.push(`结束 ${formatDateTime(node.run.completedTime)}`)
+  const elapsed = stageElapsedText(node)
+  if (elapsed) lines.push(`耗时 ${elapsed}`)
+  if (node.run?.message) lines.push(node.run.message)
+  return lines.join('\n')
+}
+
 // ============================ 通知 ============================
 
 function notifyDone(title: string, message: string, type: 'success' | 'error') {
   ElNotification({ title, message, type, duration: 5000 })
   if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
     try { new Notification(title, { body: message }) } catch { /* WebView2 不支持时静默 */ }
+  }
+  // 同步创建系统通知：右上角弹卡片（NoticeAlert，level=2）+ 铃铛未读，离线/其他页面也能看到
+  void notifyBuildComplete(title, message)
+}
+
+// ============================ 运行监听（视图级完成通知） ============================
+
+/** 被监视的运行：runId → 流水线名（进入终态发完通知后移除） */
+const watchedRuns = new Map<string, string>()
+let watchTimer: number | null = null
+
+/** 监视一个运行中的流水线：结束后发完成通知（执行弹窗关闭也不受影响） */
+function watchRun(run: PipelineRun) {
+  if (run.status !== 'Running') return
+  watchedRuns.set(run.id, run.pipelineName)
+  startWatchTimer()
+}
+
+function startWatchTimer() {
+  if (watchTimer != null) return
+  watchTimer = window.setInterval(async () => {
+    if (watchedRuns.size === 0) return stopWatchTimer()
+    try {
+      const runs = await getPipelineRuns(undefined, 100)
+      // 刷新列表"最近运行"列（弹窗轮询停止后列表状态由这里兑底刷新）
+      const map: Record<string, PipelineRun> = {}
+      for (const run of runs) {
+        if (run.pipelineId && !(run.pipelineId in map)) map[run.pipelineId] = run
+      }
+      recentRuns.value = map
+      // 同时接管列表中新出现的运行中流水线（如定时触发的运行），结束后同样能收到通知
+      for (const run of runs) {
+        if (run.status === 'Running') watchedRuns.set(run.id, run.pipelineName)
+      }
+      // 翻转检测：被监视的运行进入终态 → 发通知（快照独立于 recentRuns，弹窗轮询刷新列表不影响）
+      for (const [runId, pipelineName] of [...watchedRuns.entries()]) {
+        const run = runs.find((r) => r.id === runId)
+        if (!run || run.status === 'Running') continue
+        watchedRuns.delete(runId)
+        const ok = run.status === 'Success'
+        notifyDone(
+          ok ? '流水线运行成功' : `流水线${runStatusText(run.status)}`,
+          `${pipelineName} · ${formatClock(run.completedTime) || formatClock(run.startTime)} 结束 · 总耗时 ${runElapsedText(run)}`,
+          ok ? 'success' : 'error',
+        )
+      }
+      if (watchedRuns.size === 0) stopWatchTimer()
+    } catch { /* 网络抖动静默，下次轮询重试 */ }
+  }, 3000)
+}
+
+function stopWatchTimer() {
+  if (watchTimer != null) {
+    window.clearInterval(watchTimer)
+    watchTimer = null
   }
 }
 
@@ -535,6 +765,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPolling()
+  stopWatchTimer()
+  // 监视快照随页面销毁一并清空（切回页面时 loadAll 会重新接管仍在运行的流水线）
+  watchedRuns.clear()
   if (tickTimer != null) window.clearInterval(tickTimer)
 })
 </script>
@@ -543,7 +776,7 @@ onUnmounted(() => {
   <div class="pipeline-view">
     <!-- 工具栏 -->
     <div class="toolbar">
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建流水线</el-button>
+      <el-button v-if="$has('pipeline:add')" type="primary" :icon="Plus" @click="openCreate">新建流水线</el-button>
       <el-button :icon="Refresh" :loading="listLoading" @click="loadAll">刷新</el-button>
       <span class="toolbar-tip">流水线定义保存在本机 exe 目录 pipelines.json，重装不丢失</span>
     </div>
@@ -567,19 +800,35 @@ onUnmounted(() => {
 
         <div v-if="p.stages.length" class="pipe-flow">
           <template v-for="(t, i) in stageBadges(p)" :key="i">
-            <span v-if="i > 0" class="flow-link"></span>
-            <span class="type-badge" :class="`type-${t.toLowerCase()}`" :title="stageTypeLabel[t]">{{ stageTypeLabel[t] }}</span>
+            <span class="type-badge" :class="`type-${t.type.toLowerCase()}`" :title="t.title">{{ t.label }}</span>
+            <el-icon v-if="i < stageBadges(p).length - 1" class="flow-arrow"><ArrowRight /></el-icon>
           </template>
         </div>
 
+        <div v-if="runningStageInfo(p)" class="pipe-running-stage">
+          <el-icon class="spin"><Loading /></el-icon>
+          <span>阶段 {{ runningStageInfo(p)!.current }}/{{ runningStageInfo(p)!.total }} · {{ runningStageInfo(p)!.name }} · {{ runningStageInfo(p)!.percent ?? 0 }}%</span>
+        </div>
+
+        <!-- 运行中卡片：当前阶段进度条（构建=蓝 / 部署、数据库=橙，与通用构建页一致） -->
+        <div v-if="runningStageInfo(p)" class="pipe-run-progress">
+          <el-progress
+            :percentage="Math.min(runningStageInfo(p)!.percent ?? 0, 100)"
+            :stroke-width="5"
+            :show-text="false"
+            :status="runningStageInfo(p)!.stageType === 'Build' ? undefined : 'warning'"
+          />
+        </div>
+
         <div class="pipe-meta">
-          <span v-if="recentRunOf(p)" class="pipe-recent">{{ formatDateTime(recentRunOf(p)!.startTime) }} · {{ runElapsedText(recentRunOf(p)!) }}</span>
+          <span v-if="recentRunOf(p)" class="pipe-recent" :title="`${formatRunRange(recentRunOf(p)!)} · ${runElapsedText(recentRunOf(p)!)}`">{{ formatRunRange(recentRunOf(p)!) }} · {{ runElapsedText(recentRunOf(p)!) }}</span>
           <span class="pipe-update" :title="formatDateTime(p.updateTime)">更新 {{ formatDateTime(p.updateTime) }}</span>
         </div>
 
         <div class="pipe-actions">
           <el-tooltip :content="isPipelineRunning(p) ? '查看运行' : '执行'" placement="top">
             <el-button
+              v-if="$has('pipeline:run')"
               size="small"
               circle
               :type="isPipelineRunning(p) ? 'warning' : 'success'"
@@ -594,10 +843,26 @@ onUnmounted(() => {
             <el-button size="small" circle :icon="Document" @click="openHistory(p)" />
           </el-tooltip>
           <el-tooltip content="编辑" placement="top">
-            <el-button size="small" circle type="primary" :icon="Edit" :disabled="isPipelineRunning(p)" @click="openEdit(p)" />
+            <el-button
+              v-if="$has('pipeline:edit')"
+              size="small"
+              circle
+              type="primary"
+              :icon="Edit"
+              :disabled="isPipelineRunning(p)"
+              @click="openEdit(p)"
+            />
           </el-tooltip>
           <el-tooltip content="删除" placement="top">
-            <el-button size="small" circle type="danger" :icon="Delete" :disabled="isPipelineRunning(p)" @click="onDeletePipeline(p)" />
+            <el-button
+              v-if="$has('pipeline:delete')"
+              size="small"
+              circle
+              type="danger"
+              :icon="Delete"
+              :disabled="isPipelineRunning(p)"
+              @click="onDeletePipeline(p)"
+            />
           </el-tooltip>
         </div>
       </div>
@@ -620,68 +885,99 @@ onUnmounted(() => {
         <span v-if="dirty" class="dirty-tip">● 有未保存修改</span>
       </div>
 
-      <div class="stage-list">
-        <div v-for="(stage, i) in editing.stages" :key="stage.id" class="stage-card" :class="{ 'is-locked': editingRunning }">
-          <div class="stage-card-head">
-            <span class="stage-index">{{ i + 1 }}</span>
-            <el-input v-model="stage.name" class="stage-name-input" size="small" placeholder="阶段名称" maxlength="30" :disabled="editingRunning" />
-            <el-tag size="small" :type="stage.type === 'Build' ? 'primary' : stage.type === 'Sql' ? 'warning' : 'success'" effect="plain">{{ stageTypeLabel[stage.type] }}</el-tag>
-            <div class="stage-actions">
-              <el-button size="small" text :icon="ArrowUp" :disabled="i === 0 || editingRunning" @click="moveStage(i, -1)" />
-              <el-button size="small" text :icon="ArrowDown" :disabled="i === editing.stages.length - 1 || editingRunning" @click="moveStage(i, 1)" />
-              <el-button size="small" text type="danger" :icon="Delete" :disabled="editingRunning" @click="removeStage(i)" />
+      <div class="edit-body">
+        <!-- 左栏：阶段导航 -->
+        <div class="edit-nav">
+          <div class="nav-list">
+            <div
+              v-for="(stage, i) in editing.stages"
+              :key="stage.id"
+              class="nav-item"
+              :class="[
+                `is-${stage.type.toLowerCase()}`,
+                { 'is-active': activeStageIndex === i },
+              ]"
+              @click="activeStageIndex = i"
+            >
+              <span class="nav-index">{{ i + 1 }}</span>
+              <span class="nav-type-dot" />
+              <div class="nav-info">
+                <span class="nav-name">{{ stage.name || '未命名' }}</span>
+                <span class="nav-label">{{ stageSubLabel(stage) }}</span>
+              </div>
             </div>
           </div>
+          <!-- 左栏底部：添加阶段 -->
+          <div v-if="!editingRunning" class="add-stage-group">
+            <el-button plain :icon="Plus" @click="addStageAndFocus('Build')">构建</el-button>
+            <el-button plain :icon="Plus" @click="addStageAndFocus('Deploy')">部署</el-button>
+            <el-button plain :icon="Plus" @click="addStageAndFocus('Sql')">数据库</el-button>
+          </div>
+        </div>
 
-          <!-- 构建阶段表单 -->
-          <el-form v-if="stage.type === 'Build'" label-width="82px" size="small" class="stage-form" :disabled="editingRunning">
+        <!-- 右栏：当前阶段表单 -->
+        <div class="edit-content">
+          <div v-if="activeStage && editing.stages.length > 0" class="content-scroll">
+            <div class="content-header">
+              <el-input v-model="activeStage.name" class="content-name-input" size="small" placeholder="阶段名称" maxlength="30" :disabled="editingRunning" />
+              <el-tag size="small" :type="activeStage.type === 'Build' ? 'primary' : activeStage.type === 'Sql' ? 'warning' : 'success'" effect="plain">{{ stageTypeLabel[activeStage.type] }}</el-tag>
+            </div>
+
+          <el-form v-if="activeStage.type === 'Build'" label-width="82px" size="small" class="stage-form" :disabled="editingRunning">
+            <el-form-item label="项目目录">
+              <el-input
+                v-model="activeStage.projectDir"
+                :placeholder="activeStage.buildType === 'Installer'
+                  ? '安装脚本 .iss 所在目录；留空 = 继承上一步项目目录'
+                  : '本地项目根目录；留空 = 使用上一步骤输出目录'"
+              >
+                <template #append>
+                  <el-button :icon="Folder" @click="pickStageDir(activeStage, 'projectDir')" />
+                </template>
+              </el-input>
+            </el-form-item>
             <el-row :gutter="12">
               <el-col :span="12">
                 <el-form-item label="构建类型">
-                    <el-select v-model="stage.buildType" style="width: 100%;">
+                    <el-select v-model="activeStage.buildType" style="width: 100%;">
                       <el-option v-for="opt in buildTypeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
                     </el-select>
                   </el-form-item>
               </el-col>
               <el-col :span="12">
                 <el-form-item label="输出目录">
-                    <el-input v-model="stage.outputDir" placeholder="留空自动推断">
+                    <el-input
+                      v-model="activeStage.outputDir"
+                      placeholder="留空自动推断"
+                      @change="activeStage.outputDirCustom = (activeStage.outputDir ?? '').trim() !== ''"
+                    >
                       <template #append>
-                        <el-button :icon="Folder" @click="pickStageDir(stage, 'outputDir')" />
+                        <el-button :icon="Folder" @click="pickStageDir(activeStage, 'outputDir')" />
                       </template>
                     </el-input>
                   </el-form-item>
               </el-col>
             </el-row>
-            <el-form-item label="项目目录">
-              <el-input v-model="stage.projectDir" placeholder="本地项目根目录">
-              <template #append>
-                <el-button :icon="Folder" @click="pickStageDir(stage, 'projectDir')" />
-              </template>
-            </el-input>
-          </el-form-item>
-              <div class="stage-options">
-                <el-checkbox v-model="stage.prePull">构建前拉取代码（git pull）</el-checkbox>
-                <el-checkbox v-model="stage.packArtifact">成功后打压缩包</el-checkbox>
-              </div>
-            </el-form>
+            <div class="stage-options">
+              <el-checkbox v-model="activeStage.prePull">构建前拉取代码（git pull）</el-checkbox>
+            </div>
+          </el-form>
 
-          <!-- 部署阶段表单 -->
-          <el-form v-else-if="stage.type === 'Deploy'" label-width="82px" size="small" class="stage-form" :disabled="editingRunning">
+          <el-form v-if="activeStage.type === 'Deploy'" label-width="82px" size="small" class="stage-form" :disabled="editingRunning">
             <el-row :gutter="12">
               <el-col :span="12">
                 <el-form-item label="服务器">
-                    <el-input v-model="stage.host" placeholder="SSH 服务器地址" />
+                    <el-input v-model="activeStage.host" placeholder="SSH 服务器地址" />
                   </el-form-item>
               </el-col>
               <el-col :span="6">
                 <el-form-item label="用户名">
-                    <el-input v-model="stage.userName" placeholder="root" />
+                    <el-input v-model="activeStage.userName" placeholder="root" />
                   </el-form-item>
               </el-col>
               <el-col :span="6">
                 <el-form-item label="目标系统">
-                    <el-select v-model="stage.targetOS" style="width: 100%;">
+                    <el-select v-model="activeStage.targetOS" style="width: 100%;">
                       <el-option label="Linux" value="Linux" />
                       <el-option label="Windows" value="Windows" />
                     </el-select>
@@ -691,80 +987,82 @@ onUnmounted(() => {
             <el-row :gutter="12">
               <el-col :span="12">
                 <el-form-item label="部署目录">
-                    <el-input v-model="stage.explicitOutputDir" placeholder="留空 = 上一个构建阶段的产物目录">
+                    <el-input v-model="activeStage.explicitOutputDir" placeholder="留空 = 上一个构建阶段的产物目录">
                       <template #append>
-                        <el-button :icon="Folder" @click="pickStageDir(stage, 'explicitOutputDir')" />
+                        <el-button :icon="Folder" @click="pickStageDir(activeStage, 'explicitOutputDir')" />
                       </template>
                     </el-input>
                   </el-form-item>
               </el-col>
               <el-col :span="6">
                 <el-form-item label="站点名">
-                    <el-input v-model="stage.siteName" placeholder="convenient" />
+                    <el-input v-model="activeStage.siteName" placeholder="convenient" />
                   </el-form-item>
               </el-col>
               <el-col :span="6">
-                <el-form-item label="构建类型">
-                    <el-select v-model="stage.deployBuildType" style="width: 100%;">
+                <el-form-item label="部署类型">
+                    <!-- 前面有构建阶段时自动跟随构建产物（后端同一规则），无需也无法手选 -->
+                    <el-select v-if="!hasBuildBeforeActive" v-model="activeStage.deployBuildType" style="width: 100%;">
                       <el-option v-for="opt in buildTypeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
                     </el-select>
+                    <el-input v-else :model-value="`跟随构建 · ${buildTypeLabel(precedingBuildType)}`" disabled />
                   </el-form-item>
               </el-col>
             </el-row>
             <el-row :gutter="12">
               <el-col :span="8">
                 <el-form-item label="服务名">
-                    <el-input v-model="stage.serviceName" placeholder="留空自动推断" />
+                    <el-input v-model="activeStage.serviceName" placeholder="留空自动推断" />
                   </el-form-item>
               </el-col>
               <el-col :span="8">
                 <el-form-item label="远程目录">
-                    <el-input v-model="stage.remoteDir" placeholder="留空自动推断" />
+                    <el-input v-model="activeStage.remoteDir" placeholder="留空自动推断" />
                   </el-form-item>
               </el-col>
               <el-col :span="8">
                 <el-form-item label="部署路径">
-                    <el-input v-model="stage.deployPath" placeholder="留空用默认" />
+                    <el-input v-model="activeStage.deployPath" placeholder="留空用默认" />
                   </el-form-item>
               </el-col>
             </el-row>
             <div class="stage-options">
-              <el-checkbox v-model="stage.verifyHealth">部署后健康检查</el-checkbox>
-              <el-checkbox v-model="stage.keepDatabase">保留数据库容器</el-checkbox>
+              <el-checkbox v-model="activeStage.verifyHealth">部署后健康检查</el-checkbox>
+              <el-checkbox v-model="activeStage.keepDatabase">保留数据库容器</el-checkbox>
             </div>
             <div class="stage-hint">
-              SSH 密码不落配置：运行时自动读取本机已保存凭据（在通用构建页部署时勾选"记住密码"即可）
+              SSH 密码不落配置：运行时自动读取本机已保存凭据（在通用构建页部署时勾选"记住密码"即可）；
+              前面有构建阶段时，部署类型自动跟随构建产物（服务名/远程目录留空即按其默认值推断）
             </div>
           </el-form>
 
-          <!-- 数据库脚本阶段表单 -->
-          <el-form v-else-if="stage.type === 'Sql'" label-width="82px" size="small" class="stage-form" :disabled="editingRunning">
+          <el-form v-if="activeStage.type === 'Sql'" label-width="82px" size="small" class="stage-form" :disabled="editingRunning">
             <el-row :gutter="12">
               <el-col :span="12">
                 <el-form-item label="数据库类型">
-                    <el-select v-model="stage.dbType" style="width: 100%;">
+                    <el-select v-model="activeStage.dbType" style="width: 100%;">
                       <el-option v-for="t in dbTypeOptions" :key="t" :label="t" :value="t" />
                     </el-select>
                   </el-form-item>
               </el-col>
               <el-col :span="12">
                 <el-form-item label="事务包裹">
-                    <el-checkbox v-model="stage.useTransaction">每个文件一个事务，失败回滚</el-checkbox>
+                    <el-checkbox v-model="activeStage.useTransaction">每个文件一个事务，失败回滚</el-checkbox>
                   </el-form-item>
               </el-col>
             </el-row>
             <el-form-item label="连接串">
               <el-input
-                v-model="stage.connectionString"
+                v-model="activeStage.connectionString"
                 type="password"
                 show-password
                 placeholder="目标数据库连接串（Server=...;Database=...;User Id=...;Password=...）"
               />
             </el-form-item>
             <el-form-item label="SQL 文件">
-              <el-input v-model="stage.sqlSource" placeholder="SQL 文件或目录；留空 = 上一个构建阶段的产物目录">
+              <el-input v-model="activeStage.sqlSource" placeholder="SQL 文件或目录；留空 = 上一个构建阶段的产物目录">
                 <template #append>
-                  <el-button :icon="Document" @click="pickSqlFile(stage)" title="选择 SQL 文件" />
+                  <el-button :icon="Document" @click="pickSqlFile(activeStage)" title="选择 SQL 文件" />
                 </template>
               </el-input>
             </el-form-item>
@@ -773,19 +1071,23 @@ onUnmounted(() => {
               脚本含 CREATE PROCEDURE / BACKUP 等不能进事务的语句时请关闭事务包裹。
             </div>
           </el-form>
-        </div>
-
-        <!-- 添加阶段 -->
-        <div v-if="!editingRunning" class="add-stage">
-          <el-button plain :icon="Plus" @click="addStage('Build')">添加构建阶段</el-button>
-          <el-button plain :icon="Plus" @click="addStage('Deploy')">添加部署阶段</el-button>
-          <el-button plain :icon="Plus" @click="addStage('Sql')">添加数据库阶段</el-button>
+          </div>
+          <div class="stage-actions-bar">
+            <el-button size="small" text type="danger" :icon="Delete" :disabled="editingRunning || editing.stages.length <= 1" @click="removeStageWithSwitch(activeStageIndex)">删除此阶段</el-button>
+            <el-button size="small" text :icon="ArrowUp" :disabled="activeStageIndex === 0 || editingRunning" @click="moveStage(activeStageIndex, -1)" />
+            <el-button size="small" text :icon="ArrowDown" :disabled="activeStageIndex === editing.stages.length - 1 || editingRunning" @click="moveStage(activeStageIndex, 1)" />
+          </div>
         </div>
       </div>
 
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="editing.id ? !$has('pipeline:edit') : !$has('pipeline:add')"
+          @click="onSave"
+        >保存</el-button>
       </template>
     </el-dialog>
 
@@ -795,7 +1097,7 @@ onUnmounted(() => {
         <!-- 流水线图：横向阶段节点 -->
         <div class="pipeline-diagram">
           <template v-for="(node, i) in diagramStages" :key="i">
-            <div class="stage-node" :class="stageStatusClass(node.run?.status)" :title="node.run?.message || node.name">
+            <div class="stage-node" :class="stageStatusClass(node.run?.status)" :title="stageNodeTitle(node)">
               <div class="node-head">
                 <span class="node-index">
                   <el-icon v-if="node.run?.status === 'Success'"><CircleCheckFilled /></el-icon>
@@ -811,8 +1113,40 @@ onUnmounted(() => {
                   <span class="node-status-dot"></span>
                   <span>{{ stageStatusText(node.run?.status || 'Pending') }}</span>
                 </template>
-                <span v-if="stageElapsedText(node)" class="node-elapsed">{{ stageElapsedText(node) }}</span>
+                <span v-if="stageClockText(node)" class="node-elapsed">{{ stageClockText(node) }}</span>
               </div>
+              <!-- 运行中：当前步骤文本 + 进度条（构建=蓝 / 部署、数据库=橙，与通用构建页卡片一致） -->
+              <template v-if="node.run?.status === 'Running'">
+                <div v-if="node.run!.stepText" class="node-step-text" :title="node.run!.stepText">{{ node.run!.stepText }}</div>
+                <div class="node-progress">
+                  <el-progress
+                    :percentage="Math.min(node.run!.progress ?? 0, 100)"
+                    :stroke-width="5"
+                    :show-text="false"
+                    :status="node.type === 'Build' ? undefined : 'warning'"
+                  />
+                </div>
+              </template>
+              <!-- 失败：红色进度条停在失败位置 + 最后步骤文本 + 失败原因 -->
+              <template v-else-if="node.run?.status === 'Failed'">
+                <div v-if="node.run!.stepText" class="node-step-text is-fail" :title="node.run!.stepText">{{ node.run!.stepText }}</div>
+                <div class="node-progress">
+                  <el-progress
+                    :percentage="Math.min(node.run!.progress ?? 0, 100)"
+                    :stroke-width="5"
+                    :show-text="false"
+                    status="exception"
+                  />
+                </div>
+                <div v-if="node.run!.message" class="node-message is-fail" :title="node.run!.message">{{ node.run!.message }}</div>
+              </template>
+              <!-- 成功：结果摘要（产物大小/部署目标/SQL 统计）；跳过：原因 -->
+              <div
+                v-else-if="(node.run?.status === 'Success' || node.run?.status === 'Skipped') && node.run!.message"
+                class="node-message"
+                :class="{ 'is-skip': node.run!.status === 'Skipped' }"
+                :title="node.run!.message"
+              >{{ node.run!.message }}</div>
             </div>
             <div v-if="i < diagramStages.length - 1" class="stage-arrow" :class="arrowClass(diagramStages[i + 1]?.run?.status)"></div>
           </template>
@@ -826,8 +1160,8 @@ onUnmounted(() => {
             <span v-for="(s, i) in currentRun.stages" :key="i" class="seg" :class="stageStatusClass(s.status)"></span>
             <span class="seg-count">{{ currentRun.stages.filter((s) => s.status === 'Success').length }}/{{ currentRun.stages.length }}</span>
           </div>
-          <span class="summary-text">{{ formatDateTime(currentRun.startTime) }}</span>
-          <span class="summary-text">耗时 {{ runElapsedText(currentRun) }}</span>
+          <span class="summary-text">{{ formatRunRange(currentRun) }}</span>
+          <span class="summary-text">{{ running ? `已运行 ${runElapsedText(currentRun)}` : `总耗时 ${runElapsedText(currentRun)}` }}</span>
           <span v-if="currentRun.stages.some((s) => s.status === 'Failed')" class="summary-fail">
             失败：{{ currentRun.stages.find((s) => s.status === 'Failed')?.message }}
           </span>
@@ -848,30 +1182,33 @@ onUnmounted(() => {
       <el-empty v-else description="暂无运行数据" :image-size="70" />
 
       <template #footer>
-        <el-button v-if="running" type="danger" plain @click="onCancelRun">取消运行</el-button>
+        <el-button v-if="running && $has('pipeline:cancel')" type="danger" plain @click="onCancelRun">取消运行</el-button>
         <el-button :icon="Document" @click="openHistory()">运行历史</el-button>
         <el-button type="primary" @click="runVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
     <!-- 运行历史弹窗 -->
-    <el-dialog v-model="historyVisible" title="运行历史（最近 50 条）" width="760px">
+    <el-dialog v-model="historyVisible" title="运行历史（最近 50 条）" width="860px">
       <el-table :data="historyItems" size="small" stripe :max-height="480" v-loading="historyLoading">
-        <el-table-column label="流水线" width="140" show-overflow-tooltip>
+        <el-table-column label="流水线" width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.pipelineName }}</template>
         </el-table-column>
         <el-table-column label="开始时间" width="150">
           <template #default="{ row }">{{ formatDateTime(row.startTime) }}</template>
+        </el-table-column>
+        <el-table-column label="结束时间" width="150">
+          <template #default="{ row }">{{ formatDateTime(row.completedTime) || (row.status === 'Running' ? '运行中' : '—') }}</template>
         </el-table-column>
         <el-table-column label="状态" width="86">
           <template #default="{ row }">
             <el-tag :type="runStatusTagType(row.status)" size="small" effect="light">{{ runStatusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="耗时" width="72">
+        <el-table-column label="耗时" width="78">
           <template #default="{ row }">{{ runElapsedText(row as PipelineRun) }}</template>
         </el-table-column>
-        <el-table-column label="阶段" min-width="160">
+        <el-table-column label="阶段" min-width="140">
           <template #default="{ row }">
             <span class="history-stage-dots">
               <span
@@ -1006,20 +1343,36 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* 卡片内阶段流程条：胶囊 + 短连线 */
+/* 卡片内阶段流程条：胶囊 + 右箭头 */
 .pipe-flow {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  gap: 4px;
 }
 
-.flow-link {
-  width: 16px;
-  height: 2px;
-  border-radius: 1px;
-  background: #dcdfe6;
-  margin: 0 5px;
+.flow-arrow {
+  font-size: 12px;
+  color: #c0c4cc;
   flex-shrink: 0;
+}
+
+/* 运行中卡片：当前阶段提示 */
+.pipe-running-stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #409eff;
+  background: #ecf5ff;
+  padding: 4px 10px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+/* 运行中卡片：当前阶段进度条（紧贴提示行下方） */
+.pipe-run-progress {
+  margin-top: -6px;
 }
 
 .pipe-meta {
@@ -1046,10 +1399,11 @@ onUnmounted(() => {
   color: #c0c4cc;
 }
 
-/* 卡片操作区：细分割线下方、按钮均匀铺开 */
+/* 卡片操作区：细分割线下方、按钮居右并排 */
 .pipe-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 8px;
   border-top: 1px solid #f0f2f5;
   padding-top: 10px;
 }
@@ -1291,6 +1645,42 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* 运行中节点：当前步骤文本（如 [3/7] SFTP 上传到服务器）与进度条 */
+.node-step-text {
+  font-size: 11px;
+  color: #409eff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 失败时步骤文本变红（保留失败瞬间的步骤，与红色进度条呼应） */
+.node-step-text.is-fail {
+  color: #f56c6c;
+}
+
+.node-progress {
+  margin-top: -2px;
+}
+
+/* 终态节点结果/原因摘要：成功=灰、失败=红、跳过=更浅的灰 */
+.node-message {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #909399;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-message.is-fail {
+  color: #f56c6c;
+}
+
+.node-message.is-skip {
+  color: #c0c4cc;
+}
+
 /* ============================ 运行摘要条 ============================ */
 
 .run-summary {
@@ -1353,51 +1743,189 @@ onUnmounted(() => {
 
 /* ============================ 阶段配置（编辑弹窗） ============================ */
 
-.stage-list {
+.edit-body {
+  display: flex;
+  gap: 16px;
+  height: 440px;
+  min-height: 0;
+}
+
+/* --- 左栏：阶段导航 --- */
+
+.edit-nav {
+  width: 176px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.stage-card {
-  background: #fff;
+  padding: 4px;
+  background: #f5f7fa;
   border-radius: 8px;
-  border: 1px solid #e4e7ed;
-  padding: 10px 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.stage-card.is-locked {
-  opacity: 0.75;
+.nav-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.stage-card-head {
+.nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 
-.stage-index {
-  width: 22px;
-  height: 22px;
+.nav-item:hover {
+  background: #ebeef5;
+}
+
+.nav-item.is-active {
+  background: #ecf5ff;
+}
+
+/* 步骤之间用带线条的向下箭头指示流程方向 */
+.nav-item:not(:last-child) {
+  position: relative;
+}
+
+.nav-item:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 12px;
+  background: #c0c4cc;
+  z-index: 1;
+}
+
+.nav-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 7px);
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #c0c4cc;
+  z-index: 1;
+}
+
+.nav-index {
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: #409eff;
-  color: #fff;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: #c0c4cc;
+  color: #fff;
 }
 
-.stage-name-input {
-  width: 200px;
+.nav-item.is-build .nav-index { background: #409eff; }
+.nav-item.is-deploy .nav-index { background: #67c23a; }
+.nav-item.is-sql .nav-index { background: #e6a23c; }
+
+.nav-type-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #c0c4cc;
 }
 
-.stage-actions {
-  margin-left: auto;
+.nav-item.is-build .nav-type-dot { background: #409eff; }
+.nav-item.is-deploy .nav-type-dot { background: #67c23a; }
+.nav-item.is-sql .nav-type-dot { background: #e6a23c; }
+
+.nav-info {
   display: flex;
-  gap: 2px;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nav-name {
+  font-size: 13px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-label {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.2;
+}
+
+.nav-item.is-build .nav-label { color: #409eff; }
+.nav-item.is-deploy .nav-label { color: #67c23a; }
+.nav-item.is-sql .nav-label { color: #e6a23c; }
+
+/* --- 左栏底部：添加阶段 --- */
+
+.add-stage-group {
+  display: flex;
+  /* 176px 窄栏放不下三个按钮一行：el-button 的 white-space:nowrap 使其无法收缩，
+     会整体溢出并被 .edit-nav 的 overflow:hidden 裁剪（第三个按钮只剩 14px 残影）。
+     允许换行，放不下时自动折到下一行。 */
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #e4e7ed;
+  margin-top: auto;
+}
+
+.add-stage-group .el-button {
+  flex: 1;
+  font-size: 12px;
+  padding: 8px 6px;
+}
+
+/* --- 右栏：表单内容区 --- */
+
+.edit-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.content-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.content-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.content-name-input {
+  flex: 1;
+  max-width: 280px;
 }
 
 .stage-form {
@@ -1418,11 +1946,13 @@ onUnmounted(() => {
   color: #909399;
 }
 
-.add-stage {
+.stage-actions-bar {
   display: flex;
-  gap: 10px;
-  justify-content: center;
-  padding: 6px 0 2px;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
 }
 
 /* ============================ 运行日志 ============================ */

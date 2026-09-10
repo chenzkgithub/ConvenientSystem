@@ -238,7 +238,8 @@ BEGIN
     -- 构建发布（一级菜单）
     (61, NULL, N'构建发布', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
     (59, 61, N'系统版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
-    (60, 61, N'通用构建发布', N'/universal-build', 1, 1, 0, 1, 1, N'universal-build', N'/src/common/views/UniversalBuildView.vue', 3, 1),
+    (60, 61, N'通用构建发布', N'/universal-build', 1, 1, 0, 1, 1, N'universal-build', N'/src/common/views/UniversalBuildView.vue', 2, 1),
+    (63, 61, N'部署流水线', N'/pipeline', 0, 1, 0, 1, 1, N'pipeline', N'/src/common/views/PipelineView.vue', 3, 1),
     -- 常用工具（外链）
     (29, NULL, N'常用工具', NULL, 0, 1, 0, 1, 1, NULL, NULL, 6, 0),
     (30, 29, N'有道词典', N'https://note.youdao.com/web/#/file/WEBf6433cf7e1e375c6ce4268cefeff88ea/note/WEBa6c175a7e3dbc9e5540d70f3316691e2/', 1, 1, 1, 1, 1, NULL, NULL, 1, 1),
@@ -1288,7 +1289,8 @@ BEGIN
     (37, N'hangfire',         N'任务调度',   N'/src/common/views/HangfireView.vue',          N'/hangfire',         37),
     (38, N'web-package',      N'系统版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
     (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40),
-    (41, N'api-spec',          N'API文档生成',  N'/src/common/views/ApiSpecView.vue',         N'/api-spec',         41);
+    (41, N'api-spec',          N'API文档生成',  N'/src/common/views/ApiSpecView.vue',         N'/api-spec',         41),
+    (42, N'pipeline',          N'流水线',        N'/src/common/views/PipelineView.vue',        N'/pipeline',         42);
     SET IDENTITY_INSERT dbo.SysView OFF;
 END
 GO
@@ -1404,6 +1406,13 @@ BEGIN
     -- API文档生成（C# Controller 源码 → OpenAPI/Postman 等格式）
     (80, 41, N'api-spec',        N'查看API文档生成', 0),
     (81, 41, N'api-spec:export', N'导出API数据文件', 1),
+    -- 流水线
+    (82, 42, N'pipeline',           N'查看流水线', 0),
+    (83, 42, N'pipeline:add',       N'新增流水线', 1),
+    (84, 42, N'pipeline:edit',      N'编辑流水线', 2),
+    (85, 42, N'pipeline:delete',    N'删除流水线', 3),
+    (86, 42, N'pipeline:run',       N'运行流水线', 4),
+    (87, 42, N'pipeline:cancel',    N'取消运行',   5),
 
     SET IDENTITY_INSERT dbo.SysViewPermission OFF;
 END
@@ -1519,6 +1528,55 @@ INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
 SELECT r.Id, m.Id
 FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
 WHERE r.Code = N'admin' AND m.Name = N'api-spec'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
+GO
+
+-- ========== 老库补齐：流水线视图/菜单/权限点（行级幂等） ==========
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'pipeline')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'pipeline', N'流水线', N'/src/common/views/PipelineView.vue', N'/pipeline', 42);
+GO
+
+DECLARE @PipelineViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'pipeline');
+IF @PipelineViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'pipeline')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@PipelineViewId, N'pipeline', N'查看流水线', 0);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'pipeline:add')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@PipelineViewId, N'pipeline:add', N'新增流水线', 1);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'pipeline:edit')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@PipelineViewId, N'pipeline:edit', N'编辑流水线', 2);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'pipeline:delete')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@PipelineViewId, N'pipeline:delete', N'删除流水线', 3);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'pipeline:run')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@PipelineViewId, N'pipeline:run', N'运行流水线', 4);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'pipeline:cancel')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@PipelineViewId, N'pipeline:cancel', N'取消运行', 5);
+END
+GO
+
+-- 菜单：挂「构建发布」组下，排在「通用构建发布」之后
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'pipeline')
+    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type)
+    SELECT p.Id, N'部署流水线', N'/pipeline', 0, 1, 0, 1, 1, N'pipeline', N'/src/common/views/PipelineView.vue', 3, 1
+    FROM (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'构建发布' AND Page IS NULL AND Name IS NULL ORDER BY Id) p;
+GO
+
+-- 修正老数据：流水线改名并移到通用构建发布之后
+UPDATE dbo.SysMenu SET Title = N'部署流水线', SortOrder = 3 WHERE Name = N'pipeline' AND (Title <> N'部署流水线' OR SortOrder <> 3);
+UPDATE dbo.SysMenu SET SortOrder = 2 WHERE Name = N'universal-build' AND SortOrder <> 2;
+GO
+
+INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
+SELECT r.Id, m.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
+WHERE r.Code = N'admin' AND m.Name = N'pipeline'
   AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
 GO
 
@@ -1843,6 +1901,104 @@ EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'FinishedAt', N'结束时间'
 EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'DurationMs', N'耗时毫秒';
 EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'Error', N'异常信息';
 EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'CreatedAt', N'创建时间';
+GO
+
+-- ========== 即时聊天模块（企业通讯录模式单聊：会话 / 成员 / 消息 / 屏蔽） ==========
+
+-- 1. 会话表（单聊会话；双向归一 UserKey 唯一：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话）
+IF OBJECT_ID(N'dbo.ChatConversation') IS NULL
+BEGIN
+    CREATE TABLE dbo.ChatConversation (
+        Id              BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UserKey         NVARCHAR(100)       NOT NULL,                    -- 双向归一键（排序后两个 Guid 拼接）
+        LastMessageId   BIGINT              NOT NULL DEFAULT 0,          -- 最后一条消息 Id（0=尚无消息）
+        LastSenderId    UNIQUEIDENTIFIER    NULL,                        -- 最后一条消息发送者（判未读：非我发送且 Id>我的水位）
+        LastMessageTime DATETIME2           NULL,                        -- 最后一条消息时间
+        LastMessageText NVARCHAR(200)       NULL,                        -- 最后一条消息预览（超长截断）
+        CreateTime      DATETIME2           NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_ChatConversation_UserKey UNIQUE (UserKey)
+    );
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'ChatConversation', N'聊天会话表（单聊，双向归一）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'Id',              N'主键';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'UserKey',         N'双向归一键：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastMessageId',   N'最后一条消息 Id（0=尚无消息）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastSenderId',    N'最后一条消息发送者 Id（未读判断：非我发送且 Id > 我的已读水位）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastMessageTime', N'最后一条消息时间';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastMessageText', N'最后一条消息预览（会话列表展示，超长截断）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'CreateTime',      N'会话创建时间';
+GO
+
+-- 2. 会话成员表（每个会话两条成员记录：已读水位 / 免打扰 / 隐藏）
+IF OBJECT_ID(N'dbo.ChatConversationMember') IS NULL
+BEGIN
+    CREATE TABLE dbo.ChatConversationMember (
+        Id             BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        ConversationId BIGINT              NOT NULL,                    -- 关联 ChatConversation.Id
+        UserId         UNIQUEIDENTIFIER    NOT NULL,                    -- 关联 SysUser.Id
+        ReadMessageId  BIGINT              NOT NULL DEFAULT 0,          -- 已读水位：已读到的最后消息 Id
+        Muted          BIT                 NOT NULL DEFAULT 0,          -- 免打扰（仍计未读，不提醒）
+        Hidden         BIT                 NOT NULL DEFAULT 0,          -- 会话隐藏：删会话=隐藏，来新消息自动恢复
+        CreateTime     DATETIME2           NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_ChatMember UNIQUE (ConversationId, UserId)
+    );
+    CREATE INDEX IX_ChatMember_UserId ON dbo.ChatConversationMember(UserId);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'ChatConversationMember', N'聊天会话成员表（每会话两条，含已读水位/免打扰/隐藏）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Id',             N'主键';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'ConversationId', N'关联 ChatConversation.Id';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'UserId',         N'成员用户 Id（GUID，关联 SysUser.Id）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'ReadMessageId',  N'已读水位：已读到的最后消息 Id（未读数=水位之后的消息数）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Muted',          N'免打扰（仍计未读，前端不提醒）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Hidden',         N'会话隐藏（删除会话即隐藏，收到新消息自动恢复显示）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'CreateTime',     N'成员创建时间';
+GO
+
+-- 3. 消息表（按会话+Id 索引，倒序分页拉取历史）
+IF OBJECT_ID(N'dbo.ChatMessage') IS NULL
+BEGIN
+    CREATE TABLE dbo.ChatMessage (
+        Id             BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        ConversationId BIGINT              NOT NULL,                    -- 关联 ChatConversation.Id
+        SenderId       UNIQUEIDENTIFIER    NOT NULL,                    -- 发送者（GUID，关联 SysUser.Id）
+        Content        NVARCHAR(4000)      NOT NULL,                    -- 消息正文（纯文本）
+        CreateTime     DATETIME2           NOT NULL DEFAULT GETDATE()
+    );
+    CREATE INDEX IX_ChatMessage_Conv ON dbo.ChatMessage(ConversationId, Id DESC);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'ChatMessage', N'聊天消息表';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'Id',             N'主键（递增，兼作排序与已读水位）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'ConversationId', N'关联 ChatConversation.Id';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'SenderId',       N'发送者用户 Id（GUID，关联 SysUser.Id）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'Content',        N'消息正文（纯文本，超长截断）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'CreateTime',     N'发送时间';
+GO
+
+-- 4. 屏蔽名单表（通讯录模式下以屏蔽代替好友关系控制；任一方屏蔽则双向拒收）
+IF OBJECT_ID(N'dbo.ChatBlockList') IS NULL
+BEGIN
+    CREATE TABLE dbo.ChatBlockList (
+        Id             BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UserId         UNIQUEIDENTIFIER    NOT NULL,                    -- 屏蔽发起人（GUID，关联 SysUser.Id）
+        BlockedUserId  UNIQUEIDENTIFIER    NOT NULL,                    -- 被屏蔽人（GUID，关联 SysUser.Id）
+        CreateTime     DATETIME2           NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_ChatBlock UNIQUE (UserId, BlockedUserId)
+    );
+    CREATE INDEX IX_ChatBlock_Blocked ON dbo.ChatBlockList(BlockedUserId);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'ChatBlockList', N'聊天屏蔽名单（任一方屏蔽则双向拒收消息）';
+EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'Id',            N'主键';
+EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'UserId',        N'屏蔽发起人 Id（GUID，关联 SysUser.Id）';
+EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'BlockedUserId', N'被屏蔽人 Id（GUID，关联 SysUser.Id）';
+EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'CreateTime',    N'屏蔽时间';
 GO
 
 PRINT N'ConvenientSystem 数据库初始化完成';

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import {
@@ -118,24 +118,42 @@ const activeDesktopDesc = computed(() => splitDescParts(activeDesktopPackage.val
 // ========== 上传弹窗（Web / 桌面共用） ==========
 const uploadVisible = ref(false)
 const uploadLoading = ref(false)
+const uploadProgress = ref(0)
 const uploadForm = reactive({
   version: '',
   description: '',
   file: null as File | null,
 })
+const uploadRef = ref<{ clearFiles: () => void }>()
 
 function openUpload() {
   uploadForm.version = ''
   uploadForm.description = ''
   uploadForm.file = null
+  uploadProgress.value = 0
   uploadVisible.value = true
+  nextTick(() => uploadRef.value?.clearFiles())
+}
+
+/** 把版本号统一补齐为 4 段（Web 前端与桌面安装包都走 4 段制） */
+function normalizeVersion(v: string): string {
+  const parts = v.split('.').filter((s) => /^\d+$/.test(s))
+  if (parts.length < 2) return v
+  while (parts.length < 4) parts.push('0')
+  return parts.slice(0, 4).join('.')
+}
+
+/** 校验版本号格式：4 段数字 */
+function validateVersion(v: string): string | null {
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(v)) return '版本号必须是 4 段数字，如 1.0.0.0'
+  return null
 }
 
 function onFileChange(file: UploadFile) {
   uploadForm.file = file.raw ?? null
   if (!uploadForm.version && file.name) {
-    const match = file.name.match(/(\d+\.\d+\.\d+)/)
-    if (match) uploadForm.version = match[1]
+    const match = file.name.match(/(\d+\.\d+\.\d+(?:\.\d+)?)/)
+    if (match) uploadForm.version = normalizeVersion(match[1])
   }
 }
 
@@ -149,24 +167,46 @@ const uploadFileTip = computed(() =>
     ? '仅支持 .zip 格式，包含前端 dist 产物（index.html + assets/）'
     : '仅支持 .exe 格式，即 Inno Setup 打包生成的安装程序'
 )
+// 桌面安装包：服务端会从 exe 内嵌信息读出真实版本并以其为准。
+// 但浏览器无法解析 exe 的 PE 版本资源，上传前前端拿不到版本号，
+// 因此版本号仍然必填（也兼容服务端尚未部署自动识别的情况）。
+const versionAutoDetected = computed(() => activeTab.value === 'desktop')
 
 async function submitUpload() {
-  if (!uploadForm.version.trim()) return ElMessage.warning('请填写版本号')
+  const typedVersion = normalizeVersion(uploadForm.version.trim())
+  if (!typedVersion) return ElMessage.warning('请填写版本号')
+  const err = validateVersion(typedVersion)
+  if (err) return ElMessage.warning(err)
   if (!uploadForm.file) return ElMessage.warning('请选择文件')
 
   uploadLoading.value = true
+  uploadProgress.value = 0
+  const onProgress = (pct: number) => { uploadProgress.value = pct }
   try {
     if (activeTab.value === 'web') {
-      await uploadPackage(uploadForm.version.trim(), uploadForm.file, uploadForm.description.trim() || undefined)
+      await uploadPackage(typedVersion, uploadForm.file, uploadForm.description.trim() || undefined, onProgress)
       ElMessage.success('上传成功，已自动激活为新版本')
     } else {
-      await uploadDesktopPackage(uploadForm.version.trim(), uploadForm.file, uploadForm.description.trim() || undefined)
-      ElMessage.success('上传成功，已自动激活为新版本')
+      const dto = await uploadDesktopPackage(typedVersion, uploadForm.file, uploadForm.description.trim() || undefined, onProgress)
+      const actualVersion = dto?.version ?? ''
+      if (actualVersion && actualVersion !== typedVersion) {
+        // 服务端改用了安装包内嵌版本，必须醒目告知，否则用户无法得知实际激活的版本
+        ElMessage.warning({
+          message: `已按安装包内嵌版本激活为 ${actualVersion}（你填写的是 ${typedVersion}）`,
+          duration: 6000,
+        })
+      } else {
+        ElMessage.success(`上传成功，已激活版本 ${actualVersion || typedVersion}`)
+      }
     }
     uploadVisible.value = false
     loadCurrentTab()
-  } catch { /* 错误已由 request.ts 弹出提示 */ } finally {
+  } catch {
+    // 错误提示由 request.ts 弹出（上传用 noLoading 而非 silent，确保不会被吞掉）。
+    // 此处不关闭弹窗，便于用户看到原因后修正重试
+  } finally {
     uploadLoading.value = false
+    uploadProgress.value = 0
   }
 }
 
@@ -221,14 +261,16 @@ function openEdit(row: WebPackageDto | DesktopPackageDto) {
 }
 
 async function submitEdit() {
-  if (!editForm.version.trim()) return ElMessage.warning('请填写版本号')
   const isWeb = activeTab.value === 'web'
   editLoading.value = true
   try {
+    // 版本号不可修改：原样透传（后端 Update 要求非空，仅作占位），
+    // 不走 normalizeVersion——避免历史 3 段版本在编辑时被静默改写
+    const version = editForm.version.trim() || ' '
     if (isWeb) {
-      await updatePackage(editForm.id, editForm.version.trim(), editForm.description.trim() || undefined)
+      await updatePackage(editForm.id, version, editForm.description.trim() || undefined)
     } else {
-      await updateDesktopPackage(editForm.id, editForm.version.trim(), editForm.description.trim() || undefined)
+      await updateDesktopPackage(editForm.id, version, editForm.description.trim() || undefined)
     }
     ElMessage.success('已更新')
     editVisible.value = false
@@ -440,7 +482,15 @@ onMounted(() => {
     <CommonDialog v-model="uploadVisible" :title="activeTab === 'web' ? '上传版本包' : '上传桌面安装包'" width="560px">
       <el-form :model="uploadForm" label-width="90px">
         <el-form-item label="版本号" required>
-          <el-input v-model="uploadForm.version" placeholder="如 1.0.0" maxlength="50" />
+          <el-input
+            v-model="uploadForm.version"
+            :placeholder="versionAutoDetected ? '填 构建安装包.cmd 输出的版本号，如 1.0.1.7' : '如 1.0.0.0'"
+            maxlength="50"
+          />
+          <div v-if="versionAutoDetected" class="form-tip">
+            请填 <b>构建安装包.cmd 输出的版本号</b>（即安装包内 exe 的真实版本）。
+            服务端会校对安装包内嵌版本，不一致时以安装包为准并在上传成功后提示实际版本。
+          </div>
         </el-form-item>
         <el-form-item label="更新说明">
           <el-input
@@ -453,6 +503,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="文件" required>
           <el-upload
+            ref="uploadRef"
             :auto-upload="false"
             :limit="1"
             :accept="uploadAccept"
@@ -467,18 +518,24 @@ onMounted(() => {
             </template>
           </el-upload>
         </el-form-item>
+        <el-form-item v-if="uploadLoading && uploadProgress > 0" label="进度">
+          <el-progress :percentage="uploadProgress" :stroke-width="14" :text-inside="true" style="width: 100%;" />
+        </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="uploadVisible = false">取消</el-button>
-        <el-button type="primary" :loading="uploadLoading" @click="submitUpload">上传</el-button>
+        <el-button :disabled="uploadLoading" @click="uploadVisible = false">取消</el-button>
+        <el-button type="primary" :loading="uploadLoading && uploadProgress === 0" :disabled="uploadLoading && uploadProgress > 0" @click="submitUpload">
+          {{ uploadProgress > 0 ? `上传中 ${uploadProgress}%` : '上传' }}
+        </el-button>
       </template>
     </CommonDialog>
 
     <!-- 编辑弹窗 -->
     <CommonDialog v-model="editVisible" :title="activeTab === 'web' ? '编辑版本信息' : '编辑安装包信息'" width="480px">
       <el-form :model="editForm" label-width="90px">
-        <el-form-item label="版本号" required>
-          <el-input v-model="editForm.version" placeholder="如 1.0.0" maxlength="50" />
+        <el-form-item label="版本号">
+          <!-- 版本号只读展示：上传后不允许修改，只能编辑更新说明 -->
+          <el-input v-model="editForm.version" disabled />
         </el-form-item>
         <el-form-item label="更新说明">
           <el-input
@@ -527,6 +584,12 @@ onMounted(() => {
 .upload-tip {
   font-size: 12px;
   color: #909399;
+  margin-top: 4px;
+}
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
   margin-top: 4px;
 }
 
