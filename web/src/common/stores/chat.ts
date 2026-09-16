@@ -4,17 +4,19 @@ import type { HubConnection } from '@microsoft/signalr'
 import { useAuthStore } from '@/common/stores/auth'
 import {
   CHAT_EVENTS,
+  createChatGroup,
   createChatHubConnection,
   getChatConversations,
   getChatContacts,
   getChatMessages,
   getChatUnreadTotal,
+  isChatImagePath,
   markChatRead,
   openChatConversation,
   parseUserIdFromToken,
   sendChatMessage,
 } from '@/common/api/chat'
-import type { ChatConversationDto, ChatMessageDto, ChatOpenDto } from '@/common/api/chat'
+import type { ChatConversationDto, ChatGroupCreateRequest, ChatMessageDto, ChatOpenDto } from '@/common/api/chat'
 
 /** SignalR 不可用时的轮询间隔（ms） */
 const POLL_INTERVAL = 5_000
@@ -41,9 +43,13 @@ export const useChatStore = defineStore('chat', () => {
   const onlineIds = ref<Set<string>>(new Set())
   /** 当前打开的会话 Id（0 表示未打开） */
   const activeConversationId = ref(0)
+  /** 当前会话类型：0=单聊 1=群聊 */
+  const activeConversationType = ref(0)
+  /** 当前群聊信息（单聊时为空） */
+  const activeGroup = ref<{ conversationId: number; name: string; memberCount: number } | null>(null)
   /** 当前会话消息（正序）；切换会话时整体替换 */
   const messages = ref<ChatMessageDto[]>([])
-  /** 对方已读到的消息 Id（我方气泡"已读"标记用；0 表示未知） */
+  /** 对方已读到的消息 Id（我方气泡"已读"标记用；0 表示未知；群聊时不显示） */
   const peerReadMessageId = ref(0)
   /** 我的用户 Id（JWT 解析；空串时消息归属判断降级为全部按对方渲染） */
   const myUserId = ref('')
@@ -133,6 +139,8 @@ export const useChatStore = defineStore('chat', () => {
     })
     conn.on(CHAT_EVENTS.userOnline, (userId: string) => onlineIds.value.add(userId))
     conn.on(CHAT_EVENTS.userOffline, (userId: string) => onlineIds.value.delete(userId))
+    // 我方另一登录端清空了聊天记录（单方面删除多端同步）：当前会话则就地清空，会话列表预览同步置空
+    conn.on(CHAT_EVENTS.messagesCleared, (conversationId: number) => handleMessagesCleared(conversationId))
     // 新系统通知广播：转发 window 事件，NoticeBell 刷新角标、NoticeAlert 立即拉取弹卡片。
     // 通知与聊天共用本条 SignalR 连接（单连接多事件）；可见性/去重由各组件拉取时自行处理。
     conn.on(CHAT_EVENTS.noticeCreated, () => {
@@ -159,6 +167,14 @@ export const useChatStore = defineStore('chat', () => {
 
   // ==================== 消息与会话维护 ====================
 
+  /** 按消息类型生成列表预览文案（与后端 TypePreview 一致）：图片→[图片]，卡片→[聊天记录] */
+  function previewOf(msg: ChatMessageDto): string {
+    // isChatImagePath：兼容首版图片误以 MsgType=0 落库的历史路径
+    if (msg.msgType === 1 || isChatImagePath(msg.content)) return '[图片]'
+    if (msg.msgType === 2) return '[聊天记录]'
+    return msg.content
+  }
+
   /**
    * 收到新消息（SignalR 推送）。发送方也会收到自己消息的推送副本（多端同步），
    * 与 REST Send 返回后的本地处理按消息 Id 去重，两份先后到达均安全。
@@ -173,7 +189,7 @@ export const useChatStore = defineStore('chat', () => {
     // 更新会话列表项（不存在则为新会话/被隐藏会话恢复，全量刷新兜底）
     const conv = conversations.value.find(c => c.conversationId === msg.conversationId)
     if (conv) {
-      conv.lastMessageText = msg.content
+      conv.lastMessageText = previewOf(msg)
       conv.lastMessageTime = msg.createTime
       conv.lastFromMe = fromMe
       if (!fromMe && !isActive) {
@@ -205,38 +221,100 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /** 打开（或创建）会话并加载最新一页消息（ChatView 与路由入口共用） */
+  /** 打开（或创建）单聊会话并加载最新一页消息 */
   async function openConversation(peerId: string): Promise<ChatOpenDto> {
     const dto = await openChatConversation(peerId)
     activeConversationId.value = dto.conversationId
+    activeConversationType.value = 0
+    activeGroup.value = null
     activePeerId = peerId
     peerReadMessageId.value = dto.peerReadMessageId
     messages.value = await getChatMessages(dto.conversationId)
     void markReadActive()
-    // 会话列表同步：已有会话清未读置顶；新会话/隐藏恢复全量刷新落位
+    // 会话列表同步：已有会话仅清未读，不改变排序（置顶与服务器“按最后消息时间倒序”不一致，
+    // 会在轮询/事件全量刷新时被服务器排序打回原位，造成点击后列表项上下横跳）；
+    // 新会话/隐藏恢复仍全量刷新落位
     const conv = conversations.value.find(c => c.conversationId === dto.conversationId)
     if (conv) {
       conv.unreadCount = 0
-      conversations.value = [conv, ...conversations.value.filter(c => c !== conv)]
     } else {
       void refreshConversations()
     }
     return dto
   }
 
+  /** 打开已有群聊会话并加载最新一页消息 */
+  async function openGroupConversation(conversationId: number, name: string, memberCount: number) {
+    activeConversationId.value = conversationId
+    activeConversationType.value = 1
+    activeGroup.value = { conversationId, name, memberCount }
+    activePeerId = ''
+    peerReadMessageId.value = 0
+    messages.value = await getChatMessages(conversationId)
+    void markReadActive()
+    // 同单聊：点击打开不动排序，仅清未读（置顶会被服务器排序刷新打回，造成列表横跳）
+    const conv = conversations.value.find(c => c.conversationId === conversationId)
+    if (conv) {
+      conv.unreadCount = 0
+    } else {
+      void refreshConversations()
+    }
+  }
+
   /** 关闭当前会话（ChatView 卸载时调用；列表与未读状态保留） */
   function closeConversation() {
     activeConversationId.value = 0
+    activeConversationType.value = 0
+    activeGroup.value = null
     activePeerId = ''
     messages.value = []
     peerReadMessageId.value = 0
   }
 
-  /** 发送消息：REST 落库返回后本地即时上屏（推送副本按 Id 去重） */
-  async function sendMessage(peerId: string, content: string): Promise<ChatMessageDto> {
-    const msg = await sendChatMessage(peerId, content)
+  /** 我方另一端清空了聊天记录（单方面删除）：当前打开的会话就地清空，列表预览置空；对方不受影响无任何动作 */
+  function handleMessagesCleared(conversationId: number) {
+    if (conversationId === activeConversationId.value) {
+      messages.value = []
+      peerReadMessageId.value = 0
+    }
+    const conv = conversations.value.find(c => c.conversationId === conversationId)
+    if (conv) {
+      conv.lastMessageText = null
+      conv.lastMessageTime = null
+      conv.lastFromMe = false
+      conv.unreadCount = 0
+    }
+  }
+
+  /** 发送消息：REST 落库返回后本地即时上屏（推送副本按 Id 去重）；msgType=0 文本 / 1 图片，quoteId>0 时携带引用；群聊传 mentions */
+  async function sendMessage(
+    peerId: string,
+    content: string,
+    quoteId = 0,
+    msgType = 0,
+    mentions?: string[],
+  ): Promise<ChatMessageDto> {
+    const convId = activeConversationId.value
+    const isGroup = activeConversationType.value === 1
+    const msg = await sendChatMessage(
+      isGroup ? '' : peerId,
+      content,
+      quoteId,
+      msgType,
+      isGroup ? convId : 0,
+      mentions,
+    )
     handleReceiveMessage(msg)
     return msg
+  }
+
+  /** 创建群聊并把新会话置顶（创建者自动加入） */
+  async function createGroup(request: ChatGroupCreateRequest): Promise<ChatConversationDto> {
+    const conv = await createChatGroup(request)
+    conv.unreadCount = 0
+    conv.lastFromMe = false
+    conversations.value = [conv, ...conversations.value.filter(c => c.conversationId !== conv.conversationId)]
+    return conv
   }
 
   /** 向上翻页加载更早消息；返回是否可能还有更早的一页 */
@@ -256,6 +334,11 @@ export const useChatStore = defineStore('chat', () => {
     if (!convId) return
     try {
       const list = await getChatMessages(convId, 0, PAGE_SIZE, { silent: true })
+      // 拉回空页但本地非空：我方在另一端/此前单方面清空了记录（MessagesCleared 推不到时的兜底），就地清空
+      if (!list.length) {
+        if (messages.value.length) messages.value = []
+        return
+      }
       const known = new Set(messages.value.map(m => m.id))
       let added = false
       for (const m of list) {
@@ -274,10 +357,11 @@ export const useChatStore = defineStore('chat', () => {
    * 轮询模式下校准对方已读水位（SignalR ReadAck 推不到时的兜底）：
    * 静默调 Open 接口拿最新 peerReadMessageId。Open 对已存在会话幂等
    * （仅清我方隐藏标记，当前打开中的会话无影响），可安全高频调用。
+   * 群聊最小版本不显示"已读"，跳过。
    */
   async function pollActiveReadWatermark() {
     const peerId = activePeerId
-    if (!peerId) return
+    if (!peerId || activeConversationType.value === 1) return
     try {
       const dto = await openChatConversation(peerId, { silent: true })
       if (dto.conversationId === activeConversationId.value) {
@@ -379,8 +463,8 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     // 状态
-    conversations, unreadTotal, onlineIds, activeConversationId, messages,
-    peerReadMessageId, myUserId, connected, polling,
+    conversations, unreadTotal, onlineIds, activeConversationId, activeConversationType, activeGroup,
+    messages, peerReadMessageId, myUserId, connected, polling,
     dialogVisible, dialogPeerId,
     // 连接
     start, stop,
@@ -388,6 +472,7 @@ export const useChatStore = defineStore('chat', () => {
     openChat, closeChat,
     // 数据
     refreshConversations, refreshUnread, refreshContacts,
-    openConversation, closeConversation, loadEarlierMessages, sendMessage, markReadActive,
+    openConversation, openGroupConversation, closeConversation, loadEarlierMessages, sendMessage, markReadActive,
+    createGroup,
   }
 })

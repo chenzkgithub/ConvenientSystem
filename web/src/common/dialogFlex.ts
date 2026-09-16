@@ -30,7 +30,12 @@ function schedule() {
 function enhance(dialog: HTMLElement) {
   dialog.setAttribute(MARK_ATTR, '1')
   enableDrag(dialog)
-  if (!dialog.classList.contains('is-fullscreen')) enableResize(dialog)
+  // data-cs-fixed：高度固定类弹窗（聊天等内部自滚动的重布局）不挂拉伸手柄，
+  // 拖小后内层高度约束会被内联 height 覆盖导致内容显示不全；
+  // 属性可能落在 .el-dialog 自身或其外层（attrs 转发链路差异），两处都查
+  if (!dialog.classList.contains('is-fullscreen')
+    && !dialog.hasAttribute('data-cs-fixed')
+    && !dialog.closest('[data-cs-fixed]')) enableResize(dialog)
 }
 
 /** 标题栏按住拖动（transform 平移，不影响弹窗原有定位） */

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using FreeSql;
@@ -272,6 +272,7 @@ public sealed class PipelineService
             ProjectDir = projectDir,
             OutputDir = stage.OutputDir,
             PrePull = stage.PrePull,
+            SkipPersistence = true, // 流水线构建已在流水线视图中跟踪，不重复写入通用构建 store
         });
         run.CurrentJobId = dto.Id;
         run.CurrentJobIsDeploy = false;
@@ -289,11 +290,10 @@ public sealed class PipelineService
 
             if (current.Status is UniversalBuildStatus.Success or UniversalBuildStatus.Failed or UniversalBuildStatus.Cancelled)
             {
-                if (current.Status != UniversalBuildStatus.Success)
-                {
-                    var reason = current.Status == UniversalBuildStatus.Cancelled ? "被取消" : $"退出码 {current.ExitCode}";
-                    throw new OperationCanceledException($"构建失败（{reason}），详见日志");
-                }
+                if (current.Status == UniversalBuildStatus.Cancelled)
+                    throw new OperationCanceledException($"构建被取消，详见日志");
+                if (current.Status == UniversalBuildStatus.Failed)
+                    throw new InvalidOperationException($"构建失败（退出码 {current.ExitCode}），详见日志");
                 return current;
             }
             await Task.Delay(1000, ct);
@@ -384,11 +384,10 @@ public sealed class PipelineService
 
             if (job.Status is DeployStatus.Success or DeployStatus.Failed or DeployStatus.Cancelled)
             {
-                if (job.Status != DeployStatus.Success)
-                {
-                    var reason = job.Status == DeployStatus.Cancelled ? "已取消并还原部署前环境" : "部署失败";
-                    throw new OperationCanceledException($"部署未成功：{reason}，详见日志");
-                }
+                if (job.Status == DeployStatus.Cancelled)
+                    throw new OperationCanceledException($"部署被取消（已还原部署前环境），详见日志");
+                if (job.Status == DeployStatus.Failed)
+                    throw new InvalidOperationException($"部署失败，详见日志");
                 return;
             }
             await Task.Delay(1000, ct);

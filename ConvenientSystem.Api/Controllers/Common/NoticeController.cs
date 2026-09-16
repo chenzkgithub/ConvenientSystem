@@ -61,19 +61,29 @@ namespace ConvenientSystem.Api.Controllers.Common
         }
 
         /// <summary>
-        /// 构建/部署完成通知：任何已登录用户可调用，创建一条系统通知（level=2 重要，前端 NoticeAlert 弹右上角卡片，不触发外部推送）。
+        /// 构建/部署/版本发布通知：任何已登录用户可调用，创建一条系统通知（level=2 重要，前端 NoticeAlert 弹右上角卡片，不触发外部推送）。
         /// 桌面端构建服务运行在本机，无法直接访问 INoticeService，故由前端检测到终态后代理调用。
-/// 创建后向全部在线连接推 NoticeCreated（无参数），前端秒级刷新铃铛/弹卡片。
+        /// 默认仅通知当前操作人（定向用户 + Clients.User 推送，不打扰其他在线用户）；
+        /// broadcast=true 时全员广播（版本包发布用），无定向记录全员可见，禁用用户登录不进来等效于仅启用用户。
+        /// 创建后推 NoticeCreated（无参数），前端秒级刷新铃铛/弹卡片。
         /// </summary>
         [HttpPost]
         public async Task<IActionResult> BuildNotify([FromBody] BuildNotifyRequest request)
         {
             if (string.IsNullOrWhiteSpace(request?.Title)) return BadRequest(new { message = "标题不能为空" });
+
+            var userId = CurrentUserId;
+            var broadcast = request.Broadcast || !userId.HasValue || userId.Value == Guid.Empty; // 取不到操作人时降级全员，保底不丢通知
             _service.CreateSystemNotice(
                 request.Title.Trim(),
                 (request.Content ?? string.Empty).Trim(),
-                level: 2);
-            await _hubContext.Clients.All.SendAsync("NoticeCreated");
+                level: 2,
+                targetUserId: broadcast ? null : userId);
+
+            if (broadcast)
+                await _hubContext.Clients.All.SendAsync("NoticeCreated");
+            else
+                await _hubContext.Clients.User(userId!.Value.ToString()).SendAsync("NoticeCreated");
             return Ok();
         }
 
@@ -98,9 +108,11 @@ namespace ConvenientSystem.Api.Controllers.Common
     }
 }
 
-/// <summary>构建/部署完成通知请求体。</summary>
+/// <summary>构建/部署/版本发布通知请求体；Broadcast=true 时全员广播（默认仅通知当前操作人）。</summary>
 public sealed class BuildNotifyRequest
 {
     public string Title { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
+    /// <summary>是否全员广播：false=仅当前操作人可见（构建/部署/流水线完成），true=全员可见（版本包发布）。</summary>
+    public bool Broadcast { get; set; }
 }

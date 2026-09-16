@@ -40,12 +40,19 @@ onBeforeUnmount(() => {
 
 <template>
   <el-badge v-if="!isFallback" :value="chatStore.unreadTotal" :hidden="chatStore.unreadTotal === 0" :max="99" class="chat-badge">
-    <el-button :icon="ChatDotRound" circle size="small" title="即时聊天" @click="chatStore.openChat()" />
+    <el-button :icon="ChatDotRound" circle size="small" title="即时聊天" :class="{ blink: chatStore.unreadTotal > 0 }" @click="chatStore.openChat()" />
   </el-badge>
 </template>
 
 <style scoped>
 .chat-badge {
   line-height: 1;
+}
+.blink {
+  animation: bell-blink 1.6s ease-in-out infinite;
+}
+@keyframes bell-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 </style>

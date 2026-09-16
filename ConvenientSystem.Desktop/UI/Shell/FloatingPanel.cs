@@ -227,7 +227,7 @@ internal sealed class FloatingPanel : Form
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        // 立即检查一次（定时器还会继续轮询作为兑底）
+        // 立即检查一次（定时器还会继续轮询作为兜底）
         CheckMouseAndCloseIfOutside();
     }
 

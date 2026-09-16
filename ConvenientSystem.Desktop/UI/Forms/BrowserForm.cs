@@ -462,6 +462,9 @@ public sealed class BrowserForm : Form, ILockable
         // 放行 dingtalk:// 协议，支持钉钉客户端一键授权登录。
         ExternalUriSchemePolicy.Attach(core);
 
+        // 权限放行策略：文件选择框不再弹“想要打开文件”提示，本机页面其余权限也直接放行。
+        WebView2PermissionPolicy.Attach(core);
+
         // 网页请求关闭窗口（window.close）时关闭本窗体
         core.WindowCloseRequested += (_, _) =>
         {

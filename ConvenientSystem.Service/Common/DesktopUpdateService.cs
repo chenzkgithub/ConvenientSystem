@@ -177,8 +177,9 @@ namespace ConvenientSystem.Service.Common
             _logger.LogInformation("上传桌面安装包 Version={Version} FileName={FileName} Size={Size}",
                 safeVersion, fileName, file.Length);
 
-            // 与 Web 前端版本上传对齐：发一条全员可见的系统通知，在线用户登录后可见
-            NotifyVersionChanged(safeVersion, entity.Description);
+            // 与 Web 前端版本上传对齐：发一条仅发布人可见的操作确认通知；
+            // 全员广播的下载链接通知由 Controller 层发送，其他用户不再收到重复通知
+            NotifyVersionChanged(safeVersion, entity.Description, userId);
 
             return new DesktopPackageDto
             {
@@ -219,8 +220,8 @@ namespace ConvenientSystem.Service.Common
             catch { /* 临时文件清理失败不影响主流程 */ }
         }
 
-        /// <summary>发布一条"桌面程序已更新"的系统通知，全员可见且不触发外部推送。</summary>
-        private void NotifyVersionChanged(string version, string? description)
+        /// <summary>发布一条"桌面程序已更新"的系统通知，仅发布人可见（userId 为空时兑底全员）且不触发外部推送。</summary>
+        private void NotifyVersionChanged(string version, string? description, Guid? userId)
         {
             try
             {
@@ -229,7 +230,8 @@ namespace ConvenientSystem.Service.Common
                 _noticeService.CreateSystemNotice(
                     $"桌面程序已更新至 {version}",
                     content,
-                    level: 2); // 重要：登录后会触发 NoticeAlert 弹窗提醒
+                    level: 2, // 重要：登录后会触发 NoticeAlert 弹窗提醒
+                    targetUserId: userId);
             }
             catch (Exception ex)
             {

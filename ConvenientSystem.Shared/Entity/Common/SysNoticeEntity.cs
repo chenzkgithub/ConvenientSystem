@@ -40,8 +40,9 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>发布人用户 Id（关联 SysUser.Id）</summary>
         public Guid? CreatedById { get; set; }
 
-        [Column(CanInsert = false, CanUpdate = false)]
-        public DateTime CreateTime { get; set; }
+        /// <summary>发布时间（应用侧写入：容器化 SQL Server 时区多为 UTC，依赖数据库默认 GETDATE() 会比北京时间慢 8 小时）</summary>
+        [Column(CanUpdate = false)]
+        public DateTime CreateTime { get; set; } = DateTime.Now;
 
         public DateTime UpdateTime { get; set; }
     }

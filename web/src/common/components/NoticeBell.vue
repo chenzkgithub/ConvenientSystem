@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
   >
     <template #reference>
       <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99" class="notice-badge">
-        <el-button :icon="Bell" circle size="small" title="系统通知" />
+        <el-button :icon="Bell" circle size="small" title="系统通知" :class="{ blink: unreadCount > 0 }" />
       </el-badge>
     </template>
 
@@ -164,6 +164,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .notice-badge {
   line-height: 1;
+}
+.blink {
+  animation: bell-blink 1.6s ease-in-out infinite;
+}
+@keyframes bell-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 .notice-popover {
   display: flex;

@@ -56,6 +56,8 @@ public sealed class UniversalBuildRequest
     public string Name { get; set; } = string.Empty;
     /// <summary>构建前先执行 git pull --ff-only 拉取远端最新代码。</summary>
     public bool PrePull { get; set; }
+    /// <summary>是否跳过持久化（流水线/定时任务发起的构建设为 true，避免在通用构建页面重复显示卡片）。</summary>
+    public bool SkipPersistence { get; set; }
 }
 
 /// <summary>通用构建任务 DTO。</summary>
@@ -101,6 +103,8 @@ public sealed class UniversalBuildJob
     public string ProjectDir { get; set; } = string.Empty;
     public string OutputDir { get; set; } = string.Empty;
     public UniversalBuildStatus Status { get; set; } = UniversalBuildStatus.Pending;
+    /// <summary>是否跳过持久化：流水线/定时任务发起的构建仅内存跟踪，不写 store。</summary>
+    public bool SkipPersistence { get; set; }
     public int Progress { get; set; }
     /// <summary>最近命中的阶段锚点进度（日志关键字触发），插值起点。</summary>
     public int ProgressAnchor { get; set; }
@@ -121,12 +125,14 @@ public sealed class UniversalBuildJob
 public sealed class UniversalBuildService
 {
     private readonly ILogger<UniversalBuildService> _logger;
+    private readonly UniversalBuildStore _store;
     private readonly ConcurrentDictionary<string, UniversalBuildJob> _jobs = new();
     private readonly SemaphoreSlim _concurrency = new(10, 10);
 
-    public UniversalBuildService(ILogger<UniversalBuildService> logger)
+    public UniversalBuildService(ILogger<UniversalBuildService> logger, UniversalBuildStore store)
     {
         _logger = logger;
+        _store = store;
     }
 
     /// <summary>检测所有支持的环境。</summary>
@@ -412,6 +418,7 @@ public sealed class UniversalBuildService
             Status = UniversalBuildStatus.Waiting,
             StartTime = DateTime.Now,
             PrePull = request.PrePull,
+            SkipPersistence = request.SkipPersistence,
         };
 
         if (!_jobs.TryAdd(job.Id, job))
@@ -419,17 +426,23 @@ public sealed class UniversalBuildService
             throw new InvalidOperationException($"任务 {job.Id} 已存在");
         }
 
+        if (!job.SkipPersistence) _store.AddOrUpdate(ToRecord(job));
+
         _ = Task.Run(async () => await RunBuildAsync(job));
         return ToDto(job);
     }
 
-    /// <summary>获取任务进度。</summary>
+    /// <summary>获取任务进度。内存中存在返回实时对象（含日志），否则尝试返回持久化摘要。</summary>
     public UniversalBuildJobDto? GetProgress(string id)
     {
-        if (!_jobs.TryGetValue(id, out var job)) return null;
-        var dto = ToDto(job);
-        dto.QueuePosition = GetQueuePosition(job);
-        return dto;
+        if (_jobs.TryGetValue(id, out var job))
+        {
+            var dto = ToDto(job);
+            dto.QueuePosition = GetQueuePosition(job);
+            return dto;
+        }
+        var record = _store.Get(id);
+        return record == null ? null : ToDto(record);
     }
 
     /// <summary>排队位置：Waiting 任务按启动顺序编号（1 起），其余状态为 null。</summary>
@@ -443,10 +456,21 @@ public sealed class UniversalBuildService
         return ordered.IndexOf(job) + 1;
     }
 
-    /// <summary>获取所有任务。</summary>
+    /// <summary>获取所有任务：内存任务优先（含日志），再合并持久化记录中的历史任务。</summary>
     public IReadOnlyList<UniversalBuildJobDto> GetAllJobs()
     {
-        return _jobs.Values.Select(ToDto).ToList();
+        var result = new Dictionary<string, UniversalBuildJobDto>(StringComparer.Ordinal);
+        foreach (var record in _store.GetAll())
+        {
+            result[record.Id] = ToDto(record);
+        }
+        foreach (var job in _jobs.Values)
+        {
+            var dto = ToDto(job);
+            dto.QueuePosition = GetQueuePosition(job);
+            result[job.Id] = dto;
+        }
+        return result.Values.OrderByDescending(d => d.StartTime).ToList();
     }
 
     /// <summary>取消任务。</summary>
@@ -455,6 +479,7 @@ public sealed class UniversalBuildService
         if (!_jobs.TryGetValue(id, out var job)) return false;
         job.Cts?.Cancel();
         job.Status = UniversalBuildStatus.Cancelled;
+        if (!job.SkipPersistence) _store.AddOrUpdate(ToRecord(job));
         return true;
     }
 
@@ -545,6 +570,7 @@ public sealed class UniversalBuildService
         finally
         {
             job.CompletedTime = DateTime.Now;
+            if (!job.SkipPersistence) _store.AddOrUpdate(ToRecord(job));
             _concurrency.Release();
         }
     }
@@ -1039,6 +1065,43 @@ public sealed class UniversalBuildService
             OutputDir = job.OutputDir,
             Progress = ComputeDisplayProgress(job),
             Log = logText,
+            ExitCode = job.ExitCode,
+            ArtifactSize = job.ArtifactSize,
+            StartTime = job.StartTime,
+            CompletedTime = job.CompletedTime,
+        };
+    }
+
+    private static UniversalBuildJobDto ToDto(UniversalBuildJobRecord record)
+    {
+        return new UniversalBuildJobDto
+        {
+            Id = record.Id,
+            Type = record.Type,
+            Name = record.Name,
+            Status = record.Status,
+            ProjectDir = record.ProjectDir,
+            OutputDir = record.OutputDir,
+            Progress = record.Progress,
+            Log = string.Empty,
+            ExitCode = record.ExitCode,
+            ArtifactSize = record.ArtifactSize,
+            StartTime = record.StartTime,
+            CompletedTime = record.CompletedTime,
+        };
+    }
+
+    private static UniversalBuildJobRecord ToRecord(UniversalBuildJob job)
+    {
+        return new UniversalBuildJobRecord
+        {
+            Id = job.Id,
+            Type = job.Type,
+            Name = job.Name,
+            Status = job.Status,
+            ProjectDir = job.ProjectDir,
+            OutputDir = job.OutputDir,
+            Progress = job.Progress,
             ExitCode = job.ExitCode,
             ArtifactSize = job.ArtifactSize,
             StartTime = job.StartTime,

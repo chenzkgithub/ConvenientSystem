@@ -15,8 +15,8 @@ namespace ConvenientSystem.Service.Common
         /// <summary>管理端：新增（新建时按开关触发联动推送）或编辑通知。</summary>
         void Save(NoticeDto dto);
 
-        /// <summary>系统内部：创建一条不触发邮件/短信/群机器人推送的全员可见通知。</summary>
-        int CreateSystemNotice(string title, string content, byte level = 1, DateTime? expireTime = null);
+        /// <summary>系统内部：创建一条不触发邮件/短信/群机器人推送的通知；targetUserId 有值时仅该用户可见，为空时全员可见。</summary>
+        int CreateSystemNotice(string title, string content, byte level = 1, DateTime? expireTime = null, Guid? targetUserId = null);
 
         /// <summary>管理端：删除通知及其已读记录。</summary>
         void Delete(int id);

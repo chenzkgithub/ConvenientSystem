@@ -139,6 +139,7 @@ public sealed class UniversalScheduleService : IDisposable
                     ProjectDir = item.ProjectDir,
                     OutputDir = item.OutputDir,
                     Name = item.Name,
+                    SkipPersistence = true, // 定时构建已在定时任务视图中跟踪，不重复写入通用构建 store
                 });
                 lock (_lock)
                 {

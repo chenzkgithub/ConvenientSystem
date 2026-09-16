@@ -97,6 +97,12 @@ public class UniversalBuildController : ControllerBase
     public DeployJobDto? DeployProgress([FromBody] DeployProgressRequest request)
         => _deployService.GetJob(request.Id);
 
+    /// <summary>获取所有部署任务。</summary>
+    [HttpPost]
+    [Route("DeployAllJobs")]
+    public IReadOnlyList<DeployJobDto> DeployAllJobs()
+        => _deployService.GetAllJobs();
+
     /// <summary>手动回滚：把最近一次部署的 .old 备份换回正式目录并重启服务。</summary>
     [HttpPost]
     [Route("Rollback")]

@@ -16,8 +16,8 @@ namespace ConvenientSystem.Service.Common
         /// <summary>上传版本包（保存文件 + 插入记录 + 自动激活）。</summary>
         WebPackageDto Upload(string version, IFormFile file, string? description, Guid? userId);
 
-        /// <summary>激活指定版本（其余取消激活）。</summary>
-        void Activate(int id);
+        /// <summary>激活指定版本（其余取消激活；激活确认通知仅操作人可见）。</summary>
+        void Activate(int id, Guid? userId);
 
         /// <summary>停用指定版本（取消激活状态）。</summary>
         void Deactivate(int id);

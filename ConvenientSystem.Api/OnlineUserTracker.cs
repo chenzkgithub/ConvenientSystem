@@ -56,5 +56,8 @@ namespace ConvenientSystem.Api
                     _sessions.TryRemove(kv.Key, out _);
             }
         }
+
+        /// <summary>返回当前在线用户 Id 集合（用于群聊成员在线状态快速判断）。</summary>
+        public HashSet<Guid> GetOnlineUserIds() => _sessions.Keys.ToHashSet();
     }
 }

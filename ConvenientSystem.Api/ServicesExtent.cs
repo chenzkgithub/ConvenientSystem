@@ -372,6 +372,12 @@ namespace ConvenientSystem.Api
             // 桌面安装包自更新
             services.AddSingleton<IDesktopUpdateService, DesktopUpdateService>();
 
+            // 配置文件热编辑（白名单校验 + 自动备份 + 安全写入）
+            services.AddSingleton<IConfigEditorService, ConfigEditorService>();
+
+            // 代码扫描（正则规则引擎 + Git Diff 增量扫描）
+            services.AddScoped<ICodeScanService, CodeScanService>();
+
             // API 文档生成器（C# Controller 源码 → OpenAPI/Postman/Markdown）
             services.AddSingleton<IApiSpecService, ApiSpecService>();
             // 各格式导出器（加格式 = 新实现类 + 注册一行，格式列表自动出现）

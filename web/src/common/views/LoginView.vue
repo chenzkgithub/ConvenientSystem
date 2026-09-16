@@ -20,7 +20,6 @@ const ACCOUNT_KEY = 'login_remember_account'
 const account = ref('')
 const password = ref('')
 const rememberAccount = ref(true)
-const tip = ref('')
 const loading = ref(false)
 
 /** 输入时实时过滤空格和特殊字符（el-input 的 input 事件回传新值字符串，非 DOM Event） */
@@ -42,15 +41,21 @@ onMounted(async () => {
     password.value = ''
   }
 
+  // 上次登录失败原因以弹出提示（替代页面内红色文字）
+  if (auth.disabledReason === 'account_disabled') {
+    ElMessage.error('上次登录的账号已被管理员停用，请使用其他账号登录')
+  } else if (auth.disabledReason === 'api_401') {
+    ElMessage.error('您的登录已过期，请重新登录')
+  }
+
   // 拉取当前前端版本号（登录页展示）
   await fetchVersion()
 })
 
 async function doLogin() {
-  tip.value = ''
   const trimmed = account.value.trim()
-  if (!trimmed) { tip.value = '请输入账号'; return }
-  if (!ACCOUNT_RE.test(trimmed)) { tip.value = '账号不允许空格和特殊字符'; return }
+  if (!trimmed) { ElMessage.error('请输入账号'); return }
+  if (!ACCOUNT_RE.test(trimmed)) { ElMessage.error('账号不允许空格和特殊字符'); return }
   loading.value = true
   try {
     const result = await auth.login(trimmed, password.value)
@@ -68,15 +73,15 @@ async function doLogin() {
       auth.disabledReason = null
     } else {
       if (result.reason === 'account_disabled') {
-        tip.value = '账号已被停用，请联系管理员'
+        ElMessage.error('账号已被停用，请联系管理员')
       } else if (result.reason === 'wrong_password') {
-        tip.value = '密码错误'
+        ElMessage.error('密码错误')
       } else {
-        tip.value = '账号不存在或密码错误'
+        ElMessage.error('账号不存在或密码错误')
       }
     }
   } catch (e) {
-    tip.value = '登录失败：' + (e as Error).message
+    ElMessage.error('登录失败：' + (e as Error).message)
   } finally {
     loading.value = false
   }
@@ -262,14 +267,6 @@ async function doRegister() {
         <h1 class="form-title">ConvenientSystem</h1>
         <div class="form-tab">用户名登录</div>
 
-        <!-- 停用或 API 错误提示 -->
-        <div v-if="auth.disabledReason === 'account_disabled'" class="alert-box alert-error">
-          上次登录的账号已被管理员停用，请使用其他账号登录
-        </div>
-        <div v-else-if="auth.disabledReason === 'api_401'" class="alert-box alert-error">
-          您的登录已过期，请重新登录
-        </div>
-
         <div class="login-field">
           <label>账号</label>
           <el-input v-model="account" placeholder="请输入账号或邮箱" size="large" @input="onAccountInput" @keyup.enter="doLogin" />
@@ -288,7 +285,6 @@ async function doRegister() {
         <div class="login-options">
           <el-checkbox v-model="rememberAccount">记住账号</el-checkbox>
         </div>
-        <div class="login-tip" :class="{ error: tip }">{{ tip }}</div>
         <el-button type="primary" size="large" class="login-btn" :loading="loading" @click="doLogin">
           登 录
         </el-button>
@@ -476,25 +472,12 @@ async function doRegister() {
   border-radius: 1px;
 }
 
-/* 警告提示 */
-.alert-box {
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  margin-bottom: 16px;
-}
-.alert-error { color: #c0392b; background: #fdf0ed; border: 1px solid #f5d6ce; }
-
 /* 输入字段 */
 .login-field { margin-bottom: 20px; }
 .login-field label { display: block; font-size: 14px; color: #303133; margin-bottom: 8px; font-weight: 500; }
 
 /* 登录选项 */
 .login-options { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-
-/* 提示文字 */
-.login-tip { height: 22px; font-size: 13px; margin-bottom: 8px; color: transparent; transition: color 0.2s; }
-.login-tip.error { color: #e74c3c; }
 
 /* 登录按钮 */
 .login-btn {

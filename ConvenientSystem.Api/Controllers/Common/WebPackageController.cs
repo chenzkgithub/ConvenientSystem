@@ -141,7 +141,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         [PermissionAuthorize("web-package:activate")]
         public ActionResult Activate([FromBody] Shared.Model.Common.WebPackageActivateDto dto)
         {
-            _service.Activate(dto.Id);
+            _service.Activate(dto.Id, CurrentUserId);
             return Ok();
         }
 

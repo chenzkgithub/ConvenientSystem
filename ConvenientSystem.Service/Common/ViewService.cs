@@ -217,7 +217,7 @@ namespace ConvenientSystem.Service.Common
                 });
 
             // 加载视图权限点：视图按「Name == 菜单 Name」或「RoutePath == 菜单 Page」挂到菜单下。
-            // RoutePath 匹配是兑底：同一页面的多页签视图若拆成多个视图，只有路由能对上，仅按 Name 匹配
+            // RoutePath 匹配是兜底：同一页面的多页签视图若拆成多个视图，只有路由能对上，仅按 Name 匹配
             // 会让其权限点在权限树上不可见（系统版本管理已把多页签权限点合并进单一视图，主要靠 Name 匹配）。
             var menuNames = menus.Where(m => !string.IsNullOrEmpty(m.Name)).Select(m => m.Name!).Distinct().ToList();
             var menuPages = menus.Where(m => !string.IsNullOrEmpty(m.Page)).Select(m => m.Page!).Distinct().ToList();

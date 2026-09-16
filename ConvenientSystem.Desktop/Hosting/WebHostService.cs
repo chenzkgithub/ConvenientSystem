@@ -86,10 +86,21 @@ internal sealed class WebHostService : IHostedService, IDisposable
         builder.Services.AddHttpClient("ReverseProxy", client => client.Timeout = TimeSpan.FromMinutes(5));
 
         builder.Services.AddSingleton<LocalMonitorService>();
+        builder.Services.AddSingleton<UniversalBuildStore>();
         builder.Services.AddSingleton<UniversalBuildService>();
+        builder.Services.AddSingleton<DeployStore>();
         builder.Services.AddSingleton<DeployService>();
         builder.Services.AddSingleton<SshCredentialStore>();
         builder.Services.AddSingleton<UiStateStore>();
+        // 配置文件热编辑：exe 目录实际存在的配置文件（部署目录无各环境 variants，但有启动器配置）
+        builder.Services.AddSingleton<IConfigEditorService>(_ => new ConfigEditorService(
+            _.GetRequiredService<ILogger<ConfigEditorService>>(),
+            _.GetRequiredService<IHostApplicationLifetime>(),
+        [
+            ("appsettings.json", "json"),
+            ("launcher-items.json", "json"),
+        ]));
+        builder.Services.AddSingleton<LocalCodeScanService>();
         builder.Services.AddSingleton<PipelineStore>();
         builder.Services.AddSingleton<PipelineService>();
         builder.Services.AddSingleton<UniversalScheduleService>();

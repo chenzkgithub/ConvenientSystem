@@ -19,6 +19,7 @@ import {
   type DesktopPackageDto,
 } from '@/common/api/webPackage'
 import { confirmAndRun } from '@/common/utils/confirm'
+import { notifyBuildComplete } from '@/common/api/notice'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 import { usePermission } from '@/common/composables/usePermission'
@@ -183,11 +184,17 @@ async function submitUpload() {
   uploadProgress.value = 0
   const onProgress = (pct: number) => { uploadProgress.value = pct }
   try {
+    const description = uploadForm.description.trim()
     if (activeTab.value === 'web') {
-      await uploadPackage(typedVersion, uploadForm.file, uploadForm.description.trim() || undefined, onProgress)
+      await uploadPackage(typedVersion, uploadForm.file, description || undefined, onProgress)
       ElMessage.success('上传成功，已自动激活为新版本')
+      // 上传结果确认通知：仅操作人可见（全员广播的下载链接通知由后端上传接口直接创建）
+      notifyBuildComplete(
+        `新 Web 版本 ${typedVersion} 已发布`,
+        [description, '在线用户会自动收到更新横幅，确认后自动刷新生效；离线用户下次登录可查看。'].filter(Boolean).join('\n'),
+      ).catch(() => { /* 通知失败不影响上传结果 */ })
     } else {
-      const dto = await uploadDesktopPackage(typedVersion, uploadForm.file, uploadForm.description.trim() || undefined, onProgress)
+      const dto = await uploadDesktopPackage(typedVersion, uploadForm.file, description || undefined, onProgress)
       const actualVersion = dto?.version ?? ''
       if (actualVersion && actualVersion !== typedVersion) {
         // 服务端改用了安装包内嵌版本，必须醒目告知，否则用户无法得知实际激活的版本
@@ -198,6 +205,11 @@ async function submitUpload() {
       } else {
         ElMessage.success(`上传成功，已激活版本 ${actualVersion || typedVersion}`)
       }
+      // 通知版本用实际激活版本（以服务端返回为准，避免与内嵌版本不一致）；仅操作人可见
+      notifyBuildComplete(
+        `新桌面端版本 ${actualVersion || typedVersion} 已发布`,
+        [description, '各桌面端下次启动时将检测到新版本并提示更新。'].filter(Boolean).join('\n'),
+      ).catch(() => { /* 通知失败不影响上传结果 */ })
     }
     uploadVisible.value = false
     loadCurrentTab()

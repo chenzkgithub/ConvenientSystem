@@ -694,7 +694,7 @@ function startWatchTimer() {
     if (watchedRuns.size === 0) return stopWatchTimer()
     try {
       const runs = await getPipelineRuns(undefined, 100)
-      // 刷新列表"最近运行"列（弹窗轮询停止后列表状态由这里兑底刷新）
+      // 刷新列表“最近运行”列（弹窗轮询停止后列表状态由这里兜底刷新）
       const map: Record<string, PipelineRun> = {}
       for (const run of runs) {
         if (run.pipelineId && !(run.pipelineId in map)) map[run.pipelineId] = run

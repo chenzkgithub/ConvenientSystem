@@ -1,11 +1,12 @@
-echo ===WEB-NESTED===
-ls /opt/convenient/web/web/ | head -5
-ls /opt/convenient/web/web.old/ | head -5
-echo ===WEB-CONTAINER===
-docker images convenient-web --format 'built={{.CreatedAt}}'
-docker inspect convenient-web --format 'started={{.State.StartedAt}}'
-docker exec convenient-web sh -c 'ls /usr/share/nginx/html/ | head -8'
-docker exec convenient-web sh -c 'ls /usr/share/nginx/html/web 2>/dev/null | head -3'
-echo ===NOTICE-LEVEL-CHECK===
-docker exec convenient-api sh -c 'strings /app/ConvenientSystem.dll 2>/dev/null | head -1'
-echo ===DONE===
+F=202609/91d604b9578146cdaaa2e5d2b87b3f86.gif
+echo ===GET-RAW-SLASH===
+curl -s -o /dev/null -w 'direct=%{http_code} type=%{content_type} size=%{size_download}\n' "http://localhost:51943/api/Common/Chat/Image?f=$F" --max-time 10
+curl -s -o /dev/null -w 'via_nginx=%{http_code} type=%{content_type} size=%{size_download}\n' "http://localhost/api/Common/Chat/Image?f=$F" --max-time 10
+echo ===GET-ENCODED-P2F===
+curl -s -o /dev/null -w 'direct=%{http_code} type=%{content_type} size=%{size_download}\n' 'http://localhost:51943/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif' --max-time 10
+curl -s -o /dev/null -w 'via_nginx=%{http_code} type=%{content_type} size=%{size_download}\n' 'http://localhost/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif' --max-time 10
+echo ===BODY-PEEK===
+curl -s "http://localhost/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif" --max-time 10 | head -c 300
+echo
+echo ===EXT-INTERNET===
+curl -s -o /dev/null -w 'internet80=%{http_code}\n' 'http://123.56.68.132/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif' --max-time 10

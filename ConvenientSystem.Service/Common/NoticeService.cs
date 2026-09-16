@@ -73,8 +73,11 @@ namespace ConvenientSystem.Service.Common
             }).ToList();
         }
 
-        /// <summary>系统内部：创建一条不触发邮件/短信/群机器人推送的全员可见通知。</summary>
-        public int CreateSystemNotice(string title, string content, byte level = 1, DateTime? expireTime = null)
+        /// <summary>
+        /// 系统内部：创建一条不触发邮件/短信/群机器人推送的通知；
+        /// targetUserId 有值时仅该用户可见（定向用户表），为空时全员可见。
+        /// </summary>
+        public int CreateSystemNotice(string title, string content, byte level = 1, DateTime? expireTime = null, Guid? targetUserId = null)
         {
             if (string.IsNullOrWhiteSpace(title))
                 throw new ArgumentException("通知标题不能为空", nameof(title));
@@ -91,9 +94,15 @@ namespace ConvenientSystem.Service.Common
                 SendWebhook = false,
                 Enabled = true,
                 ExpireTime = expireTime,
-                CreatedById = null, // 系统通知：非用户发布（发布人/未发布人不影响可见性，全员可见）
+                CreatedById = null, // 系统通知：非用户发布（发布人/未发布人不影响可见性，可见性由 targetUserId 决定）
                 UpdateTime = DateTime.Now
             }).ExecuteIdentity();
+
+            // 定向通知：仅目标用户可见（复用管理端的定向用户表与可见性过滤）
+            if (targetUserId.HasValue && targetUserId.Value != Guid.Empty)
+            {
+                _fsql.Insert(new SysNoticeUserEntity { NoticeId = (int)id, UserId = targetUserId.Value }).ExecuteAffrows();
+            }
 
             return (int)id;
         }

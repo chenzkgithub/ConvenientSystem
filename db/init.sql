@@ -2001,5 +2001,151 @@ EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'BlockedUserId', N'被屏蔽人
 EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'CreateTime',    N'屏蔽时间';
 GO
 
+-- ========== 老库补齐：配置文件热编辑视图/菜单/权限点（行级幂等） ==========
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'config-editor')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'config-editor', N'配置文件', N'/src/common/views/ConfigEditorView.vue', N'/config-editor', 43);
+GO
+
+DECLARE @ConfigEditorViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'config-editor');
+IF @ConfigEditorViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'config-editor')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ConfigEditorViewId, N'config-editor', N'查看配置文件', 0);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'config-editor:save')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ConfigEditorViewId, N'config-editor:save', N'保存配置文件', 1);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'config-editor:restart')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ConfigEditorViewId, N'config-editor:restart', N'重启服务', 2);
+END
+GO
+
+-- 菜单：挂「系统管理」组下，排在「定时任务」之后
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'config-editor')
+    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type)
+    SELECT p.Id, N'配置文件', N'/config-editor', 0, 1, 0, 1, 1, N'config-editor', N'/src/common/views/ConfigEditorView.vue', 13, 1
+    FROM (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'系统管理' AND Page IS NULL AND Name IS NULL ORDER BY Id) p;
+GO
+
+-- admin 角色自动拥有配置文件菜单
+INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
+SELECT r.Id, m.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
+WHERE r.Code = N'admin' AND m.Name = N'config-editor'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
+GO
+
+-- admin 角色自动拥有所有视图权限点
+INSERT INTO dbo.SysRoleViewPerm (RoleId, ViewPermId)
+SELECT r.Id, vp.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysViewPermission vp
+WHERE r.Code = N'admin'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleViewPerm rvp WHERE rvp.RoleId = r.Id AND rvp.ViewPermId = vp.Id);
+GO
+
+-- ========== 代码扫描：建表 ==========
+IF OBJECT_ID(N'dbo.CodeScanRule') IS NULL
+BEGIN
+    CREATE TABLE dbo.CodeScanRule (
+        Id          INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        Name        NVARCHAR(100)  NOT NULL,
+        Pattern     NVARCHAR(500)  NOT NULL,
+        Severity    NVARCHAR(20)   NOT NULL DEFAULT N'Warning',
+        FileGlob    NVARCHAR(200)  NOT NULL DEFAULT N'',
+        Enabled     BIT            NOT NULL DEFAULT 1,
+        Description NVARCHAR(500)  NOT NULL DEFAULT N''
+    );
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'CodeScanRule', N'代码扫描检测规则';
+GO
+
+IF OBJECT_ID(N'dbo.CodeScanResult') IS NULL
+BEGIN
+    CREATE TABLE dbo.CodeScanResult (
+        Id          INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        TargetPath  NVARCHAR(500)  NOT NULL DEFAULT N'',
+        ScanMode    NVARCHAR(20)   NOT NULL DEFAULT N'full',
+        FileCount   INT            NOT NULL DEFAULT 0,
+        IssueCount  INT            NOT NULL DEFAULT 0,
+        ErrorCount  INT            NOT NULL DEFAULT 0,
+        WarningCount INT           NOT NULL DEFAULT 0,
+        InfoCount   INT            NOT NULL DEFAULT 0,
+        DurationMs  BIGINT         NOT NULL DEFAULT 0,
+        CreateTime  DATETIME2      NOT NULL DEFAULT GETDATE()
+    );
+    CREATE INDEX IX_CodeScanResult_Create ON dbo.CodeScanResult(CreateTime DESC);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'CodeScanResult', N'代码扫描执行记录';
+GO
+
+IF OBJECT_ID(N'dbo.CodeScanIssue') IS NULL
+BEGIN
+    CREATE TABLE dbo.CodeScanIssue (
+        Id          INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        ScanId      INT            NOT NULL,
+        RuleName    NVARCHAR(100)  NOT NULL DEFAULT N'',
+        Severity    NVARCHAR(20)   NOT NULL DEFAULT N'Warning',
+        FilePath    NVARCHAR(500)  NOT NULL DEFAULT N'',
+        LineNumber  INT            NOT NULL DEFAULT 0,
+        LineContent NVARCHAR(500)  NOT NULL DEFAULT N'',
+        CONSTRAINT FK_CodeScanIssue_Scan FOREIGN KEY (ScanId) REFERENCES dbo.CodeScanResult(Id) ON DELETE CASCADE
+    );
+    CREATE INDEX IX_CodeScanIssue_Scan ON dbo.CodeScanIssue(ScanId);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'CodeScanIssue', N'代码扫描问题明细';
+GO
+
+-- ========== 代码扫描：视图/菜单/权限点（行级幂等） ==========
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'code-scan')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'code-scan', N'代码检测', N'/src/common/views/CodeScanView.vue', N'/code-scan', 44);
+GO
+
+DECLARE @CodeScanViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'code-scan');
+IF @CodeScanViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'code-scan')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@CodeScanViewId, N'code-scan', N'查看代码检测', 0);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'code-scan:edit')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@CodeScanViewId, N'code-scan:edit', N'编辑规则', 1);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'code-scan:run')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@CodeScanViewId, N'code-scan:run', N'执行扫描', 2);
+END
+GO
+
+-- 菜单：挂「开发工具」组下
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'code-scan')
+    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type)
+    SELECT p.Id, N'代码检测', N'/code-scan', 0, 1, 0, 1, 1, N'code-scan', N'/src/common/views/CodeScanView.vue', 6, 1
+    FROM (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'开发工具' AND Page IS NULL AND Name IS NULL ORDER BY Id) p;
+GO
+
+-- admin 角色自动拥有代码扫描菜单
+INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
+SELECT r.Id, m.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
+WHERE r.Code = N'admin' AND m.Name = N'code-scan'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
+GO
+
+-- admin 角色自动拥有所有视图权限点
+INSERT INTO dbo.SysRoleViewPerm (RoleId, ViewPermId)
+SELECT r.Id, vp.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysViewPermission vp
+WHERE r.Code = N'admin'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleViewPerm rvp WHERE rvp.RoleId = r.Id AND rvp.ViewPermId = vp.Id);
+GO
+
 PRINT N'ConvenientSystem 数据库初始化完成';
 GO

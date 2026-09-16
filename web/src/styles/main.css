@@ -1134,13 +1134,16 @@ body {
 
 .stretch-dialog .el-dialog__footer {
   flex-shrink: 0;
-  padding: 2px 0;
+  padding: 4px 20px !important;
   border-top: 1px solid var(--border);
 }
 
-/* 去除 Element Plus 弹层底部默认内边距 */
+/* 收紧弹层底部：body 底部 8px + footer 4px，避免大片留白 */
 .el-dialog__footer {
-  padding: 2px 0 !important;
+  padding: 4px 20px !important;
+}
+.el-dialog__body {
+  padding-bottom: 8px !important;
 }
 
 /* ============ 第三方外链内嵌容器 ============ */
@@ -1347,6 +1350,32 @@ body {
     transparent 55%, transparent 72%,
     var(--brand) 72%, var(--brand) 82%,
     transparent 82%, transparent 100%);
+}
+
+/* ============ 聊天弹窗（ChatDialog，class="chat-dialog"）：高度钉死、弹窗体禁滚 ============ */
+/* 必须放全局且用类选择器：el-dialog 的 class/data-* 属性会落到 .el-dialog 根元素上，
+   但 scoped 的 data-v 过不了 EP 内部 Teleport→Transition→ElOverlay→FocusTrap→DialogContent 组件链，
+   组件内 scoped 样式对 .el-dialog 是死代码（曾长期表现为弹窗体整体滚动条）。
+   同 .stretch-dialog / .ranking-dialog 的全局类选择器模式。 */
+.el-dialog.chat-dialog {
+  display: flex;
+  flex-direction: column;
+  /* 固定总高：页签/搜索/会话头/输入区恒完整可见，仅会话列表与消息区内部滚动（微信式）；
+     !important 防拉伸手柄的内联 height 覆盖固定高度 */
+  height: 96vh !important;
+  max-height: 96vh !important;
+  overflow: hidden !important;
+}
+.el-dialog.chat-dialog .el-dialog__body {
+  padding: 0 !important;
+  /* flex 列容器：ChatView 根 .chat-page 以 flex:1 吃满（不依赖 height:100% 包含块解析） */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* 弹窗体禁滚：撤销上方全局 body 的 overflow:auto 与 stable 轨道预留 */
+  overflow: hidden !important;
+  scrollbar-gutter: auto !important;
 }
 
 /* ============================================================

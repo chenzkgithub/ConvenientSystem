@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
@@ -95,39 +96,66 @@ namespace ConvenientSystem.Service.Common
             var visible = members.Where(m => !m.Hidden && convs.ContainsKey(m.ConversationId)).ToList();
             if (visible.Count == 0) return new List<ChatConversationDto>();
 
-            var peerIds = visible.Select(m => ParsePeerFromKey(convs[m.ConversationId].UserKey, userId)).Distinct().ToList();
+            // 单聊：从 UserKey 解析对方 Id；群聊：无 PeerId
+            var singleConvIds = visible.Where(m => convs[m.ConversationId].ConversationType == 0).Select(m => m.ConversationId).ToList();
+            var peerIds = singleConvIds.Select(id => ParsePeerFromKey(convs[id].UserKey, userId)).Distinct().ToList();
             var peerMap = GetUserInfoMap(peerIds);
             var (blockedByMe, blockedMe) = GetBlockFlags(userId, peerIds);
+
+            // 群聊：统计每个会话的成员数
+            var groupConvIds = visible.Where(m => convs[m.ConversationId].ConversationType == 1).Select(m => m.ConversationId).ToList();
+            var memberCountMap = groupConvIds.Count == 0
+                ? new Dictionary<long, int>()
+                : _fsql.Select<ChatConversationMemberEntity>()
+                    .Where(mm => groupConvIds.Contains(mm.ConversationId))
+                    .GroupBy(mm => mm.ConversationId)
+                    .ToList(g => new { ConvId = g.Key, Count = g.Count() })
+                    .ToDictionary(x => x.ConvId, x => x.Count);
+
+            // 用最后一条实体实时生成预览：兼容首版图片曾被错误保存为 MsgType=0 的历史数据。
+            var lastIds = visible.Select(m => convs[m.ConversationId].LastMessageId).Where(id => id > 0).Distinct().ToList();
+            var lastMessageMap = lastIds.Count == 0
+                ? new Dictionary<long, ChatMessageEntity>()
+                : _fsql.Select<ChatMessageEntity>().Where(msg => lastIds.Contains(msg.Id)).ToList().ToDictionary(msg => msg.Id);
 
             var result = new List<ChatConversationDto>();
             foreach (var m in visible)
             {
                 var conv = convs[m.ConversationId];
-                var peerId = ParsePeerFromKey(conv.UserKey, userId);
-                var peer = peerMap.GetValueOrDefault(peerId);
+                var isGroup = conv.ConversationType == 1;
+                var peerId = isGroup ? Guid.Empty : ParsePeerFromKey(conv.UserKey, userId);
+                var peer = isGroup ? null : peerMap.GetValueOrDefault(peerId);
 
-                // 未读数：仅当最后一条非我发送且晚于水位时才精确统计
+                // 我方已单方面删除到该消息：预览/时间置空（对方不受影响），会话排到列表底部
+                var cleared = conv.LastMessageId > 0 && conv.LastMessageId <= m.ClearBeforeMessageId;
+
+                // 未读数：仅当最后一条非我发送、晚于水位且未被我删除时才精确统计
                 //（绝大多数会话为 0，先按会话冗余字段过滤，避免对全部会话逐个 count）
                 var unread = 0;
-                if (conv.LastSenderId.HasValue && conv.LastSenderId != userId && conv.LastMessageId > m.ReadMessageId)
+                if (!cleared && conv.LastSenderId.HasValue && conv.LastSenderId != userId && conv.LastMessageId > m.ReadMessageId)
                     unread = (int)_fsql.Select<ChatMessageEntity>()
-                        .Where(msg => msg.ConversationId == conv.Id && msg.Id > m.ReadMessageId && msg.SenderId != userId)
+                        .Where(msg => msg.ConversationId == conv.Id && msg.Id > m.ReadMessageId && msg.Id > m.ClearBeforeMessageId && msg.SenderId != userId)
                         .Count();
 
                 result.Add(new ChatConversationDto
                 {
                     ConversationId = conv.Id,
+                    ConversationType = conv.ConversationType,
                     PeerId = peerId,
                     PeerAccount = peer?.Account ?? peerId.ToString(),
-                    PeerDisplayName = peer?.DisplayName,
-                    PeerAvatar = peer?.Avatar,
-                    LastMessageText = conv.LastMessageText,
-                    LastMessageTime = conv.LastMessageTime,
-                    LastFromMe = conv.LastSenderId == userId,
+                    PeerDisplayName = isGroup ? conv.GroupName : peer?.DisplayName,
+                    PeerAvatar = isGroup ? conv.Avatar : peer?.Avatar,
+                    GroupName = isGroup ? conv.GroupName : null,
+                    MemberCount = isGroup ? memberCountMap.GetValueOrDefault(conv.Id, 1) : 2,
+                    LastMessageText = cleared ? null : (lastMessageMap.TryGetValue(conv.LastMessageId, out var last)
+                        ? TypePreview(last.MsgType, last.Content)
+                        : conv.LastMessageText),
+                    LastMessageTime = cleared ? null : conv.LastMessageTime,
+                    LastFromMe = cleared ? false : conv.LastSenderId == userId,
                     UnreadCount = unread,
                     Muted = m.Muted,
-                    BlockedByMe = blockedByMe.Contains(peerId),
-                    BlockedMe = blockedMe.Contains(peerId),
+                    BlockedByMe = !isGroup && blockedByMe.Contains(peerId),
+                    BlockedMe = !isGroup && blockedMe.Contains(peerId),
                 });
             }
 
@@ -298,15 +326,17 @@ namespace ConvenientSystem.Service.Common
 
         // ===== 消息 =====
 
-        /// <summary>会话历史消息（正序返回）：beforeId&gt;0 时取该 Id 之前的一页（向上翻页）。</summary>
+        /// <summary>会话历史消息（正序返回）：校验成员身份；beforeId&gt;0 时取该 Id 之前的一页（向上翻页）；我方删除水位之前的消息不返回。</summary>
         public List<ChatMessageDto> GetMessages(Guid userId, long conversationId, long beforeId, int limit)
         {
-            EnsureMember(userId, conversationId);
+            var member = EnsureMember(userId, conversationId);
             var take = limit is >= 1 and <= 100 ? limit : MessagePageSize;
 
             var messages = _fsql.Select<ChatMessageEntity>()
                 .Where(m => m.ConversationId == conversationId)
                 .WhereIf(beforeId > 0, m => m.Id < beforeId)
+                // 单方面删除水位：仅过滤我方视图，对方（水位 0）不受影响
+                .WhereIf(member.ClearBeforeMessageId > 0, m => m.Id > member.ClearBeforeMessageId)
                 .OrderByDescending(m => m.Id)
                 .Take(take)
                 .ToList();
@@ -314,11 +344,16 @@ namespace ConvenientSystem.Service.Common
 
             if (messages.Count == 0) return new List<ChatMessageDto>();
 
-            var senderMap = GetUserInfoMap(messages.Select(m => m.SenderId).ToList());
+            // 发送者信息：消息发送者 + 引用消息发送者一并批量查
+            var senderIds = messages.Select(m => m.SenderId)
+                .Concat(messages.Where(m => m.QuoteSenderId.HasValue).Select(m => m.QuoteSenderId!.Value))
+                .Distinct().ToList();
+            var senderMap = GetUserInfoMap(senderIds);
 
             return messages.Select(m =>
             {
                 var s = senderMap.GetValueOrDefault(m.SenderId);
+                var qs = m.QuoteSenderId.HasValue ? senderMap.GetValueOrDefault(m.QuoteSenderId.Value) : null;
                 return new ChatMessageDto
                 {
                     Id = m.Id,
@@ -327,35 +362,121 @@ namespace ConvenientSystem.Service.Common
                     SenderAccount = s?.Account ?? m.SenderId.ToString(),
                     SenderDisplayName = s?.DisplayName,
                     Content = m.Content,
+                    MsgType = NormalizeMsgType(m.MsgType, m.Content),
+                    QuoteId = m.QuoteId,
+                    QuoteText = m.QuoteText,
+                    QuoteSenderId = m.QuoteSenderId,
+                    QuoteSenderName = qs == null ? null : (qs.DisplayName ?? qs.Account),
+                    RefRecordId = m.RefRecordId,
+                    Mentions = ParseMentions(m.Mentions),
                     CreateTime = m.CreateTime,
                 };
             }).ToList();
         }
 
-        /// <summary>发送消息：双向屏蔽校验 → 落库 → 更新会话最后消息 → 双方取消隐藏。</summary>
-        public ChatMessageDto SendMessage(Guid userId, Guid peerId, string content)
+        /// <summary>按 Id 查询单条消息：校验成员身份、消息属本会话、且在我方清空水位之后；用于引用点击定位，区分“未加载”与“已不可见”。</summary>
+        public ChatMessageDto? GetMessageById(Guid userId, long conversationId, long messageId)
+        {
+            var member = EnsureMember(userId, conversationId);
+            var m = _fsql.Select<ChatMessageEntity>()
+                .Where(x => x.Id == messageId && x.ConversationId == conversationId)
+                .First();
+            if (m == null) return null;
+            if (member.ClearBeforeMessageId > 0 && m.Id <= member.ClearBeforeMessageId) return null;
+
+            var senderMap = GetUserInfoMap(new List<Guid> { m.SenderId });
+            var s = senderMap.GetValueOrDefault(m.SenderId);
+            return new ChatMessageDto
+            {
+                Id = m.Id,
+                ConversationId = m.ConversationId,
+                SenderId = m.SenderId,
+                SenderAccount = s?.Account ?? m.SenderId.ToString(),
+                SenderDisplayName = s?.DisplayName,
+                Content = m.Content,
+                MsgType = NormalizeMsgType(m.MsgType, m.Content),
+                QuoteId = m.QuoteId,
+                QuoteText = m.QuoteText,
+                QuoteSenderId = m.QuoteSenderId,
+                QuoteSenderName = null,
+                RefRecordId = m.RefRecordId,
+                Mentions = ParseMentions(m.Mentions),
+                CreateTime = m.CreateTime,
+            };
+        }
+
+        /// <summary>发送消息：单聊走 peerId；群聊 peerId 为 Empty，由 conversationId 定位会话。双向屏蔽仅对单聊生效；quoteId&gt;0 时引用本会话已有消息（快照固化）。</summary>
+        public ChatMessageDto SendMessage(Guid userId, Guid peerId, long conversationId, string content, long quoteId = 0, int msgType = 0, List<string>? mentions = null)
         {
             var text = (content ?? string.Empty).Trim();
             if (text.Length == 0) throw new BadRequestException("消息内容不能为空");
             if (text.Length > MaxMessageLength)
                 throw new BadRequestException($"消息长度不能超过 {MaxMessageLength} 字");
+            if (msgType is not (0 or 1))
+                throw new BadRequestException("不支持的消息类型");
+            if (msgType == 1 && !IsChatImagePath(text))
+                throw new BadRequestException("图片路径格式无效");
 
-            if (peerId == userId) throw new BadRequestException("不能给自己发送消息");
-            var peerExists = _fsql.Select<SysUserEntity>()
-                .Where(u => u.Id == peerId && u.Enabled && !u.IsDeleted)
-                .Any();
-            if (!peerExists) throw new NotFoundException("对方用户不存在或已停用");
-
-            // 双向屏蔽即拒收：透明提示而非静默投递（避免"发出去了对方却看不到"的误解）
-            var (blockedByMe, blockedMe) = GetBlockFlags(userId, new List<Guid> { peerId });
-            if (blockedByMe.Contains(peerId))
-                throw new BadRequestException("你已屏蔽对方，请先取消屏蔽后再发送消息");
-            if (blockedMe.Contains(peerId))
-                throw new BadRequestException("对方暂无法接收你的消息");
-
-            var convId = GetOrCreateConversation(userId, peerId);
+            long convId;
             var now = DateTime.Now;
-            var preview = text.Length > PreviewLength ? text[..PreviewLength] : text;
+            ChatConversationEntity conv;
+
+            if (peerId != Guid.Empty)
+            {
+                // 单聊
+                if (peerId == userId) throw new BadRequestException("不能给自己发送消息");
+                var peerExists = _fsql.Select<SysUserEntity>()
+                    .Where(u => u.Id == peerId && u.Enabled && !u.IsDeleted)
+                    .Any();
+                if (!peerExists) throw new NotFoundException("对方用户不存在或已停用");
+
+                // 双向屏蔽即拒收：透明提示而非静默投递
+                var (blockedByMe, blockedMe) = GetBlockFlags(userId, new List<Guid> { peerId });
+                if (blockedByMe.Contains(peerId))
+                    throw new BadRequestException("你已屏蔽对方，请先取消屏蔽后再发送消息");
+                if (blockedMe.Contains(peerId))
+                    throw new BadRequestException("对方暂无法接收你的消息");
+
+                convId = GetOrCreateConversation(userId, peerId);
+                conv = _fsql.Select<ChatConversationEntity>().Where(c => c.Id == convId).First()
+                    ?? throw new NotFoundException("会话不存在");
+            }
+            else
+            {
+                // 群聊
+                if (conversationId <= 0) throw new BadRequestException("群聊消息须指定 conversationId");
+                var member = EnsureMember(userId, conversationId);
+                convId = conversationId;
+                conv = _fsql.Select<ChatConversationEntity>().Where(c => c.Id == convId).First()
+                    ?? throw new NotFoundException("会话不存在");
+                if (conv.ConversationType != 1) throw new BadRequestException("该会话不是群聊");
+                // 更新当前成员的最后活跃时间等可在此扩展
+            }
+
+            // 引用快照：校验原消息属于本会话且在我方可见范围，固化文本供日后展示
+            string? quoteText = null;
+            Guid? quoteSenderId = null;
+            string? quoteSenderName = null;
+            if (quoteId > 0)
+            {
+                var quoted = _fsql.Select<ChatMessageEntity>()
+                    .Where(m => m.Id == quoteId && m.ConversationId == convId)
+                    .First();
+                if (quoted == null) throw new BadRequestException("引用的消息不存在或不属于该会话");
+
+                var myMember = _fsql.Select<ChatConversationMemberEntity>()
+                    .Where(m => m.ConversationId == convId && m.UserId == userId)
+                    .First(m => m.ClearBeforeMessageId);
+                if (quoted.Id <= myMember) throw new BadRequestException("引用的消息已被你删除");
+
+                quoteSenderId = quoted.SenderId;
+                quoteText = TypePreview(quoted.MsgType, quoted.Content);
+                var quotedSender = GetUserInfoMap(new List<Guid> { quoted.SenderId }).GetValueOrDefault(quoted.SenderId);
+                quoteSenderName = quotedSender == null ? null : (quotedSender.DisplayName ?? quotedSender.Account);
+            }
+
+            var preview = TypePreview(msgType, text);
+            var mentionJson = mentions is { Count: > 0 } ? JsonSerializer.Serialize(mentions) : null;
 
             long messageId = 0;
             _fsql.Transaction(() =>
@@ -364,7 +485,12 @@ namespace ConvenientSystem.Service.Common
                 {
                     ConversationId = convId,
                     SenderId = userId,
+                    MsgType = msgType,
                     Content = text,
+                    QuoteId = quoteId,
+                    QuoteText = quoteText,
+                    QuoteSenderId = quoteSenderId,
+                    Mentions = mentionJson,
                     CreateTime = now,
                 }).ExecuteIdentity();
 
@@ -376,7 +502,7 @@ namespace ConvenientSystem.Service.Common
                     .Where(c => c.Id == convId)
                     .ExecuteAffrows();
 
-                // 双方取消隐藏：删除过的会话收到新消息自动恢复显示
+                // 双方/全体成员取消隐藏：删除过的会话收到新消息自动恢复显示
                 _fsql.Update<ChatConversationMemberEntity>()
                     .Set(m => m.Hidden, false)
                     .Where(m => m.ConversationId == convId)
@@ -392,8 +518,101 @@ namespace ConvenientSystem.Service.Common
                 SenderAccount = me?.Account ?? string.Empty,
                 SenderDisplayName = me?.DisplayName,
                 Content = text,
+                MsgType = msgType,
+                QuoteId = quoteId,
+                QuoteText = quoteText,
+                QuoteSenderId = quoteSenderId,
+                QuoteSenderName = quoteSenderName,
+                Mentions = mentions ?? new List<string>(),
                 CreateTime = now,
             };
+        }
+
+        /// <summary>创建群聊：群名必填，成员至少 1 人（创建者自动加入），上限 1000 人。</summary>
+        public ChatConversationDto CreateGroup(Guid creatorId, string name, List<Guid> memberIds)
+        {
+            var groupName = (name ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(groupName)) throw new BadRequestException("群聊名称不能为空");
+            if (groupName.Length > 100) throw new BadRequestException("群聊名称不能超过 100 字符");
+
+            var distinctMembers = memberIds?.Where(id => id != Guid.Empty && id != creatorId).Distinct().ToList() ?? new List<Guid>();
+            if (distinctMembers.Count == 0) throw new BadRequestException("群聊至少需要一名其他成员");
+            if (distinctMembers.Count > 999) throw new BadRequestException("群聊人数不能超过 1000 人");
+
+            // 校验成员存在且启用
+            var validUserIds = _fsql.Select<SysUserEntity>()
+                .Where(u => distinctMembers.Contains(u.Id) && u.Enabled && !u.IsDeleted)
+                .ToList(u => u.Id);
+            if (validUserIds.Count != distinctMembers.Count)
+                throw new BadRequestException("部分成员不存在或已停用");
+
+            var now = DateTime.Now;
+            long convId = 0;
+            _fsql.Transaction(() =>
+            {
+                convId = _fsql.Insert(new ChatConversationEntity
+                {
+                    UserKey = string.Empty,
+                    ConversationType = 1,
+                    GroupName = groupName,
+                    CreatorId = creatorId,
+                    CreateTime = now,
+                }).ExecuteIdentity();
+
+                var allMembers = new List<Guid> { creatorId }.Concat(validUserIds).ToList();
+                _fsql.Insert(allMembers.Select(uid => new ChatConversationMemberEntity
+                {
+                    ConversationId = convId,
+                    UserId = uid,
+                    Role = uid == creatorId ? 1 : 0,
+                    CreateTime = now,
+                }).ToList()).ExecuteAffrows();
+            });
+
+            // 返回会话列表项（前端直接插入列表）
+            return new ChatConversationDto
+            {
+                ConversationId = convId,
+                ConversationType = 1,
+                PeerId = Guid.Empty,
+                PeerAccount = string.Empty,
+                PeerDisplayName = groupName,
+                PeerAvatar = null,
+                GroupName = groupName,
+                MemberCount = validUserIds.Count + 1,
+                UnreadCount = 0,
+                Muted = false,
+                BlockedByMe = false,
+                BlockedMe = false,
+            };
+        }
+
+        /// <summary>获取群聊成员列表：仅会话成员可查看。</summary>
+        public List<ChatGroupMemberDto> GetGroupMembers(Guid userId, long conversationId)
+        {
+            EnsureMember(userId, conversationId);
+            var conv = _fsql.Select<ChatConversationEntity>().Where(c => c.Id == conversationId).First();
+            if (conv == null || conv.ConversationType != 1) throw new NotFoundException("群聊不存在");
+
+            var members = _fsql.Select<ChatConversationMemberEntity>()
+                .Where(m => m.ConversationId == conversationId)
+                .ToList();
+            var userIds = members.Select(m => m.UserId).ToList();
+            var userMap = GetUserInfoMap(userIds);
+
+            return members.Select(m =>
+            {
+                var u = userMap.GetValueOrDefault(m.UserId);
+                return new ChatGroupMemberDto
+                {
+                    UserId = m.UserId,
+                    Account = u?.Account ?? m.UserId.ToString(),
+                    DisplayName = u?.DisplayName,
+                    Avatar = u?.Avatar,
+                    Online = false, // Api 层填充
+                    Role = m.Role,
+                };
+            }).ToList();
         }
 
         /// <summary>推进会话已读水位到指定消息（只进不退；校验消息属于该会话）。返回是否发生推进。</summary>
@@ -452,14 +671,14 @@ namespace ConvenientSystem.Service.Common
                 .ToList()
                 .ToDictionary(c => c.Id);
 
-            // 先按会话冗余字段过滤出"可能有未读"的会话（隐藏/最后是我发的直接跳过），再逐会话精确统计
+            // 先按会话冗余字段过滤出"可能有未读"的会话（隐藏/最后是我发的/已单方面删除的直接跳过），再逐会话精确统计
             var total = 0;
             foreach (var m in members)
             {
                 if (m.Hidden || !convs.TryGetValue(m.ConversationId, out var conv)) continue;
-                if (conv.LastSenderId != userId && conv.LastMessageId > m.ReadMessageId)
+                if (conv.LastSenderId != userId && conv.LastMessageId > m.ReadMessageId && conv.LastMessageId > m.ClearBeforeMessageId)
                     total += (int)_fsql.Select<ChatMessageEntity>()
-                        .Where(msg => msg.ConversationId == conv.Id && msg.Id > m.ReadMessageId && msg.SenderId != userId)
+                        .Where(msg => msg.ConversationId == conv.Id && msg.Id > m.ReadMessageId && msg.Id > m.ClearBeforeMessageId && msg.SenderId != userId)
                         .Count();
             }
             return total;
@@ -486,5 +705,243 @@ namespace ConvenientSystem.Service.Common
                 .Where(m => m.ConversationId == conversationId && m.UserId == userId)
                 .ExecuteAffrows();
         }
+
+        // ===== 单方面删除 / 转发 =====
+
+        /// <summary>单方面清空我方聊天记录：删除水位推到会话当前最大消息 Id（消息本体保留，对方不受影响）；已读水位同步推进使未读归零。幂等：重复清空无副作用。</summary>
+        public void ClearMessagesMySide(Guid userId, long conversationId)
+        {
+            var member = EnsureMember(userId, conversationId);
+            var maxId = _fsql.Select<ChatMessageEntity>()
+                .Where(m => m.ConversationId == conversationId)
+                .OrderByDescending(m => m.Id)
+                .First(m => m.Id);
+            var watermark = Math.Max(maxId, member.ClearBeforeMessageId);
+            if (watermark == member.ClearBeforeMessageId && watermark <= member.ReadMessageId) return; // 无新消息且已清空：幂等返回
+
+            _fsql.Update<ChatConversationMemberEntity>()
+                .Set(m => m.ClearBeforeMessageId, watermark)
+                .Set(m => m.ReadMessageId, Math.Max(watermark, member.ReadMessageId))
+                .Where(m => m.Id == member.Id)
+                .ExecuteAffrows();
+        }
+
+        /// <summary>逐条转发：源消息逐条复制到目标会话（发送者=我，不带引用），返回新生成的消息列表（供 Api 层推送给双方）。</summary>
+        public List<ChatMessageDto> ForwardMessages(Guid userId, List<long> messageIds, Guid targetPeerId)
+        {
+            var (sourceConvId, ordered) = LoadForwardableMessages(userId, messageIds);
+            var targetConvId = EnsureForwardTarget(userId, targetPeerId);
+            var now = DateTime.Now;
+
+            var result = new List<ChatMessageDto>();
+            _fsql.Transaction(() =>
+            {
+                long lastId = 0;
+                foreach (var src in ordered)
+                {
+                    // 兼容首版图片误存 MsgType=0：转发时顺带落成正确类型。
+                    var srcType = NormalizeMsgType(src.MsgType, src.Content);
+                    lastId = _fsql.Insert(new ChatMessageEntity
+                    {
+                        ConversationId = targetConvId,
+                        SenderId = userId,
+                        MsgType = srcType,
+                        Content = src.Content,
+                        CreateTime = now,
+                    }).ExecuteIdentity();
+                    result.Add(new ChatMessageDto
+                    {
+                        Id = lastId,
+                        ConversationId = targetConvId,
+                        SenderId = userId,
+                        Content = src.Content,
+                        MsgType = srcType,
+                        CreateTime = now,
+                    });
+                }
+
+                var last = ordered[^1];
+                TouchConversation(targetConvId, userId, lastId, TypePreview(last.MsgType, last.Content), now);
+            });
+            return result;
+        }
+
+        /// <summary>合并转发：源消息快照固化为 ChatForwardRecord + 目标会话插一条“聊天记录”卡片；返回卡片消息（供 Api 层推送给双方）。</summary>
+        public ChatMessageDto ForwardMerged(Guid userId, List<long> messageIds, Guid targetPeerId)
+        {
+            var (sourceConvId, ordered) = LoadForwardableMessages(userId, messageIds);
+            var targetConvId = EnsureForwardTarget(userId, targetPeerId);
+            var now = DateTime.Now;
+
+            // 快照：保留原发送者名（删除后仍可看）
+            var senderMap = GetUserInfoMap(ordered.Select(m => m.SenderId).Distinct().ToList());
+            var items = ordered.Select(m =>
+            {
+                var s = senderMap.GetValueOrDefault(m.SenderId);
+                return new ChatForwardItemDto
+                {
+                    SenderName = s == null ? m.SenderId.ToString() : (s.DisplayName ?? s.Account),
+                    MsgType = NormalizeMsgType(m.MsgType, m.Content),
+                    Content = m.Content,
+                    Time = m.CreateTime,
+                };
+            }).ToList();
+
+            // 标题：“我和某某的聊天记录”
+            var conv = _fsql.Select<ChatConversationEntity>().Where(c => c.Id == sourceConvId).First();
+            var peerId = conv == null ? Guid.Empty : ParsePeerFromKey(conv.UserKey, userId);
+            var nameMap = GetUserInfoMap(new List<Guid> { userId, peerId });
+            var myInfo = nameMap.GetValueOrDefault(userId);
+            var peerInfo = nameMap.GetValueOrDefault(peerId);
+            var myName = myInfo == null ? "我" : (myInfo.DisplayName ?? myInfo.Account);
+            var peerName = peerInfo == null ? "对方" : (peerInfo.DisplayName ?? peerInfo.Account);
+            var title = $"{myName}和{peerName}的聊天记录";
+
+            long messageId = 0;
+            long recordId = 0;
+            _fsql.Transaction(() =>
+            {
+                recordId = _fsql.Insert(new ChatForwardRecordEntity
+                {
+                    CreatorId = userId,
+                    Title = title,
+                    ContentJson = JsonSerializer.Serialize(items),
+                    CreateTime = now,
+                }).ExecuteIdentity();
+
+                messageId = _fsql.Insert(new ChatMessageEntity
+                {
+                    ConversationId = targetConvId,
+                    SenderId = userId,
+                    MsgType = 2,
+                    Content = title,
+                    RefRecordId = recordId,
+                    CreateTime = now,
+                }).ExecuteIdentity();
+
+                TouchConversation(targetConvId, userId, messageId, TypePreview(2, string.Empty), now);
+            });
+
+            return new ChatMessageDto
+            {
+                Id = messageId,
+                ConversationId = targetConvId,
+                SenderId = userId,
+                Content = title,
+                MsgType = 2,
+                RefRecordId = recordId,
+                CreateTime = now,
+            };
+        }
+
+        /// <summary>查看合并转发记录（快照只读）：创建者，或收到过该卡片的人可看。</summary>
+        public ChatForwardRecordDto GetForwardRecord(Guid userId, long recordId)
+        {
+            var record = _fsql.Select<ChatForwardRecordEntity>().Where(r => r.Id == recordId).First();
+            if (record == null) throw new NotFoundException("聊天记录不存在");
+
+            if (record.CreatorId != userId)
+            {
+                // 非创建者：必须是收到过该卡片消息的会话成员（未收到过卡片的人无法凭 Id 偷看）
+                var cardConvIds = _fsql.Select<ChatMessageEntity>()
+                    .Where(m => m.RefRecordId == recordId)
+                    .ToList(m => m.ConversationId)
+                    .Distinct().ToList();
+                var allowed = cardConvIds.Count > 0 && _fsql.Select<ChatConversationMemberEntity>()
+                    .Where(mm => cardConvIds.Contains(mm.ConversationId) && mm.UserId == userId)
+                    .Any();
+                if (!allowed) throw new NotFoundException("聊天记录不存在");
+            }
+
+            var items = (JsonSerializer.Deserialize<List<ChatForwardItemDto>>(record.ContentJson) ?? new List<ChatForwardItemDto>())
+                .Where(i => i != null).ToList();
+            return new ChatForwardRecordDto { Id = record.Id, Title = record.Title, Items = items };
+        }
+
+        // ===== 转发辅助 =====
+
+        /// <summary>加载特转发的源消息：须非空、上限 50、属同一会话、我是该会话成员且消息在我方可见范围（未被单方面删除）。</summary>
+        private (long SourceConvId, List<ChatMessageEntity> Ordered) LoadForwardableMessages(Guid userId, List<long> messageIds)
+        {
+            if (messageIds == null || messageIds.Count == 0) throw new BadRequestException("未选择要转发的消息");
+            if (messageIds.Count > 50) throw new BadRequestException("单次最多转发 50 条消息");
+
+            var msgs = _fsql.Select<ChatMessageEntity>().Where(m => messageIds.Contains(m.Id)).ToList();
+            if (msgs.Count != messageIds.Distinct().Count()) throw new BadRequestException("部分消息不存在");
+
+            var sourceConvId = msgs[0].ConversationId;
+            if (msgs.Any(m => m.ConversationId != sourceConvId)) throw new BadRequestException("只能转发同一会话内的消息");
+
+            var member = EnsureMember(userId, sourceConvId);
+            if (msgs.Any(m => m.Id <= member.ClearBeforeMessageId)) throw new BadRequestException("部分消息已被你删除，无法转发");
+
+            return (sourceConvId, msgs.OrderBy(m => m.Id).ToList());
+        }
+
+        /// <summary>转发目标校验：不能是自己/不存在/停用，双向屏蔽拒收（与 SendMessage 一致）；返回目标会话 Id。</summary>
+        private long EnsureForwardTarget(Guid userId, Guid targetPeerId)
+        {
+            if (targetPeerId == userId) throw new BadRequestException("不能转发给自己");
+            var peerExists = _fsql.Select<SysUserEntity>()
+                .Where(u => u.Id == targetPeerId && u.Enabled && !u.IsDeleted)
+                .Any();
+            if (!peerExists) throw new NotFoundException("目标用户不存在或已停用");
+
+            var (blockedByMe, blockedMe) = GetBlockFlags(userId, new List<Guid> { targetPeerId });
+            if (blockedByMe.Contains(targetPeerId))
+                throw new BadRequestException("你已屏蔽对方，请先取消屏蔽后再转发");
+            if (blockedMe.Contains(targetPeerId))
+                throw new BadRequestException("对方暂无法接收你的消息");
+
+            return GetOrCreateConversation(userId, targetPeerId);
+        }
+
+        /// <summary>转发后更新会话最后消息冗余 + 双方取消隐藏（转发到被删除的会话同样恢复显示）。</summary>
+        private void TouchConversation(long conversationId, Guid senderId, long lastMessageId, string preview, DateTime now)
+        {
+            _fsql.Update<ChatConversationEntity>()
+                .Set(c => c.LastMessageId, lastMessageId)
+                .Set(c => c.LastSenderId, senderId)
+                .Set(c => c.LastMessageTime, now)
+                .Set(c => c.LastMessageText, preview)
+                .Where(c => c.Id == conversationId)
+                .ExecuteAffrows();
+
+            _fsql.Update<ChatConversationMemberEntity>()
+                .Set(m => m.Hidden, false)
+                .Where(m => m.ConversationId == conversationId)
+                .ExecuteAffrows();
+        }
+
+        /// <summary>本服务生成的聊天图片相对路径格式；用于兼容首版误以文本类型保存的图片。</summary>
+        private static bool IsChatImagePath(string? content)
+            => !string.IsNullOrEmpty(content) && System.Text.RegularExpressions.Regex.IsMatch(
+                content, @"^\d{6}/[0-9a-f]{32}\.(jpg|jpeg|png|gif|webp|bmp)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        /// <summary>把首版误存为文本、但路径格式明确的图片规范为图片类型。</summary>
+        private static int NormalizeMsgType(int msgType, string content)
+            => msgType == 0 && IsChatImagePath(content) ? 1 : msgType;
+
+        /// <summary>解析 Mentions JSON 字符串为 Guid 字符串列表。</summary>
+        private static List<string> ParseMentions(string? mentionsJson)
+        {
+            if (string.IsNullOrWhiteSpace(mentionsJson)) return new List<string>();
+            try
+            {
+                var list = JsonSerializer.Deserialize<List<string>>(mentionsJson);
+                return list?.Where(s => !string.IsNullOrWhiteSpace(s)).ToList() ?? new List<string>();
+            }
+            catch { return new List<string>(); }
+        }
+
+        /// <summary>按消息类型生成预览文案：图片→[图片]，卡片→[聊天记录]，文本截断到预览长度。</summary>
+        private static string TypePreview(int msgType, string content)
+            => NormalizeMsgType(msgType, content) switch
+            {
+                1 => "[图片]",
+                2 => "[聊天记录]",
+                _ => content.Length > PreviewLength ? content[..PreviewLength] : content,
+            };
     }
 }

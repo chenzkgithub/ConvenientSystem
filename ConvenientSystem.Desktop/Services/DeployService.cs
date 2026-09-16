@@ -19,6 +19,7 @@ public sealed class DeployService
 {
     private readonly ConcurrentDictionary<string, DeployJob> _jobs = new();
     private readonly ILogger<DeployService> _logger;
+    private readonly DeployStore _store;
 
     // ============================ 部署历史（JSON 文件持久化） ============================
 
@@ -32,9 +33,10 @@ public sealed class DeployService
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public DeployService(ILogger<DeployService> logger)
+    public DeployService(ILogger<DeployService> logger, DeployStore store)
     {
         _logger = logger;
+        _store = store;
         LoadHistory();
     }
 
@@ -56,16 +58,33 @@ public sealed class DeployService
             Cts = new CancellationTokenSource(),
         };
         _jobs[jobId] = job;
+        _store.AddOrUpdate(ToRecord(job));
 
         _ = Task.Run(() => RunDeployAsync(job, request));
         return jobId;
     }
 
-    /// <summary>获取部署任务状态。</summary>
+    /// <summary>获取部署任务状态。内存中存在返回实时对象（含日志），否则尝试返回持久化摘要。</summary>
     public DeployJobDto? GetJob(string jobId)
     {
-        if (!_jobs.TryGetValue(jobId, out var job)) return null;
-        return ToDto(job);
+        if (_jobs.TryGetValue(jobId, out var job)) return ToDto(job);
+        var record = _store.Get(jobId);
+        return record == null ? null : ToDto(record);
+    }
+
+    /// <summary>获取所有部署任务：内存任务优先（含日志），再合并持久化记录中的历史任务。</summary>
+    public IReadOnlyList<DeployJobDto> GetAllJobs()
+    {
+        var result = new Dictionary<string, DeployJobDto>(StringComparer.Ordinal);
+        foreach (var record in _store.GetAll())
+        {
+            result[record.Id] = ToDto(record);
+        }
+        foreach (var job in _jobs.Values)
+        {
+            result[job.Id] = ToDto(job);
+        }
+        return result.Values.OrderByDescending(d => d.StartTime).ToList();
     }
 
     // ============================ 手动回滚（上一版本） ============================
@@ -92,6 +111,7 @@ public sealed class DeployService
             TotalSteps = 5,
         };
         _jobs[jobId] = job;
+        _store.AddOrUpdate(ToRecord(job));
 
         _ = Task.Run(() => RunRollbackAsync(job, request));
         return jobId;
@@ -127,6 +147,7 @@ public sealed class DeployService
         }
         finally
         {
+            _store.AddOrUpdate(ToRecord(job));
             RecordHistory(job);
         }
     }
@@ -363,6 +384,7 @@ public sealed class DeployService
         if (job.InCriticalSection)
             return (false, "正在执行关键切换步骤（启停容器/服务，仅需数秒），暂无法取消，请稍候");
         job.Cts?.Cancel();
+        _store.AddOrUpdate(ToRecord(job));
         return (true, "已发送取消信号，正在中断并还原部署前环境...");
     }
 
@@ -472,7 +494,8 @@ public sealed class DeployService
         }
         finally
         {
-            // 无论成功/失败/取消，结束时落一条历史记录（日志不持久化，仅存摘要）
+            // 无论成功/失败/取消，结束时持久化任务摘要并落一条历史记录（日志不持久化，仅存摘要）
+            _store.AddOrUpdate(ToRecord(job));
             RecordHistory(job);
         }
     }
@@ -1229,6 +1252,47 @@ public sealed class DeployService
             TotalSteps = job.TotalSteps,
             StepTitle = job.StepTitle,
             Log = job.Log.ToString(),
+        };
+    }
+
+    private static DeployJobDto ToDto(DeployJobRecord record)
+    {
+        return new DeployJobDto
+        {
+            Id = record.Id,
+            BuildName = record.BuildName,
+            BuildType = record.BuildType,
+            TargetOS = record.TargetOS,
+            SiteName = record.SiteName,
+            Host = record.Host,
+            Status = record.Status,
+            StartTime = record.StartTime,
+            CompletedTime = record.CompletedTime,
+            Progress = record.Progress,
+            CurrentStep = record.CurrentStep,
+            TotalSteps = record.TotalSteps,
+            StepTitle = record.StepTitle,
+            Log = string.Empty,
+        };
+    }
+
+    private static DeployJobRecord ToRecord(DeployJob job)
+    {
+        return new DeployJobRecord
+        {
+            Id = job.Id,
+            BuildName = job.BuildName,
+            BuildType = job.BuildType,
+            TargetOS = job.TargetOS,
+            SiteName = job.SiteName,
+            Host = job.Host,
+            Status = job.Status,
+            StartTime = job.StartTime,
+            CompletedTime = job.CompletedTime,
+            Progress = job.Progress,
+            CurrentStep = job.CurrentStep,
+            TotalSteps = job.TotalSteps,
+            StepTitle = job.StepTitle,
         };
     }
 }

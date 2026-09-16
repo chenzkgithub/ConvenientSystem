@@ -40,8 +40,8 @@ namespace ConvenientSystem.Service.Common
             }
         }
 
-        /// <summary>发布一条"Web 前端版本已更新"的系统通知，全员可见且不触发外部推送。</summary>
-        private void NotifyVersionChanged(string version, string? description, string action)
+        /// <summary>发布一条"Web 前端版本已更新"的系统通知，仅操作人可见（userId 为空时兑底全员）且不触发外部推送。</summary>
+        private void NotifyVersionChanged(string version, string? description, string action, Guid? userId)
         {
             try
             {
@@ -50,7 +50,8 @@ namespace ConvenientSystem.Service.Common
                 _noticeService.CreateSystemNotice(
                     $"Web 前端已更新至 {version}",
                     content,
-                    level: 2); // 重要：登录后会触发 NoticeAlert 弹窗提醒
+                    level: 2, // 重要：登录后会触发 NoticeAlert 弹窗提醒
+                    targetUserId: userId);
             }
             catch (Exception ex)
             {
@@ -149,7 +150,8 @@ namespace ConvenientSystem.Service.Common
             _logger.LogInformation("上传 Web 版本包 Version={Version} FileName={FileName} Size={Size}",
                 safeVersion, fileName, file.Length);
 
-            NotifyVersionChanged(safeVersion, entity.Description, "上传并激活");
+            // 全员广播的下载链接通知由 Controller 层发送，此处仅给上传者本人发操作确认
+            NotifyVersionChanged(safeVersion, entity.Description, "上传并激活", userId);
 
             return new WebPackageDto
             {
@@ -162,7 +164,7 @@ namespace ConvenientSystem.Service.Common
             };
         }
 
-        public void Activate(int id)
+        public void Activate(int id, Guid? userId)
         {
             var entity = _configDb.Select<WebPackageEntity>().Where(p => p.Id == id).First();
             if (entity == null) throw new ArgumentException("版本包不存在");
@@ -180,7 +182,7 @@ namespace ConvenientSystem.Service.Common
             });
             _logger.LogInformation("激活 Web 版本包 Id={Id} Version={Version}", id, entity.Version);
 
-            NotifyVersionChanged(entity.Version, entity.Description, "激活");
+            NotifyVersionChanged(entity.Version, entity.Description, "激活", userId);
         }
 
         public void Deactivate(int id)

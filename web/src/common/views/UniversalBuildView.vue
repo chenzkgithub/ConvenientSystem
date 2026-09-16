@@ -32,10 +32,12 @@ import {
   checkUniversalEnvironmentForType,
   startUniversalBuild,
   getUniversalBuildProgress,
+  getUniversalBuildAllJobs,
   cancelUniversalBuild,
   getUniversalDefaultOutputDir,
   startDeploy,
   getDeployProgress,
+  getDeployAllJobs,
   cancelDeploy,
   startRollback,
   checkSiteExists,
@@ -605,7 +607,7 @@ function ansiLineToHtml(line: string): string {
   return html
 }
 
-/** 根据日志行内容返回 CSS 类名（结构化标记优先，关键字兑底） */
+/** 根据日志行内容返回 CSS 类名（结构化标记优先，关键字兜底） */
 function logLineClass(line: string): string {
   const t = line.trim()
   const lower = t.toLowerCase()
@@ -1244,6 +1246,8 @@ function persistCards() {
     prePull: c.prePull,
     autoDeploy: c.autoDeploy,
     deployTemplateId: c.deployTemplateId,
+    jobId: c.jobId,
+    deployJobId: c.deployJobId,
   }))
   saveUiStateString(CARDS_STORAGE_KEY, JSON.stringify(data))
 }
@@ -1276,6 +1280,8 @@ async function restoreCards(): Promise<boolean> {
       card.prePull = !!item.prePull
       card.autoDeploy = !!item.autoDeploy
       card.deployTemplateId = item.deployTemplateId || ''
+      card.jobId = item.jobId || null
+      card.deployJobId = item.deployJobId || null
       cards.push(card)
     }
     selectedCardId.value = cards[0].id
@@ -1285,10 +1291,76 @@ async function restoreCards(): Promise<boolean> {
   }
 }
 
+/** 从后端恢复运行中/历史任务并关联到卡片。内存任务优先（含日志），持久化记录仅恢复摘要。 */
+async function restoreJobs() {
+  try {
+    const [buildJobs, deployJobs] = await Promise.all([
+      getUniversalBuildAllJobs(),
+      getDeployAllJobs(),
+    ])
+
+    const activeBuildStatuses: UniversalBuildStatus[] = ['Pending', 'Waiting', 'Running']
+    const activeDeployStatuses: DeployStatus[] = ['Running']
+
+    for (const dto of buildJobs) {
+      let card = cards.find((c) => c.jobId === dto.id)
+      if (!card && activeBuildStatuses.includes(dto.status)) {
+        card = createCard()
+        card.name = dto.name || defaultCardName(dto.type, cards.length + 1)
+        card.type = dto.type
+        card.projectDir = dto.projectDir || ''
+        card.outputDir = dto.outputDir || ''
+        cards.push(card)
+      }
+      if (card) {
+        card.jobId = dto.id
+        card.status = dto.status
+        card.progress = dto.progress ?? 0
+        card.log = dto.log || card.log
+        card.queuePosition = dto.queuePosition ?? 0
+        card.artifactSize = dto.artifactSize ?? null
+        card.startTime = dto.startTime ? new Date(dto.startTime).getTime() : card.startTime
+        card.endTime = dto.completedTime ? new Date(dto.completedTime).getTime() : null
+      }
+    }
+
+    for (const dto of deployJobs) {
+      let card = cards.find((c) => c.deployJobId === dto.id)
+      if (!card && activeDeployStatuses.includes(dto.status)) {
+        card = createCard()
+        card.name = dto.buildName || defaultCardName(dto.buildType, cards.length + 1)
+        card.type = dto.buildType
+        card.deployHost = dto.host || ''
+        card.deployServiceName = ''
+        cards.push(card)
+      }
+      if (card) {
+        card.deployJobId = dto.id
+        card.deployStatus = dto.status
+        card.deployProgress = dto.progress ?? 0
+        card.deployDisplayProgress = dto.progress ?? 0
+        card.deployLog = dto.log || card.deployLog
+        card.deployStepText = deployStepTextOf(dto)
+        card.deployStartTime = dto.startTime ? new Date(dto.startTime).getTime() : card.deployStartTime
+        card.deployEndTime = dto.completedTime ? new Date(dto.completedTime).getTime() : null
+      }
+    }
+
+    const hasActiveBuild = cards.some((c) =>
+      c.jobId && (c.status === 'Running' || c.status === 'Waiting'),
+    )
+    const hasActiveDeploy = cards.some((c) => c.deployJobId && c.deployStatus === 'Running')
+    if (hasActiveBuild) startPolling()
+    if (hasActiveDeploy) startDeployPolling()
+  } catch {
+    /* 恢复失败不影响页面主流程 */
+  }
+}
+
 // 配置字段变化时延迟保存（避免输入过程中高频写存储；日志/状态变化不触发）
 let persistTimer: number | null = null
 watch(
-  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.autoDeploy}|${c.deployTemplateId}`).join('\n'),
+  () => cards.map((c) => `${c.name}|${c.type}|${c.projectDir}|${c.outputDir}|${c.outputDirCustom}|${c.prePull}|${c.autoDeploy}|${c.deployTemplateId}|${c.jobId}|${c.deployJobId}`).join('\n'),
   () => {
     if (persistTimer) window.clearTimeout(persistTimer)
     persistTimer = window.setTimeout(persistCards, 500)
@@ -2383,6 +2455,8 @@ onMounted(async () => {
   if (!await restoreCards()) {
     addCard()
   }
+  // 从后端恢复运行中/历史构建与部署任务，刷新页面后仍能继续查看状态
+  await restoreJobs()
   restoreDeployRemember()
   loadTemplates()
   loadDeployTemplates()

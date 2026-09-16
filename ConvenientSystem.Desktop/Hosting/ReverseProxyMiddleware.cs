@@ -87,13 +87,17 @@ internal sealed class ReverseProxyMiddleware
         // Pipeline：流水线引擎在本机执行构建/部署（依赖本机服务与 SSH 凭据），不能转发到云
         // WebUpdate：页面内「发现新版本」提示条调用的本地热更新接口（替换本机 wwwroot），不能转发到云
         // ApiSpec：API 文档生成器扫描用户本机 C# 源码，云端容器读不到本机路径，必须走本地控制器
+        // ConfigEditor：配置文件热编辑操作本机/服务器本地文件（exe 编辑安装目录、服务器编辑服务器目录），不能转发到云
+        // CodeScan：代码扫描读取本机文件系统，转发到云后路径不存在，必须走本地控制器
         if (context.Request.Path.StartsWithSegments("/api/Common/Build", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/UniversalBuild", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/UiState", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/Pipeline", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/WebUpdate", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/Git", StringComparison.OrdinalIgnoreCase)
-            || context.Request.Path.StartsWithSegments("/api/Common/ApiSpec", StringComparison.OrdinalIgnoreCase))
+            || context.Request.Path.StartsWithSegments("/api/Common/ApiSpec", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/ConfigEditor", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/CodeScan", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;

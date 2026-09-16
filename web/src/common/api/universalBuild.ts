@@ -117,6 +117,8 @@ export interface DeployJobDto {
   buildType: UniversalBuildType
   targetOS: DeployTargetOS
   siteName: string
+  /** 目标服务器地址 */
+  host: string
   status: DeployStatus
   startTime: string
   completedTime?: string
@@ -194,6 +196,11 @@ export function getDeployProgress(request: DeployProgressRequest) {
   return httpPost<DeployJobDto | null>('/api/Common/UniversalBuild/DeployProgress', request)
 }
 
+/** 获取所有部署任务 */
+export function getDeployAllJobs() {
+  return httpPost<DeployJobDto[]>('/api/Common/UniversalBuild/DeployAllJobs', {})
+}
+
 /** 取消部署：中断执行并自动还原部署前环境 */
 export function cancelDeploy(request: DeployCancelRequest) {
   return httpPost<DeployCancelResult>('/api/Common/UniversalBuild/DeployCancel', request)
@@ -223,16 +230,17 @@ export function startRollback(request: RollbackRequest) {
   return httpPost<DeployJobDto>('/api/Common/UniversalBuild/Rollback', request)
 }
 
-/** 弹出文件夹选择对话框，返回用户选择的目录路径；initialDir 有值时对话框从该路径打开（文件路径自动取所在目录） */
+/** 弹出文件夹选择对话框，返回用户选择的目录路径；initialDir 有值时对话框从该路径打开（文件路径自动取所在目录）。
+ *  用户在系统对话框里可能停留很久：不弹全局遮罩、超时放宽到 10 分钟，避免超时误报且选择结果丢失 */
 export function selectFolder(initialDir?: string) {
   const q = initialDir?.trim() ? `?initialDir=${encodeURIComponent(initialDir.trim())}` : ''
-  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectFolder${q}`, {})
+  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectFolder${q}`, {}, undefined, 10 * 60 * 1000, { noLoading: true })
 }
 
 /** 弹出 SQL 文件选择对话框，返回选中的文件路径；取消返回 null。initialDir 语义同 selectFolder */
 export function selectSqlFile(initialDir?: string) {
   const q = initialDir?.trim() ? `?initialDir=${encodeURIComponent(initialDir.trim())}` : ''
-  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectSqlFile${q}`, {})
+  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectSqlFile${q}`, {}, undefined, 10 * 60 * 1000, { noLoading: true })
 }
 
 /** 独立打压缩包请求 */

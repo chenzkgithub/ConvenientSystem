@@ -79,7 +79,11 @@ export function markAllNoticeRead() {
   return httpPost<void>('/api/Common/Notice/MarkAllRead', {})
 }
 
-/** 构建/部署完成后创建一条系统通知（铃铛可见 + 右上角弹卡片，level=2 重要） */
+/**
+ * 构建/部署/流水线完成与版本包上传确认通知：仅当前操作人可见（后端定向用户 + Clients.User 推送，不打扰其他在线用户）。
+ * 铃铛可见 + 右上角弹卡片，level=2 重要。
+ * 版本包的全员发布广播（含下载链接）由后端 Controller 在上传接口内直接创建，前端不再代发。
+ */
 export function notifyBuildComplete(title: string, content: string) {
   return httpPost<void>('/api/Common/Notice/BuildNotify', { title, content }, undefined, undefined, { silent: true })
 }

@@ -9,21 +9,33 @@ namespace ConvenientSystem.Shared.Entity.Common
         [Column(IsPrimary = true, IsIdentity = true)]
         public long Id { get; set; }
 
-        /// <summary>双向归一键：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话（UQ 唯一）。</summary>
+        /// <summary>双向归一键：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话（UQ 唯一）；群聊为空。</summary>
         public string UserKey { get; set; } = string.Empty;
-
+        
+        /// <summary>会话类型：0=单聊 1=群聊。</summary>
+        public int ConversationType { get; set; }
+        
+        /// <summary>群聊名称（单聊为空）。</summary>
+        public string? GroupName { get; set; }
+        
+        /// <summary>群聊创建者 Id（单聊为空）。</summary>
+        public Guid? CreatorId { get; set; }
+        
+        /// <summary>群聊头像或单聊对方头像（data URL）。</summary>
+        public string? Avatar { get; set; }
+        
         /// <summary>最后一条消息 Id（0=尚无消息）。</summary>
         public long LastMessageId { get; set; }
-
+        
         /// <summary>最后一条消息发送者（未读判断：非我发送且 Id &gt; 我的已读水位）。</summary>
         public Guid? LastSenderId { get; set; }
-
+        
         /// <summary>最后一条消息时间。</summary>
         public DateTime? LastMessageTime { get; set; }
-
+        
         /// <summary>最后一条消息预览（会话列表展示，超长截断）。</summary>
         public string? LastMessageText { get; set; }
-
+        
         public DateTime CreateTime { get; set; } = DateTime.Now;
     }
 
@@ -49,6 +61,12 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>会话隐藏：删除会话即隐藏，收到新消息自动恢复显示。</summary>
         public bool Hidden { get; set; }
 
+        /// <summary>单方面删除水位：仅我方视图不显示 Id &lt;= 该值的消息（对方不受影响，消息本体保留）。</summary>
+        public long ClearBeforeMessageId { get; set; }
+
+        /// <summary>成员角色：0=成员 1=群主。</summary>
+        public int Role { get; set; }
+
         public DateTime CreateTime { get; set; } = DateTime.Now;
     }
 
@@ -65,8 +83,26 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>发送者用户 Id（关联 SysUser.Id）。</summary>
         public Guid SenderId { get; set; }
 
-        /// <summary>消息正文（纯文本，超长截断）。</summary>
+        /// <summary>消息正文：文本为纯文本；图片为相对路径（chat-images/yyyyMM/文件名）；合并转发卡片为标题。</summary>
         public string Content { get; set; } = string.Empty;
+
+        /// <summary>消息类型：0=文本 1=图片 2=合并转发记录卡片。</summary>
+        public int MsgType { get; set; }
+
+        /// <summary>引用的原消息 Id（0=无引用）。</summary>
+        public long QuoteId { get; set; }
+
+        /// <summary>引用内容快照（发送时截取固化，原消息被单方面删除后引用块仍可显示）。</summary>
+        public string? QuoteText { get; set; }
+
+        /// <summary>被引用消息的发送者 Id（引用块显示“xxx：”用）。</summary>
+        public Guid? QuoteSenderId { get; set; }
+
+        /// <summary>合并转发卡片指向的记录 Id（MsgType=2 时有效）。</summary>
+        public long? RefRecordId { get; set; }
+
+        /// <summary>@提及用户 Id 列表（JSON 数组字符串，空表示无人被@）。</summary>
+        public string? Mentions { get; set; }
 
         public DateTime CreateTime { get; set; } = DateTime.Now;
     }
@@ -83,6 +119,25 @@ namespace ConvenientSystem.Shared.Entity.Common
 
         /// <summary>被屏蔽人 Id（关联 SysUser.Id）。</summary>
         public Guid BlockedUserId { get; set; }
+
+        public DateTime CreateTime { get; set; } = DateTime.Now;
+    }
+
+    /// <summary>合并转发记录表：消息快照固化为 JSON，原消息日后被删除不影响已转发记录的查看。</summary>
+    [Table(Name = "ChatForwardRecord")]
+    public class ChatForwardRecordEntity
+    {
+        [Column(IsPrimary = true, IsIdentity = true)]
+        public long Id { get; set; }
+
+        /// <summary>创建者（转发发起人）。</summary>
+        public Guid CreatorId { get; set; }
+
+        /// <summary>卡片标题（如“张三和李四的聊天记录”）。</summary>
+        public string Title { get; set; } = string.Empty;
+
+        /// <summary>消息快照 JSON：[{senderName, msgType, content, time}]，只读展示用。</summary>
+        public string ContentJson { get; set; } = string.Empty;
 
         public DateTime CreateTime { get; set; } = DateTime.Now;
     }

@@ -158,6 +158,9 @@ public sealed class MainForm : Form
             // 外部协议唤起策略：放行 dingtalk://，支持钉钉客户端一键授权登录。
             ExternalUriSchemePolicy.Attach(_webView.CoreWebView2);
 
+            // 权限放行策略：文件选择框不再弹“想要打开文件”提示，本机页面其余权限也直接放行。
+            WebView2PermissionPolicy.Attach(_webView.CoreWebView2);
+
             // 接收前端（Vue）的消息：打开独立窗口、锁屏联动、菜单上报等。
             _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
