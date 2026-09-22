@@ -5,6 +5,8 @@ namespace ConvenientSystem;
 
 /// <summary>Git 代码管理工作台接口。</summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/git")]
 [Route("api/Common/Git")]
 public class GitController : ControllerBase
 {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { IS_DESKTOP_HOST } from '@/common/hostContext'
 
 // Web 前端新版本提示条：轮询对比本地 version.json 与服务器激活版本，
 // 服务器版本更高时在顶部横幅提示，用户点击「立即更新」后由桌面本地服务
@@ -65,7 +66,7 @@ async function applyUpdate() {
   if (updating.value) return
   updating.value = true
   try {
-    const res = await fetch('/api/Common/WebUpdate/Apply', { method: 'POST' })
+    const res = await fetch('/api/local/web-update/Apply', { method: 'POST' })
     // 失败响应（500）同样带 message（如「更新包结构异常」），一并读出展示真实原因
     const data = await res.json().catch(() => null)
     if (data?.updated) {
@@ -105,6 +106,8 @@ onMounted(() => {
     sessionStorage.removeItem(APPLIED_KEY)
     ElMessage.success(`已成功更新到 v${appliedVersion}`)
   }
+  // 非桌面端无本地热更新机制（无 wwwroot 可替换）：宿主判定直接短路，不轮询
+  if (!IS_DESKTOP_HOST) return
   void check()
   timer = setInterval(check, POLL_INTERVAL)
 })

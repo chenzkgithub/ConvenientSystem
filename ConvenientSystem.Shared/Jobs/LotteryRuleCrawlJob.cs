@@ -118,7 +118,7 @@ namespace ConvenientSystem.Shared.Jobs
 
             var gradeJson = LotteryRuleCache.Serialize(parsed.Grades);
             var hash = Sha256(text + "\n" + gradeJson);
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
 
             var active = Fsql.Select<LotteryRuleEntity>()
                 .Where(r => r.LotteryType == t && r.Status == LotteryRuleStatus.Active)

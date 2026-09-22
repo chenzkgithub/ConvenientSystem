@@ -66,6 +66,13 @@ internal sealed class ReverseProxyMiddleware
             return;
         }
 
+        // 接口分离：新前缀 /api/local/* 一律视为本地接口（对应桌面端各控制器的 api/local 路由）
+        if (context.Request.Path.StartsWithSegments("/api/local", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context);
+            return;
+        }
+
         // 考勤路径走本地控制器（当配置了内网数据库时）
         if (_hasLocalAttendance &&
             context.Request.Path.StartsWithSegments("/api/YunHan/Attendance", StringComparison.OrdinalIgnoreCase))
@@ -89,6 +96,8 @@ internal sealed class ReverseProxyMiddleware
         // ApiSpec：API 文档生成器扫描用户本机 C# 源码，云端容器读不到本机路径，必须走本地控制器
         // ConfigEditor：配置文件热编辑操作本机/服务器本地文件（exe 编辑安装目录、服务器编辑服务器目录），不能转发到云
         // CodeScan：代码扫描读取本机文件系统，转发到云后路径不存在，必须走本地控制器
+        // Hosts：读写本机 hosts 文件（操作的是用户电脑，云端执行无意义），不能转发到云
+        // AsyncTask：统一异步任务查询本机 center（ApiSpec 扫描/生成）；Apifox 云端任务轮询走 ApifoxConfig 路径转发到云
         if (context.Request.Path.StartsWithSegments("/api/Common/Build", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/UniversalBuild", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/UiState", StringComparison.OrdinalIgnoreCase)
@@ -97,7 +106,9 @@ internal sealed class ReverseProxyMiddleware
             || context.Request.Path.StartsWithSegments("/api/Common/Git", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/ApiSpec", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/api/Common/ConfigEditor", StringComparison.OrdinalIgnoreCase)
-            || context.Request.Path.StartsWithSegments("/api/Common/CodeScan", StringComparison.OrdinalIgnoreCase))
+            || context.Request.Path.StartsWithSegments("/api/Common/CodeScan", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/Hosts", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/api/Common/AsyncTask", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;

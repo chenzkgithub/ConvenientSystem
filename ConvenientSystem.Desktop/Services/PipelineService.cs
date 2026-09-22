@@ -1,7 +1,9 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using FreeSql;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 
 namespace ConvenientSystem;
@@ -21,6 +23,15 @@ internal sealed class RunningPipeline
 public sealed class PipelineRunDto : PipelineRunRecord
 {
     public string Log { get; set; } = string.Empty;
+}
+
+/// <summary>数据库连接测试结果（流水线数据库阶段"测试连接"按钮内联展示用）。</summary>
+public sealed class PipelineConnectionTestDto
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string ServerVersion { get; set; } = string.Empty;
+    public long ElapsedMs { get; set; }
 }
 
 /// <summary>
@@ -459,7 +470,7 @@ public sealed class PipelineService
             }
             AppendLog(run, $">> 执行 {fileName}（{batches.Count} 批次）...");
 
-            var fileAffected = await ExecuteBatchesAsync(fsql, batches, stage.UseTransaction, ct);
+            var fileAffected = await ExecuteBatchesAsync(run, fsql, batches, stage.UseTransaction, ct);
 
             totalBatches += batches.Count;
             totalAffected += fileAffected;
@@ -469,26 +480,45 @@ public sealed class PipelineService
     }
 
     /// <summary>
-    /// 逐批执行 SQL：原生 DbCommand（SqlExecuteService 同模式），返回总影响行数；
+    /// 逐批执行 SQL：原生 DbCommand（SqlExecuteService 同模式），逐批输出影响行数/耗时/语句预览，
+    /// SQL Server 顺带收集 PRINT/RAISERROR 信息消息；返回总影响行数；
     /// 事务模式下任一批失败回滚整个文件，异常上抛（阶段失败）。
     /// </summary>
-    private static async Task<long> ExecuteBatchesAsync(IFreeSql fsql, List<string> batches, bool useTransaction, CancellationToken ct)
+    private async Task<long> ExecuteBatchesAsync(RunningPipeline run, IFreeSql fsql, List<string> batches, bool useTransaction, CancellationToken ct)
     {
         long affected = 0;
         // FreeSql 池化连接（取到即已打开，using 归还连接池）
         using var pooled = await fsql.Ado.MasterPool.GetAsync();
         var conn = pooled.Value;
+        // SQL Server 的 PRINT/RAISERROR 输出走 InfoMessage 事件（执行期触发），逐批刷入日志；其他库无此事件
+        var infoMessages = new List<string>();
+        var sqlConn = conn as SqlConnection;
+        if (sqlConn != null) sqlConn.InfoMessage += OnInfoMessage;
         await using var tx = useTransaction ? await conn.BeginTransactionAsync(ct) : null;
         try
         {
             for (var i = 0; i < batches.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
+                var batchSw = Stopwatch.StartNew();
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = batches[i];
                 if (tx != null) cmd.Transaction = tx;
                 cmd.CommandTimeout = 0; // 脚本可能含大数据量操作，不设超时
-                affected += await cmd.ExecuteNonQueryAsync(ct);
+                try
+                {
+                    var rows = await cmd.ExecuteNonQueryAsync(ct);
+                    affected += rows;
+                    AppendLog(run, $">>   [{i + 1}/{batches.Count}] 影响 {rows} 行（{batchSw.ElapsedMilliseconds} ms）｜{PreviewSql(batches[i])}");
+                }
+                catch (Exception ex)
+                {
+                    // 失败时先把“第几批、什么语句、数据库原话”落进日志，再上抛（阶段标记失败、事务回滚）
+                    AppendLog(run, $">>   [{i + 1}/{batches.Count}] ✘ 执行失败（{batchSw.ElapsedMilliseconds} ms）｜{PreviewSql(batches[i])}");
+                    AppendLog(run, $">>     错误：{ex.Message}");
+                    throw;
+                }
+                FlushInfoMessages(run, infoMessages);
             }
             if (tx != null) await tx.CommitAsync(ct);
         }
@@ -501,7 +531,75 @@ public sealed class PipelineService
             }
             throw;
         }
+        finally
+        {
+            if (sqlConn != null) sqlConn.InfoMessage -= OnInfoMessage;
+        }
         return affected;
+
+        void OnInfoMessage(object sender, SqlInfoMessageEventArgs e)
+        {
+            foreach (SqlError err in e.Errors) infoMessages.Add(err.Message);
+        }
+    }
+
+    /// <summary>批次语句预览：取首个非空且非注释行、压缩连续空白、超 120 字符截断，便于日志单行展示。</summary>
+    private static string PreviewSql(string batch)
+    {
+        foreach (var raw in batch.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith("--", StringComparison.Ordinal)) continue;
+            line = Regex.Replace(line, @"\s+", " ");
+            return line.Length > 120 ? line[..120] + "..." : line;
+        }
+        return "(仅注释或空语句)";
+    }
+
+    /// <summary>把执行期收集的 PRINT/信息消息逐条落日志（落完清空，避免跨批重复输出）。</summary>
+    private static void FlushInfoMessages(RunningPipeline run, List<string> messages)
+    {
+        if (messages.Count == 0) return;
+        foreach (var message in messages)
+        {
+            var text = message.Trim();
+            if (text.Length > 0) AppendLog(run, $">>     消息：{text}");
+        }
+        messages.Clear();
+    }
+
+    /// <summary>
+    /// 测试数据库连接（流水线数据库阶段“测试连接”按钮）：临时 FreeSql 实例探活并取服务版本，
+    /// 不执行任何脚本、不落任何配置；12 秒限时；失败以结果对象返回（不抛异常，前端统一展示）。
+    /// </summary>
+    public async Task<PipelineConnectionTestDto> TestConnectionAsync(string dbType, string connectionString)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new InvalidOperationException("连接串不能为空");
+            if (!Enum.TryParse<DataType>(dbType, true, out var dbTypeValue))
+                throw new InvalidOperationException($"不支持的数据库类型：{dbType}");
+
+            using var fsql = new FreeSqlBuilder()
+                .UseConnectionString(dbTypeValue, connectionString.Trim())
+                .Build();
+            var version = await Task.Run(() =>
+            {
+                using var pooled = fsql.Ado.MasterPool.Get(); // 取到即已打开，Dispose 归还池
+                return pooled.Value.ServerVersion ?? string.Empty;
+            }).WaitAsync(TimeSpan.FromSeconds(12));
+            return new PipelineConnectionTestDto { Success = true, Message = "连接成功", ServerVersion = version, ElapsedMs = sw.ElapsedMilliseconds };
+        }
+        catch (TimeoutException)
+        {
+            return new PipelineConnectionTestDto { Success = false, Message = "连接超时（12 秒），请检查地址、端口与网络连通性", ElapsedMs = sw.ElapsedMilliseconds };
+        }
+        catch (Exception ex)
+        {
+            return new PipelineConnectionTestDto { Success = false, Message = ex.InnerException?.Message ?? ex.Message, ElapsedMs = sw.ElapsedMilliseconds };
+        }
     }
 
     /// <summary>

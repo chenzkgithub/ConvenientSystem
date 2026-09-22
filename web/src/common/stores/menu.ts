@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getMenus } from '@/common/api/menu'
+import { isMenuNodeAvailable } from '@/common/menuLink'
 import type { MenuNode } from '@/common/types'
 
 const CACHE_KEY = 'menu_tree_cache_v1'
@@ -36,12 +37,12 @@ export const useMenuStore = defineStore('menu', () => {
     loaded.value = true
   }
 
-  /** 收集所有末级菜单（含 page），跳过 visible=false 和 enabled=false */
+  /** 收集所有末级菜单（含 page），跳过 visible=false 和 enabled=false，以及当前宿主不可用的桌面专属视图 */
   function collectLeaves(): MenuNode[] {
     const acc: MenuNode[] = []
     const walk = (nodes: MenuNode[]) => {
       nodes.forEach((n) => {
-        if (n.visible === false || n.enabled === false) return
+        if (n.visible === false || n.enabled === false || !isMenuNodeAvailable(n)) return
         if (Array.isArray(n.children) && n.children.length > 0) walk(n.children)
         else if (n.page) acc.push(n)
       })
@@ -50,15 +51,15 @@ export const useMenuStore = defineStore('menu', () => {
     return acc
   }
 
-  /** 按最顶层菜单分组，返回 [{ title, leaves }]，跳过 visible=false 和 enabled=false */
+  /** 按最顶层菜单分组，返回 [{ title, leaves }]，跳过 visible=false 和 enabled=false，以及当前宿主不可用的桌面专属视图 */
   function collectGrouped(): { title: string; leaves: MenuNode[] }[] {
     const groups: { title: string; leaves: MenuNode[] }[] = []
     for (const top of menus.value) {
-      if (top.visible === false || top.enabled === false) continue
+      if (top.visible === false || top.enabled === false || !isMenuNodeAvailable(top)) continue
       const leaves: MenuNode[] = []
       const collect = (nodes: MenuNode[]) => {
         nodes.forEach((n) => {
-          if (n.visible === false || n.enabled === false) return
+          if (n.visible === false || n.enabled === false || !isMenuNodeAvailable(n)) return
           if (Array.isArray(n.children) && n.children.length > 0) collect(n.children)
           else if (n.page) leaves.push(n)
         })

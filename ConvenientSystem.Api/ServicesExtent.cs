@@ -1,6 +1,7 @@
 using ConvenientSystem.Service.Common;
 using ConvenientSystem.Service.Common.ApiSpec;
 using ConvenientSystem.Service.Common.SqlQuery;
+using ConvenientSystem.Service.Ai;
 using ConvenientSystem.Service.Email;
 using ConvenientSystem.Service.Sms;
 using ConvenientSystem.Service.YunHan;
@@ -10,6 +11,7 @@ using ConvenientSystem.Shared.Common.Email;
 using ConvenientSystem.Shared.Common.Filters;
 using ConvenientSystem.Shared.Common.Sms;
 using ConvenientSystem.Api.Auth;
+using ConvenientSystem.Api.Hubs;
 using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Common.Webhook;
 using ConvenientSystem.Shared.Jobs;
@@ -38,7 +40,12 @@ namespace ConvenientSystem.Api
             services.AddControllers(options => options.Filters.Add<BizExceptionFilter>());
 
             // 服务端敏感个人配置（如 Apifox Access Token）使用 Data Protection 加密后才落 UserConfig。
-            services.AddDataProtection().SetApplicationName("ConvenientSystem");
+            // 密钥环必须持久化到应用目录 keys 子目录（容器内 /app/keys，部署时挂命名卷）：
+            // 默认存进程内部目录，容器重建即丢失，历史加密的 Token 全部无法解密，每次部署都需重新保存。
+            var keysDir = Path.Combine(AppContext.BaseDirectory, "keys");
+            services.AddDataProtection()
+                .SetApplicationName("ConvenientSystem")
+                .PersistKeysToFileSystem(new DirectoryInfo(keysDir));
             services.AddHttpClient("Apifox", client =>
             {
                 client.BaseAddress = new Uri("https://api.apifox.com/");
@@ -330,6 +337,10 @@ namespace ConvenientSystem.Api
             // Apifox 配置存于当前用户 UserConfig，Token 仅在服务端解密并代调官方导入接口。
             services.AddScoped<IApifoxImportService, ApifoxImportService>();
 
+            // 统一异步任务中心（全部耗时操作的进度表；云端经 SignalR 定向推送进度）
+            services.AddSingleton<IAsyncTaskNotifier, SignalRAsyncTaskNotifier>();
+            services.AddSingleton<AsyncTaskCenter>();
+
             // 外部公开页面（免登录 standalone=1 页面管理）
             services.AddSingleton<ISysPublicPageService, SysPublicPageService>();
 
@@ -352,6 +363,8 @@ namespace ConvenientSystem.Api
             services.AddSingleton<ISqlScriptService, SqlScriptService>();
             services.AddSingleton<ISqlSnippetService, SqlSnippetService>();
             services.AddSingleton<ISqlFavoriteService, SqlFavoriteService>();
+            // AI 辅助 SQL（NL2SQL）：依赖 Scoped 的模型/用户配置服务，故注册为 Scoped
+            services.AddScoped<IAiSqlService, AiSqlService>();
 
             // 短信模块
             services.AddSingleton<ISmsConfigService, SmsConfigService>();
@@ -378,8 +391,22 @@ namespace ConvenientSystem.Api
             // 代码扫描（正则规则引擎 + Git Diff 增量扫描）
             services.AddScoped<ICodeScanService, CodeScanService>();
 
+            // AI 能力 P0：OpenAI 兼容 Provider 通吃 DeepSeek/通义/Kimi/GLM/Ollama/vLLM；
+            // 模型管理/对话均为 Scoped（依赖用户上下文），生成注册表跨请求存在；
+            // 流式 chunk 经 ChatHub AiResponseChunk 事件推送，前端轮询 Messages 兜底
+            services.AddHttpClient("Ai", client => client.Timeout = TimeSpan.FromSeconds(300))
+                .SetHandlerLifetime(TimeSpan.FromMinutes(10));
+            services.AddSingleton<IAiCompletionProvider, OpenAiCompatibleProvider>();
+            services.AddSingleton<AiGenerationRegistry>();
+            services.AddSingleton<IAiChunkNotifier, SignalRAiChunkNotifier>();
+            services.AddScoped<IAiModelService, AiModelService>();
+            services.AddScoped<IAiChatService, AiChatService>();
+            services.AddSingleton<AiToolService>();
+
             // API 文档生成器（C# Controller 源码 → OpenAPI/Postman/Markdown）
             services.AddSingleton<IApiSpecService, ApiSpecService>();
+            // 接口调试代理（服务端转发调试请求，规避浏览器 CORS）
+            services.AddSingleton<IApiDebugService, ApiDebugService>();
             // 各格式导出器（加格式 = 新实现类 + 注册一行，格式列表自动出现）
             // 注意：using 父命名空间不会导入子命名空间，必须单独 using ...ApiSpec 才能用这些类型
             services.AddSingleton<IApiExporter, OpenApiJsonExporter>();

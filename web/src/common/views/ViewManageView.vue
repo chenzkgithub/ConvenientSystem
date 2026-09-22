@@ -18,6 +18,7 @@ import {
   type ViewPermissionSaveDto,
 } from '@/common/api/view'
 import CommonDialog from '@/common/components/CommonDialog.vue'
+import { getViewEnv } from '@/common/viewComponents'
 
 const loading = ref(false)
 const views = ref<ViewDto[]>([])
@@ -25,14 +26,86 @@ const selectedViewId = ref<number | null>(null)
 
 const selectedView = computed(() => views.value.find((v) => v.id === selectedViewId.value) ?? null)
 
+// ========== 左侧列表宽度拖拽 ==========
+const DEFAULT_LEFT_WIDTH = 380
+const MIN_LEFT_WIDTH = 260
+const LEFT_WIDTH_KEY = 'view-manage.left-width'
+
+const mainContent = ref<HTMLElement | null>(null)
+/** 左侧视图列表当前宽度（拖拽调整，持久化到 localStorage） */
+const leftWidth = ref(DEFAULT_LEFT_WIDTH)
+const splitterDragging = ref(false)
+
+function clampLeftWidth(w: number, containerW: number): number {
+  const max = containerW > 0 ? Math.max(MIN_LEFT_WIDTH, Math.floor(containerW * 0.6)) : Number.MAX_SAFE_INTEGER
+  return Math.min(Math.max(w, MIN_LEFT_WIDTH), max)
+}
+
+function initLeftWidth() {
+  const stored = Number(localStorage.getItem(LEFT_WIDTH_KEY))
+  if (stored > 0) leftWidth.value = clampLeftWidth(stored, mainContent.value?.clientWidth ?? 0)
+}
+
+function onSplitterDown(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = leftWidth.value
+  splitterDragging.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  const onMove = (ev: MouseEvent) => {
+    leftWidth.value = clampLeftWidth(startW + ev.clientX - startX, mainContent.value?.clientWidth ?? 0)
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    splitterDragging.value = false
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    localStorage.setItem(LEFT_WIDTH_KEY, String(leftWidth.value))
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+/** 双击分隔条恢复默认宽度 */
+function resetLeftWidth() {
+  leftWidth.value = DEFAULT_LEFT_WIDTH
+  localStorage.setItem(LEFT_WIDTH_KEY, String(DEFAULT_LEFT_WIDTH))
+}
+
 /** 搜索关键词 */
 const searchKey = ref('')
 
-/** 按标题/名称筛选后的视图列表 */
+/** 运行环境筛选：''=全部 / both通用 / desktop桌面端 / web服务器端 */
+const envFilter = ref('')
+
+/** 环境徽标映射（管理界面呈现；运行时过滤以代码元数据 VIEW_META 为准） */
+const ENV_TAG: Record<string, { type: 'primary' | 'success' | 'info'; label: string }> = {
+  desktop: { type: 'primary', label: '桌面端' },
+  web: { type: 'success', label: '服务器' },
+  both: { type: 'info', label: '通用' },
+}
+const envTag = (env?: string) => ENV_TAG[env ?? 'both'] ?? ENV_TAG.both
+
+/**
+ * 对账：DB 登记的环境（管理意图）与代码元数据（运行时真源）不一致时返回代码环境值，否则 null。
+ * 不一致时运行时以代码为准，提醒管理员修正登记。
+ */
+function envMismatch(v: ViewDto): string | null {
+  const dbEnv = v.env ?? 'both'
+  if (!v.component) return null
+  const codeEnv = getViewEnv(v.component)
+  return codeEnv !== dbEnv ? codeEnv : null
+}
+
+/** 按标题/名称/环境筛选后的视图列表 */
 const filteredViews = computed(() => {
   const key = searchKey.value.trim().toLowerCase()
-  if (!key) return views.value
-  return views.value.filter(v =>
+  let list = views.value
+  if (envFilter.value) list = list.filter((v) => (v.env ?? 'both') === envFilter.value)
+  if (!key) return list
+  return list.filter((v) =>
     v.title.toLowerCase().includes(key) || v.name.toLowerCase().includes(key)
   )
 })
@@ -50,18 +123,21 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  initLeftWidth()
+})
 
 // ========== 视图编辑弹窗 ==========
 const viewDialogVisible = ref(false)
 const viewDialogIsEdit = ref(false)
 const viewForm = ref<ViewSaveDto>({
-  id: 0, name: '', title: '', component: '', routePath: '', description: '', enabled: true,
+  id: 0, name: '', title: '', component: '', routePath: '', description: '', enabled: true, env: 'both',
 })
 
 function openAddView() {
   viewDialogIsEdit.value = false
-  viewForm.value = { id: 0, name: '', title: '', component: '', routePath: '', description: '', enabled: true }
+  viewForm.value = { id: 0, name: '', title: '', component: '', routePath: '', description: '', enabled: true, env: 'both' }
   viewDialogVisible.value = true
 }
 
@@ -71,6 +147,7 @@ function openEditView(v: ViewDto) {
     id: v.id, name: v.name, title: v.title,
     component: v.component ?? '', routePath: v.routePath ?? '',
     description: v.description ?? '', enabled: v.enabled,
+    env: v.env ?? 'both',
   }
   viewDialogVisible.value = true
 }
@@ -163,11 +240,18 @@ async function handleDeletePerm(p: ViewPermissionDto) {
       </div>
     </div>
 
-    <div class="main-content">
+    <div ref="mainContent" class="main-content">
       <!-- 左侧：视图列表 -->
-      <div class="view-list">
+      <div class="view-list" :style="{ width: leftWidth + 'px' }">
         <div class="view-search">
           <el-input v-model="searchKey" :prefix-icon="Search" placeholder="搜索视图" clearable size="small" />
+        </div>
+        <div class="env-filter">
+          <el-select v-model="envFilter" size="small" placeholder="运行环境" clearable>
+            <el-option label="通用" value="both" />
+            <el-option label="桌面端专属" value="desktop" />
+            <el-option label="服务器端专属" value="web" />
+          </el-select>
         </div>
         <div v-if="filteredViews.length === 0" class="empty-hint">
           <el-empty :description="searchKey ? '未找到匹配的视图' : '暂无视图，点击上方按钮添加'" :image-size="60" />
@@ -186,6 +270,7 @@ async function handleDeletePerm(p: ViewPermissionDto) {
           <div class="view-name">{{ v.name }}</div>
           <div class="view-meta">
             <span v-if="v.component" class="view-component">{{ v.component }}</span>
+            <el-tag :type="envTag(v.env).type" size="small" effect="light">{{ envTag(v.env).label }}</el-tag>
             <span v-if="!v.enabled" class="view-disabled">已停用</span>
           </div>
           <div class="view-actions">
@@ -195,9 +280,28 @@ async function handleDeletePerm(p: ViewPermissionDto) {
         </div>
       </div>
 
+      <!-- 可拖拽分隔条：拖动调整左侧面板宽度，双击恢复默认 -->
+      <div
+        class="splitter"
+        :class="{ dragging: splitterDragging }"
+        title="拖动调整宽度，双击恢复默认"
+        @mousedown="onSplitterDown"
+        @dblclick="resetLeftWidth"
+      ></div>
+
       <!-- 右侧：权限点列表 -->
       <div class="perm-panel">
         <template v-if="selectedView">
+          <!-- 对账警告：DB 登记与代码元数据不一致（运行时以代码元数据为准） -->
+          <el-alert
+            v-if="envMismatch(selectedView)"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="env-mismatch-alert"
+            :title="`代码元数据标记为「${envTag(envMismatch(selectedView)).label}」，与登记不一致`"
+            description="运行时以代码元数据（VIEW_META）为准，请修正登记或元数据使两者一致。"
+          />
           <div class="perm-header">
             <div>
               <span class="perm-view-title">{{ selectedView.title }}</span>
@@ -251,6 +355,14 @@ async function handleDeletePerm(p: ViewPermissionDto) {
         <el-form-item label="启用状态">
           <el-switch v-model="viewForm.enabled" inline-prompt active-text="启用" inactive-text="停用" />
         </el-form-item>
+        <el-form-item label="运行环境">
+          <el-select v-model="viewForm.env" style="width: 100%">
+            <el-option label="通用（桌面端与 Web 端均可用）" value="both" />
+            <el-option label="桌面端专属（Web 端菜单自动隐藏）" value="desktop" />
+            <el-option label="服务器端专属" value="web" />
+          </el-select>
+          <div class="form-hint">管理面登记：用于徽标呈现与对账；实际过滤以代码元数据为准</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="viewDialogVisible = false">取消</el-button>
@@ -299,21 +411,55 @@ async function handleDeletePerm(p: ViewPermissionDto) {
 .main-content {
   flex: 1;
   display: flex;
-  gap: 16px;
+  gap: 0;
   overflow: hidden;
 }
 
 /* ===== 左侧视图列表 ===== */
 .view-list {
-  width: 320px;
   flex-shrink: 0;
   overflow-y: auto;
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   padding: 8px;
 }
+
+/* ===== 可拖拽分隔条 ===== */
+.splitter {
+  width: 8px;
+  margin: 0 8px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  border-radius: 4px;
+  position: relative;
+  align-self: stretch;
+  transition: background 0.15s;
+}
+.splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--el-border-color);
+  transition: background 0.15s;
+}
+.splitter:hover,
+.splitter.dragging { background: var(--el-fill-color-light); }
+.splitter:hover::after,
+.splitter.dragging::after { background: var(--el-color-primary); }
 .view-search {
   margin-bottom: 8px;
+}
+.env-filter {
+  margin-bottom: 8px;
+}
+.env-mismatch-alert {
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .view-item {

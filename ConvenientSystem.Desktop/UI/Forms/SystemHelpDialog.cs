@@ -172,7 +172,9 @@ internal sealed class SystemHelpDialog : Form
 
                         progress?.Report((100, "安装程序已启动，即将关闭当前程序"));
                         await Task.Delay(800);
-                        Environment.Exit(0);
+                        // 优雅退出：走窗体正常关闭流程（OnFormClosed 注销托盘图标），
+                        // 避免 Environment.Exit 强杀进程导致通知区域残留本程序图标。
+                        Application.Exit();
                     },
                     webUpdate);
 

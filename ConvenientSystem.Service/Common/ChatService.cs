@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using System.Text.Json;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Entity.Common;
@@ -215,13 +216,13 @@ namespace ConvenientSystem.Service.Common
                 var newId = _fsql.Insert(new ChatConversationEntity
                 {
                     UserKey = key,
-                    CreateTime = DateTime.Now,
+                    CreateTime = TimeHelper.Now,
                 }).ExecuteIdentity();
 
                 _fsql.Insert(new List<ChatConversationMemberEntity>
                 {
-                    new() { ConversationId = newId, UserId = userId, CreateTime = DateTime.Now },
-                    new() { ConversationId = newId, UserId = peerId, CreateTime = DateTime.Now },
+                    new() { ConversationId = newId, UserId = userId, CreateTime = TimeHelper.Now },
+                    new() { ConversationId = newId, UserId = peerId, CreateTime = TimeHelper.Now },
                 }).ExecuteAffrows();
                 return newId;
             }
@@ -288,7 +289,7 @@ namespace ConvenientSystem.Service.Common
                 {
                     UserId = userId,
                     BlockedUserId = peerId,
-                    CreateTime = DateTime.Now,
+                    CreateTime = TimeHelper.Now,
                 }).ExecuteAffrows();
         }
 
@@ -418,7 +419,7 @@ namespace ConvenientSystem.Service.Common
                 throw new BadRequestException("图片路径格式无效");
 
             long convId;
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             ChatConversationEntity conv;
 
             if (peerId != Guid.Empty)
@@ -546,7 +547,7 @@ namespace ConvenientSystem.Service.Common
             if (validUserIds.Count != distinctMembers.Count)
                 throw new BadRequestException("部分成员不存在或已停用");
 
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             long convId = 0;
             _fsql.Transaction(() =>
             {
@@ -731,7 +732,7 @@ namespace ConvenientSystem.Service.Common
         {
             var (sourceConvId, ordered) = LoadForwardableMessages(userId, messageIds);
             var targetConvId = EnsureForwardTarget(userId, targetPeerId);
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
 
             var result = new List<ChatMessageDto>();
             _fsql.Transaction(() =>
@@ -771,7 +772,7 @@ namespace ConvenientSystem.Service.Common
         {
             var (sourceConvId, ordered) = LoadForwardableMessages(userId, messageIds);
             var targetConvId = EnsureForwardTarget(userId, targetPeerId);
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
 
             // 快照：保留原发送者名（删除后仍可看）
             var senderMap = GetUserInfoMap(ordered.Select(m => m.SenderId).Distinct().ToList());

@@ -75,6 +75,8 @@ jobs:
         run: |
           cd web
           npm ci
+          # 接口分离静态审计：视图运行环境元数据与本地接口引用一致性（失败即中断部署）
+          npm run audit:views
           npm run build
           # Vite 配置 outDir = ../ConvenientSystem.Desktop/wwwroot/
           # 复制到 web/wwwroot/ 供 Dockerfile.web 打包

@@ -12,6 +12,8 @@ namespace ConvenientSystem;
 /// 前端无需改动。仅当 appsettings.json 配置了 YhSystemDb 连接串时生效。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：action 风格与旧路由一致，过渡期后移除旧路由
+[Route("api/local/attendance/[action]")]
 [Route("api/[area]/[controller]/[action]")]
 [Area("YunHan")]
 [AllowAnonymous]

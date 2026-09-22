@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
@@ -36,7 +37,7 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>最后一条消息预览（会话列表展示，超长截断）。</summary>
         public string? LastMessageText { get; set; }
         
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 
     /// <summary>聊天会话成员表：每会话两条成员记录，含已读水位 / 免打扰 / 隐藏。</summary>
@@ -67,7 +68,7 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>成员角色：0=成员 1=群主。</summary>
         public int Role { get; set; }
 
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 
     /// <summary>聊天消息表（按会话 + Id 索引，倒序分页拉取历史）。</summary>
@@ -104,7 +105,7 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>@提及用户 Id 列表（JSON 数组字符串，空表示无人被@）。</summary>
         public string? Mentions { get; set; }
 
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 
     /// <summary>聊天屏蔽名单（通讯录模式下以屏蔽代替好友关系控制；任一方屏蔽则双向拒收）。</summary>
@@ -120,7 +121,7 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>被屏蔽人 Id（关联 SysUser.Id）。</summary>
         public Guid BlockedUserId { get; set; }
 
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 
     /// <summary>合并转发记录表：消息快照固化为 JSON，原消息日后被删除不影响已转发记录的查看。</summary>
@@ -139,6 +140,6 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>消息快照 JSON：[{senderName, msgType, content, time}]，只读展示用。</summary>
         public string ContentJson { get; set; } = string.Empty;
 
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 }

@@ -20,6 +20,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         private readonly ISqlScriptService _sqlScriptService;
         private readonly ISqlSnippetService _sqlSnippetService;
         private readonly ISqlFavoriteService _sqlFavoriteService;
+        private readonly IAiSqlService _aiSqlService;
 
         public SqlQueryController(
             IDataSourceService dataSourceService,
@@ -27,7 +28,8 @@ namespace ConvenientSystem.Api.Controllers.Common
             ISchemaService schemaService,
             ISqlScriptService sqlScriptService,
             ISqlSnippetService sqlSnippetService,
-            ISqlFavoriteService sqlFavoriteService)
+            ISqlFavoriteService sqlFavoriteService,
+            IAiSqlService aiSqlService)
         {
             _dataSourceService = dataSourceService;
             _sqlExecuteService = sqlExecuteService;
@@ -35,6 +37,7 @@ namespace ConvenientSystem.Api.Controllers.Common
             _sqlScriptService = sqlScriptService;
             _sqlSnippetService = sqlSnippetService;
             _sqlFavoriteService = sqlFavoriteService;
+            _aiSqlService = aiSqlService;
         }
 
         // ============ 数据源管理接口 ============
@@ -94,6 +97,15 @@ namespace ConvenientSystem.Api.Controllers.Common
         [HttpPost]
         public async Task<IActionResult> ExplainPlan([FromBody] SqlQueryRequest request)
             => Ok(await _sqlExecuteService.ExplainPlanAsync(request));
+
+        /// <summary>
+        /// AI 生成 SQL（NL2SQL）：自然语言 + 当前数据源表结构 → 生成 SQL 填入编辑器（不自动执行）。
+        /// 复用 sql-query:execute 权限与 ai.quota.* 配额；桌面端代理模式下随 SqlQuery 前缀转发云端。
+        /// </summary>
+        [HttpPost]
+        [PermissionAuthorize("sql-query:execute")]
+        public async Task<IActionResult> GenerateSql([FromBody] AiSqlGenerateRequest request, CancellationToken cancellationToken)
+            => Ok(await _aiSqlService.GenerateAsync(CurrentUserId ?? throw new UnauthorizedAccessException("登录状态失效，请重新登录"), request, cancellationToken));
 
         // ============ 数据库对象浏览接口 ============
 

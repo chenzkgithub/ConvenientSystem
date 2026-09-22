@@ -16,7 +16,7 @@
           clearable class="toolbar-daterange" :disabled="isMatchMode"
           :teleported="!isFullscreen" @change="loadTrend" />
         <span class="toolbar-sep"></span>
-        <!-- 历史号码匹配：弹窗点选号码，全库检索同时满足全部条件的期并按期号降序展示（此时期数与日期不参与） -->
+        <!-- 历史号码匹配：弹窗点选号码，全库检索同时满足全部条件的期并按期号升序（从旧到新）展示（此时期数与日期不参与） -->
         <el-button type="primary" @click="matchDialogRef?.open(activeMatch)">历史匹配</el-button>
         <!-- 也在 activeMatch 已设但请求失败（尚未进入匹配模式）时显示，否则参数清不掉 -->
         <el-button v-if="isMatchMode || activeMatch" @click="clearMatch">退出匹配</el-button>
@@ -41,9 +41,9 @@
               <thead>
                 <!-- 分区标题行 -->
                 <tr class="zone-header-row">
-                  <th class="sticky-col issue-cell" rowspan="2">期号</th>
-                  <th class="sticky-col date-cell" rowspan="2">日期</th>
-                  <th class="sticky-col week-cell" rowspan="2">星期</th>
+                  <th class="issue-cell" rowspan="2">期号</th>
+                  <th class="date-cell" rowspan="2">日期</th>
+                  <th class="week-cell" rowspan="2">星期</th>
                   <th v-for="(g, gi) in groups" :key="'zh' + g.key"
                     :colspan="g.numbers.length" class="zone-header" :class="colorClass(gi)">
                     {{ g.label }}
@@ -71,9 +71,9 @@
                   :class="{ 'selected-row': selectedIssue === draw.issueNumber }"
                   @click="selectedIssue = selectedIssue === draw.issueNumber ? '' : draw.issueNumber"
                   @dblclick="noticeDialogRef?.open(type, draw.issueNumber)">
-                  <td class="sticky-col issue-cell">{{ draw.issueNumber }}</td>
-                  <td class="sticky-col date-cell">{{ draw.drawDate?.substring(0, 10) }}</td>
-                  <td class="sticky-col week-cell">{{ getWeekDay(draw.drawDate) }}</td>
+                  <td class="issue-cell">{{ draw.issueNumber }}</td>
+                  <td class="date-cell">{{ draw.drawDate?.substring(0, 10) }}</td>
+                  <td class="week-cell">{{ getWeekDay(draw.drawDate) }}</td>
                   <template v-for="(g, gi) in groups" :key="'d' + draw.issueNumber + g.key">
                     <td v-for="(n, ni) in g.numbers" :key="'c' + g.key + n"
                       :data-line="isHit(draw, g, n) && lineZoneKeys.has(g.key) ? g.key : undefined"
@@ -97,7 +97,7 @@
               <tfoot>
                 <!-- 预选行 -->
                 <tr v-for="pred in predictions" :key="'pred' + pred.id" class="prediction-row">
-                  <td class="sticky-col prediction-label" colspan="3">
+                  <td class="prediction-label" colspan="3">
                     {{ pred.name }}
                     <span class="prediction-remove" @click.stop="removePrediction(pred)">×</span>
                   </td>
@@ -118,14 +118,15 @@
                 </tr>
                 <!-- 预选操作行（公开模式下隐藏保存按钮） -->
                 <tr class="prediction-action-row">
-                  <td class="sticky-col prediction-action-label" colspan="3">
+                  <td class="prediction-action-label" colspan="3">
                     <el-button size="small" @click="addPrediction">+ 添加预选</el-button>
                     <el-button v-if="!publicMode" size="small" type="primary" @click="savePredictions">保存选号</el-button>
+                    <el-button size="small" @click="copyPredictions">复制选号</el-button>
                   </td>
                   <td :colspan="totalCols + summaryColCount"></td>
                 </tr>
                 <tr v-for="(row, ri) in visibleStatRows" :key="row.key" class="stat-row">
-                  <td class="sticky-col stat-label" colspan="3" :style="statRowStyle(ri)">{{ row.label }}</td>
+                  <td class="stat-label" colspan="3" :style="statRowStyle(ri)">{{ row.label }}</td>
                   <template v-for="(g, gi) in groups" :key="row.key + g.key">
                     <td v-for="(s, si) in (g.stats || [])" :key="row.key + g.key + s.number"
                       class="stat-cell" :style="statRowStyle(ri)"
@@ -141,7 +142,7 @@
                 </tr>
               </tfoot>
             </table>
-            <!-- 号码连线：覆盖在表格上的 SVG，层级低于固定列与表头，滚动时自然被冻结区域遮挡 -->
+            <!-- 号码连线：覆盖在表格上的 SVG，层级低于吸顶表头与粘底统计行，滚动时自然被冻结区域遮挡 -->
             <svg v-if="trendLines.length" class="trend-lines"
               :width="lineCanvas.w" :height="lineCanvas.h">
               <polyline v-for="l in trendLines" :key="'ln' + l.key" :points="l.points"
@@ -191,12 +192,12 @@ const props = defineProps<{
 
 // ── 走势图数据 ──
 const loading = ref(false)
-const periods = ref(50)
+const periods = ref(100)
 /** 开奖日期区间（yyyy-MM-dd，选中时优先于统计期数） */
 const dateRange = ref<[string, string] | null>(null)
 const trendData = ref<TrendData | null>(null)
 const selectedIssue = ref('')
-/** 表格滚动容器（用于测算左侧固定列实际宽度） */
+/** 表格滚动容器（整体横向滚动的视口，也是连线测量的查询锚点） */
 const tableWrapperRef = ref<HTMLElement>()
 
 /** 走势分区（顺序即列顺序） */
@@ -680,37 +681,66 @@ async function savePredictions() {
   }
 }
 
+/** 复制预选号到剪贴板：每行一注，仅复制选满的行（与保存同口径），号码格式与格子显示一致 */
+function copyPredictions() {
+  if (props.pickZones.length === 0) return
+  const valid = predictions.value.filter(
+    p => props.pickZones.every(z => (p.picks[z.key] ?? []).length === z.pick),
+  )
+  if (valid.length === 0) {
+    const rule = props.pickZones.map(z => `${z.label} ${z.pick} 个`).join(' + ')
+    ElMessage.warning({ message: `请确保每条预选都选满：${rule}`, appendTo: fullscreenElement() })
+    return
+  }
+  const frontZone = props.pickZones.find(z => z.source === 'front')
+  const backZone = props.pickZones.find(z => z.source === 'back')
+  const fmtN = (zone: LotteryZone | undefined, n: number) => (zone ? fmt(zone, n) : String(n))
+  const text = valid.map(p => {
+    const { front, back } = buildBet(p)
+    const f = front.map(n => fmtN(frontZone, n)).join(' ')
+    const b = back.map(n => fmtN(backZone, n)).join(' ')
+    return b ? `${p.name}：${f} + ${b}` : `${p.name}：${f}`
+  }).join('\n')
+  writeClipboard(text, `已复制 ${valid.length} 注到剪贴板`)
+}
+
+/** 写剪贴板：clipboard API 失败或不可用时降级 execCommand（项目通行写法，兼容 http 非安全上下文） */
+async function writeClipboard(text: string, okMsg: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success({ message: okMsg, appendTo: fullscreenElement() })
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    if (ok) ElMessage.success({ message: okMsg, appendTo: fullscreenElement() })
+    else ElMessage.error({ message: '复制失败', appendTo: fullscreenElement() })
+  }
+}
+
 async function loadTrend() {
   loading.value = true
   try {
-    trendData.value = await getLotteryTrend(
+    const res = await getLotteryTrend(
       props.type, periods.value, dateRange.value?.[0], dateRange.value?.[1],
       activeMatch.value)
+    // 展示兜底：按期号升序（从旧到新）排序。常规模式后端本已正序，此排序幂等；
+    // 历史匹配模式旧版后端返回倒序，前端排序保证体验不依赖后端部署版本
+    res.draws = [...res.draws].sort((a, b) =>
+      String(a.issueNumber).localeCompare(String(b.issueNumber), undefined, { numeric: true }))
+    trendData.value = res
     await nextTick()
-    syncStickyOffsets()
     observeTableSize()
   } catch (err: any) {
     ElMessage.error({ message: err?.message || '加载走势图失败', appendTo: fullscreenElement() })
   } finally {
     loading.value = false
   }
-}
-
-/**
- * 同步左侧固定列的粘附偏移：列宽可能被内容撑开（如 colspan=3 的按钮行），
- * 硬编码 left 会造成列间缝隙或重叠。此处取 offsetWidth 而非 getBoundingClientRect：
- * 后者包含 sticky 位移，横向滚动后测得的值会偏移；前者是纯边框盒宽度，
- * 在 border-spacing:0 下恰好等于列进距，累加即得精确偏移。
- */
-function syncStickyOffsets() {
-  const wrapper = tableWrapperRef.value
-  if (!wrapper) return
-  const cells = wrapper.querySelectorAll<HTMLElement>('thead .zone-header-row th.sticky-col')
-  if (cells.length < 3) return
-  const [w1, w2, w3] = Array.from(cells, c => c.offsetWidth)
-  wrapper.style.setProperty('--sticky-l2', `${w1}px`)
-  wrapper.style.setProperty('--sticky-l3', `${w1 + w2}px`)
-  wrapper.style.setProperty('--sticky-total', `${w1 + w2 + w3}px`)
 }
 
 // ── 号码连线（逐期连接命中号码的折线） ──
@@ -772,8 +802,8 @@ function computeTrendLines() {
 
 /**
  * 表格尺寸一变（窗口缩放、全屏切换、预选行增减）折点就失效，靠观察器重算。
- * 这里只重算连线、不顺带调 syncStickyOffsets：后者会回写列宽变量改变表格布局，
- * 与观察器互相激发可能振荡；而 SVG 是绝对定位、脱离文档流的，改它不会反咬表格。
+ * 这里只重算连线、不回写任何影响表格布局的样式，避免与观察器互相激发振荡；
+ * 而 SVG 是绝对定位、脱离文档流的，改它不会反咬表格。
  */
 let lineObserver: ResizeObserver | null = null
 function observeTableSize() {
@@ -830,10 +860,6 @@ function onFullscreenChange() {
 onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange))
 onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenChange))
 
-// 窗口尺寸变化会改变单元格渲染宽度，需重新测算固定列偏移
-onMounted(() => window.addEventListener('resize', syncStickyOffsets))
-onUnmounted(() => window.removeEventListener('resize', syncStickyOffsets))
-
 // ── 工具函数 ──
 const weekDays = ['日', '一', '二', '三', '四', '五', '六']
 function getWeekDay(dateStr?: string): string {
@@ -850,6 +876,34 @@ function getWeekDay(dateStr?: string): string {
   flex-direction: column;
   height: 100%;
   background: #fff;
+  /* 整体横向滚动：工具栏与表格一起平移，横向滚动条固定在区域底部；
+     仅横向显示滚动条，纵向滚动交给 .trend-content（滚动条随全局隐藏，滚轮/触摸照常可滚） */
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 全局默认隐藏滚动条（styles/main.css），此处显式恢复横向条：常显、可拖。
+     scrollbar-width 覆盖全局 * { scrollbar-width: none }（新内核走标准属性） */
+  scrollbar-width: thin;
+  scrollbar-color: #909399 #f5f7fa;
+}
+
+/* 老内核（不支持 scrollbar-width）兜底：局部恢复 webkit 滚动条 */
+.trend-container::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
+.trend-container::-webkit-scrollbar-track {
+  background: #f5f7fa;
+}
+
+.trend-container::-webkit-scrollbar-thumb {
+  background: #909399;
+  border-radius: 5px;
+}
+
+.trend-container::-webkit-scrollbar-thumb:hover {
+  background: #606266;
 }
 
 /* 全屏时保持白底并铺满屏幕 */
@@ -867,8 +921,9 @@ function getWeekDay(dateStr?: string): string {
   padding: 10px 16px;
   border-bottom: 1px solid #f0f0f0;
   flex-shrink: 0;
-  /* 工具栏恒为单行：窗口变窄时靠左侧输入类控件收窄消化，不允许折行 */
+  /* 工具栏恒为单行：随根容器整体横向滚动，撑到内容自然宽，不折行、不压缩 */
   flex-wrap: nowrap;
+  min-width: max-content;
 }
 
 .toolbar-left {
@@ -876,11 +931,11 @@ function getWeekDay(dateStr?: string): string {
   align-items: center;
   gap: 10px;
   flex-wrap: nowrap;
-  /* flex 项默认 min-width:auto 不会小于内容，须放开才能收窄 */
-  min-width: 0;
+  /* 整排横向滚动：自身不参与压缩，控件保持原样 */
+  flex-shrink: 0;
 }
 
-/* 期数按钮组自身默认 flex-wrap: wrap，被挤压时会折行，须显式禁掉 */
+/* 期数按钮组自身默认 flex-wrap: wrap，整排滚动下须保持单行，显式禁掉 */
 .toolbar-left :deep(.el-radio-group) {
   flex-wrap: nowrap;
 }
@@ -889,7 +944,7 @@ function getWeekDay(dateStr?: string): string {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 右侧操作按钮不参与收窄，始终完整显示 */
+  /* 右侧操作按钮不参与压缩，始终完整显示 */
   flex-shrink: 0;
 }
 
@@ -910,14 +965,14 @@ function getWeekDay(dateStr?: string): string {
 .toolbar-label {
   font-size: 13px;
   color: #606266;
-  /* 被挤压时标签文字不折行 */
+  /* 标签文字不换行（固定宽度整体滚动） */
   white-space: nowrap;
 }
 
-/* 日期区间控件默认 350px，是工具栏最大头，压窄以保障单行 */
+/* 日期区间控件默认 350px，是工具栏最大头，定为 260px 控制整排总宽 */
 .toolbar-daterange {
   width: 260px;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .toolbar-hint {
@@ -928,16 +983,18 @@ function getWeekDay(dateStr?: string): string {
 
 .trend-content {
   flex: 1;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: max-content;
+  /* 纵向滚动容器：表头吸顶、统计行粘底相对本容器；滚动条随全局隐藏（不显示纵向条） */
+  overflow-y: auto;
 }
 
 .trend-scroll {
   flex: 1;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: max-content;
 }
 
 .trend-section {
@@ -945,7 +1002,7 @@ function getWeekDay(dateStr?: string): string {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-width: max-content;
 }
 
 /* 分区样式 */
@@ -980,32 +1037,31 @@ tfoot .zone-3 { background: rgba(230, 250, 235, 0.3); }
 tfoot .zone-back { background: rgba(240, 230, 250, 0.3); }
 
 .trend-table-wrapper {
-  /* 左侧三个固定列的列宽（定义列宽用） */
+  /* 左侧三列（期号/日期/星期）的固定列宽 */
   --sticky-w1: 84px;
   --sticky-w2: 88px;
   --sticky-w3: 60px;
-  /* 第 2/3 列的粘附左偏移与三列合计宽：挂载后由 syncStickyOffsets 按实际列宽校正 */
-  --sticky-l2: 84px;
-  --sticky-l3: 172px;
+  /* 三列合计宽（静态值）：供跨三列的标签单元格作 min-width 使用 */
   --sticky-total: 232px;
   flex: 1;
-  overflow: auto;
-  /* 号码连线 SVG 绝对定位于此，随内容一起滚动 */
+  /* 仅作定位容器与边框盒：横向滚动由根容器、纵向滚动由 .trend-content 承担，
+     号码连线 SVG 绝对定位于此 */
   position: relative;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
-  min-height: 0;
+  min-width: max-content;
 }
 
 /*
  * 必须用 separate + border-spacing:0 而不能用 collapse：
- * 折叠边框模式下边框由表格绘制、不属于单元格，sticky 列位移时边框留在原地，
- * 列缝会露出缝隙让下层号码球透出；且单元格 offsetWidth 与实际列进距不等，固定列 left 无法算准。
+ * 折叠边框模式下边框由表格绘制、不属于单元格，吸顶表头/粘底统计行位移时边框留在原地，
+ * 列缝会露出缝隙让下层号码球透出；且单元格 offsetWidth 与实际列进距不等，连线折点与列宽测量会偏移。
  */
 .trend-table {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
+  min-width: max-content;
   font-size: 12px;
 }
 
@@ -1057,23 +1113,13 @@ tfoot .zone-back { background: rgba(240, 230, 250, 0.3); }
   top: 20px;
 }
 
-/* 固定列 */
-.sticky-col {
-  position: sticky;
-  z-index: 10;
-  background: #fff;
-}
-
-thead .sticky-col { z-index: 20; background: #fafafa; }
-tfoot .sticky-col { z-index: 16; background: #fcfcfc; }
-
+/* 期号/日期/星期三列：取消横向冻结，随整表一起横向滚动（手机窄屏下悬浮列占宽过大） */
 .issue-cell {
   font-weight: 600;
   color: #303133;
   box-sizing: border-box;
   width: var(--sticky-w1);
   min-width: var(--sticky-w1);
-  left: 0;
   background: #fff;
 }
 thead .issue-cell { background: #fafafa; }
@@ -1084,7 +1130,6 @@ tfoot .issue-cell { background: #fcfcfc; }
   box-sizing: border-box;
   width: var(--sticky-w2);
   min-width: var(--sticky-w2);
-  left: var(--sticky-l2);
   background: #fff;
 }
 thead .date-cell { background: #fafafa; }
@@ -1097,23 +1142,10 @@ tfoot .date-cell { background: #fcfcfc; }
   min-width: var(--sticky-w3);
   font-size: 12px;
   font-weight: 500;
-  left: var(--sticky-l3);
   background: #fff;
 }
 thead .week-cell { background: #fafafa; }
 tfoot .week-cell { background: #fcfcfc; }
-
-/* 固定列右侧阴影 */
-.week-cell::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: -8px;
-  bottom: 0;
-  width: 8px;
-  background: linear-gradient(to right, rgba(0,0,0,0.04), transparent);
-  pointer-events: none;
-}
 
 /* 号码格子 */
 .num-header {
@@ -1153,7 +1185,7 @@ tfoot .week-cell { background: #fcfcfc; }
 /* ── 号码连线 ── */
 /* 绝对定位覆盖整张表格并随内容滚动。
  * z-index 取 0：与单元格（position:relative、z-index:auto）同层，靠 DOM 顺序排在表格之后
- * 而盖住单元格底色；同时低于号码球(1)、表头(2/3)、固定列(10)与表尾(12/16)，
+ * 而盖住单元格底色；同时低于号码球(1)、吸顶表头(2/3/25)与粘底统计行(12/17)，
  * 故滚到冻结区域后自然被遮住。切记不能高于 2，否则折线会糊在固定表头上。 */
 .trend-lines {
   position: absolute;
@@ -1300,10 +1332,7 @@ tfoot .week-cell { background: #fcfcfc; }
   font-size: 12px;
   font-weight: 600;
   color: #e6a23c;
-  position: sticky !important;
-  left: 0 !important;
   min-width: var(--sticky-total);
-  z-index: 17 !important;
   background: #fffbe6 !important;
 }
 
@@ -1371,10 +1400,7 @@ tfoot .week-cell { background: #fcfcfc; }
 }
 
 .prediction-action-label {
-  position: sticky !important;
-  left: 0 !important;
   min-width: var(--sticky-total);
-  z-index: 17 !important;
   background: #fffbe6 !important;
 }
 
@@ -1392,8 +1418,8 @@ tfoot .week-cell { background: #fcfcfc; }
   color: #909399;
   font-size: 12px;
   font-weight: 500;
+  /* 横向不再冻结，仅保留纵向粘底（bottom 由 statRowStyle 行内提供） */
   position: sticky !important;
-  left: 0 !important;
   min-width: var(--sticky-total);
   z-index: 17 !important;
   background: #fcfcfc !important;

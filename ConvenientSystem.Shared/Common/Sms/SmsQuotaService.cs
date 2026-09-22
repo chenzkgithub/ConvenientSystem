@@ -28,7 +28,7 @@ namespace ConvenientSystem.Shared.Common.Sms
             var today = _fsql.Select<SmsLogEntity>()
                 .Where(l => l.CreateTime >= DateTime.Today && l.CreateTime < DateTime.Today.AddDays(1))
                 .Count();
-            var monthStart = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+            var monthStart = new DateTime(TimeHelper.Now.Year, TimeHelper.Now.Month, 1);
             var monthCount = _fsql.Select<SmsLogEntity>()
                 .Where(l => l.CreateTime >= monthStart)
                 .Count();
@@ -49,8 +49,8 @@ namespace ConvenientSystem.Shared.Common.Sms
         /// </summary>
         public (bool ok, string? message) CheckFrequency(string phone)
         {
-            var oneMinAgo = DateTime.Now.AddMinutes(-1);
-            var oneHourAgo = DateTime.Now.AddHours(-1);
+            var oneMinAgo = TimeHelper.Now.AddMinutes(-1);
+            var oneHourAgo = TimeHelper.Now.AddHours(-1);
 
             var minCount = _fsql.Select<SmsLogEntity>()
                 .Where(l => l.Phone == phone && l.CreateTime >= oneMinAgo)
@@ -78,7 +78,7 @@ namespace ConvenientSystem.Shared.Common.Sms
             var today = _fsql.Select<SmsLogEntity>()
                 .Where(l => l.CreateTime >= DateTime.Today && l.CreateTime < DateTime.Today.AddDays(1))
                 .Count();
-            var monthStart = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+            var monthStart = new DateTime(TimeHelper.Now.Year, TimeHelper.Now.Month, 1);
             var monthCount = _fsql.Select<SmsLogEntity>()
                 .Where(l => l.CreateTime >= monthStart)
                 .Count();
@@ -99,7 +99,7 @@ namespace ConvenientSystem.Shared.Common.Sms
         {
             var dailyMax = GetMax("Daily", 100);
             var todayStart = DateTime.Today;
-            var monthStart = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+            var monthStart = new DateTime(TimeHelper.Now.Year, TimeHelper.Now.Month, 1);
 
             var todayTotal = _fsql.Select<SmsLogEntity>()
                 .Where(l => l.CreateTime >= todayStart && l.CreateTime < todayStart.AddDays(1))

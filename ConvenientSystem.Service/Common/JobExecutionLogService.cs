@@ -24,7 +24,7 @@ namespace ConvenientSystem.Service.Common
                 State = "Processing",
                 MethodName = methodName,
                 Arguments = arguments,
-                StartedAt = DateTime.Now,
+                StartedAt = TimeHelper.Now,
             };
             return _fsql.Insert(entity).ExecuteIdentity();
         }
@@ -33,7 +33,7 @@ namespace ConvenientSystem.Service.Common
         {
             _fsql.Update<JobExecutionLogEntity>()
                 .Set(e => e.State, state)
-                .Set(e => e.FinishedAt, DateTime.Now)
+                .Set(e => e.FinishedAt, TimeHelper.Now)
                 .Set(e => e.DurationMs, durationMs)
                 .Set(e => e.Error, error)
                 .Where(e => e.Id == logId)

@@ -80,7 +80,7 @@ namespace ConvenientSystem.Service.Common
             if (row.Status != LotteryRuleStatus.Pending)
                 throw new BadRequestException("该版本不在待审核状态");
 
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var account = _currentUser.Account ?? "未知";
 
             if (!dto.Approve)

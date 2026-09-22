@@ -76,6 +76,8 @@ internal sealed class DesktopUpdateChecker
 
                     progress?.Report((100, "安装程序已启动，即将关闭当前程序"));
                     await Task.Delay(800);
+                    // 此处为启动期（主窗体尚未创建、托盘图标不存在），必须 Environment.Exit：
+                    // Application.Exit 只结束当前消息循环，控制流会继续启动 MainForm，与安装程序冲突。
                     Environment.Exit(0);
                 },
                 webUpdate);

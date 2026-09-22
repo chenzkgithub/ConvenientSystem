@@ -8,7 +8,7 @@
 import { onMounted, reactive, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { httpGet, httpPost, httpPut, httpDelete } from '@/api/request'
-import { viewComponentOptions } from '@/common/viewComponents'
+import { viewComponentOptions, getViewEnv } from '@/common/viewComponents'
 import { confirmAndRun } from '@/common/utils/confirm'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
@@ -102,6 +102,21 @@ watch(() => form.component, (val) => {
     form.pageKey = generatePageKey(val)
   }
 })
+
+/** 组件下拉按运行环境分组（通用/桌面端专属），空组不展示。
+ *  公开页只跑 Web 端，桌面端专属组件依赖 /api/local 本地接口，公开访客上下文不可用。 */
+const groupedComponentOptions = computed(() => {
+  const groups = [
+    { label: '通用组件', env: 'both' as const },
+    { label: '桌面端专属（公开页不可用）', env: 'desktop' as const },
+  ]
+  return groups
+    .map((g) => ({ ...g, options: viewComponentOptions.filter((o) => o.env === g.env) }))
+    .filter((g) => g.options.length > 0)
+})
+
+/** 已选组件的运行环境（桌面端专属时提示公开页不可用） */
+const selectedComponentEnv = computed(() => getViewEnv(form.component))
 
 function resetForm() {
   form.id = 0
@@ -256,13 +271,22 @@ onMounted(loadData)
             clearable
             style="width: 100%"
           >
-            <el-option
-              v-for="opt in viewComponentOptions"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
+            <el-option-group
+              v-for="group in groupedComponentOptions"
+              :key="group.label"
+              :label="group.label"
+            >
+              <el-option
+                v-for="opt in group.options"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-option-group>
           </el-select>
+          <div v-if="selectedComponentEnv === 'desktop'" class="form-hint env-warning">
+            该组件依赖桌面端本地接口，公开页仅 Web 端可访问，将导致页面不可用
+          </div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input
@@ -309,5 +333,18 @@ onMounted(loadData)
   white-space: nowrap;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+/* 表单提示 */
+.form-hint {
+  font-size: 12px;
+  color: var(--text-sub, #64748b);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* 桌面端专属组件的警告提示 */
+.env-warning {
+  color: var(--el-color-warning, #e6a23c);
 }
 </style>

@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Common.Sms;
@@ -93,7 +94,7 @@ namespace ConvenientSystem.Service.Sms
                     TemplateId = dto.TemplateId,
                     IsDefault = dto.IsDefault,
                     Enabled = dto.Enabled,
-                    UpdateTime = DateTime.Now
+                    UpdateTime = TimeHelper.Now
                 };
 
                 if (dto.Id <= 0)
@@ -189,14 +190,14 @@ namespace ConvenientSystem.Service.Sms
                 {
                     QuotaType = quotaType,
                     MaxCount = maxCount,
-                    UpdateTime = DateTime.Now
+                    UpdateTime = TimeHelper.Now
                 }).ExecuteAffrows();
             }
             else
             {
                 _fsql.Update<SmsQuotaEntity>()
                     .Set(q => q.MaxCount, maxCount)
-                    .Set(q => q.UpdateTime, DateTime.Now)
+                    .Set(q => q.UpdateTime, TimeHelper.Now)
                     .Where(q => q.Id == existing.Id)
                     .ExecuteAffrows();
             }

@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Common.Sms;
@@ -93,7 +94,7 @@ namespace ConvenientSystem.Service.Email
                     EnableSsl = dto.EnableSsl,
                     IsDefault = dto.IsDefault,
                     Enabled = dto.Enabled,
-                    UpdateTime = DateTime.Now
+                    UpdateTime = TimeHelper.Now
                 };
 
                 if (dto.Id <= 0)

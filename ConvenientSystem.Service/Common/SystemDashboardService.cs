@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Model.Common;
 using Hangfire.Storage;
 using System.Diagnostics;
@@ -14,14 +15,14 @@ namespace ConvenientSystem.Service.Common
             var process = Process.GetCurrentProcess();
             var dto = new SystemDashboardDto
             {
-                ServerTime = DateTime.Now,
+                ServerTime = TimeHelper.Now,
                 ProcessName = process.ProcessName,
                 WorkingSetMB = (long)(process.WorkingSet64 / 1024.0 / 1024.0),
                 PrivateMemoryMB = (long)(process.PrivateMemorySize64 / 1024.0 / 1024.0),
                 ThreadCount = process.Threads.Count,
                 HandleCount = process.HandleCount,
-                StartTime = process.StartTime,
-                UptimeSeconds = (long)(DateTime.Now - process.StartTime).TotalSeconds,
+                StartTime = TimeHelper.FromUtc(process.StartTime),
+                UptimeSeconds = (long)(TimeHelper.Now - TimeHelper.FromUtc(process.StartTime)).TotalSeconds,
                 CpuCount = Environment.ProcessorCount,
                 MachineName = Environment.MachineName,
                 OsVersion = Environment.OSVersion.ToString(),

@@ -53,7 +53,7 @@ namespace ConvenientSystem.Shared.Jobs
         public Task CheckDueAsync(CancellationToken ct = default)
             => ExecuteWithLog("网站监控定时巡检", nameof(CheckDueAsync), null, async () =>
         {
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
 
             // 每天凌晨 3:00 档清理过期日志（保留 30 天）
             if (now.Hour == 3 && now.Minute == 0)
@@ -132,7 +132,7 @@ namespace ConvenientSystem.Shared.Jobs
             latencyMs = (int)sw.ElapsedMilliseconds;
 
             var newStatus = error == null ? StatusOk : StatusFail;
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
 
             var log = new WebMonitorLogEntity
             {

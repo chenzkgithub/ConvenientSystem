@@ -16,6 +16,9 @@ import {
   Loading,
   CircleCheckFilled,
   CircleCloseFilled,
+  DocumentCopy,
+  Link,
+  FolderOpened,
 } from '@element-plus/icons-vue'
 import {
   getPipelineList,
@@ -25,12 +28,14 @@ import {
   getPipelineRun,
   getPipelineRuns,
   cancelPipelineRun,
+  testPipelineConnection,
   type PipelineDefinition,
   type PipelineStage,
   type PipelineStageType,
   type PipelineRun,
   type PipelineRunStatus,
   type PipelineStageRunStatus,
+  type PipelineConnectionTestResult,
 } from '@/common/api/pipeline'
 import { selectFolder, selectSqlFile, getUniversalDefaultOutputDir, type UniversalBuildType, type DeployTargetOS } from '@/common/api/universalBuild'
 import { notifyBuildComplete } from '@/common/api/notice'
@@ -290,6 +295,14 @@ async function pickSqlFile(stage: PipelineStage) {
   } catch { /* 用户取消 */ }
 }
 
+/** 选择 SQL 目录（sqlSource 支持目录：执行其中全部 .sql、按文件名排序） */
+async function pickSqlFolder(stage: PipelineStage) {
+  try {
+    const dir = await selectFolder(stage.sqlSource)
+    if (dir) stage.sqlSource = dir
+  } catch { /* 用户取消 */ }
+}
+
 /** 编辑弹窗当前选中的阶段索引 */
 const activeStageIndex = ref(0)
 /** 当前选中阶段的 ref（与 editing.stages[index] 保持同步，避免 computed 对象属性写入不可靠导致表单改不动） */
@@ -302,6 +315,31 @@ watch(
   },
   { immediate: true },
 )
+
+/** 测试连接进行中（按钮 loading） */
+const testingConn = ref(false)
+/** 测试连接结果（内联常驻；切换阶段或改动连接串即失效清空，避免结果与配置对不上） */
+const connTestResult = ref<PipelineConnectionTestResult | null>(null)
+
+/** 测试数据库连接：不落配置、不执行脚本，结果内联展示 */
+async function onTestConnection(stage: PipelineStage) {
+  const connectionString = stage.connectionString?.trim()
+  if (!connectionString) return
+  testingConn.value = true
+  connTestResult.value = null
+  try {
+    connTestResult.value = await testPipelineConnection({ dbType: stage.dbType || 'SqlServer', connectionString })
+  } catch (e) {
+    connTestResult.value = { success: false, message: e instanceof Error ? e.message : '请求异常', serverVersion: '', elapsedMs: 0 }
+  } finally {
+    testingConn.value = false
+  }
+}
+
+// 切换阶段或改动连接串后旧结果立即失效（清空）
+watch([activeStageIndex, () => activeStage.value?.connectionString], () => {
+  connTestResult.value = null
+})
 
 /** 当前编辑阶段之前是否存在构建阶段：部署类型/服务名/远程目录默认值自动跟随最近构建产物 */
 const hasBuildBeforeActive = computed(() =>
@@ -561,11 +599,12 @@ const diagramStages = computed<StageNode[]>(() => {
 const historyVisible = ref(false)
 const historyLoading = ref(false)
 const historyItems = ref<PipelineRun[]>([])
-/** 历史弹窗按哪个流水线过滤（空 = 全部） */
+/** 历史弹窗按哪个流水线过滤（空 = 全部；正常入口都会带当前流水线，空仅兜底） */
 const historyPipelineId = ref('')
 
-async function openHistory(p?: PipelineDefinition) {
-  historyPipelineId.value = p?.id ?? ''
+/** 打开运行历史弹窗：只看传入流水线的历史（列表行与运行详情弹窗都传当前流水线，不再默认带出所有流水线） */
+async function openHistory(pipelineId?: string) {
+  historyPipelineId.value = pipelineId ?? ''
   historyVisible.value = true
   historyLoading.value = true
   try {
@@ -745,6 +784,34 @@ function scrollToLogBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
+/** 复制日志到剪贴板 */
+async function copyLog() {
+  const log = currentRun.value?.log
+  if (!log) {
+    ElMessage.warning('无日志可复制')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(log)
+    ElMessage.success('日志已复制到剪贴板')
+  } catch {
+    // 降级方案：创建 textarea 复制
+    const textarea = document.createElement('textarea')
+    textarea.value = log
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      ElMessage.success('日志已复制到剪贴板')
+    } catch {
+      ElMessage.error('复制失败，请手动选择复制')
+    }
+    document.body.removeChild(textarea)
+  }
+}
+
 // 日志变化时跟随滚动到底部
 watch(
   () => currentRun.value?.log?.length,
@@ -840,7 +907,7 @@ onUnmounted(() => {
             <el-button size="small" circle :icon="Clock" :disabled="!recentRunOf(p)" @click="onViewRun(p)" />
           </el-tooltip>
           <el-tooltip content="运行历史" placement="top">
-            <el-button size="small" circle :icon="Document" @click="openHistory(p)" />
+            <el-button size="small" circle :icon="Document" @click="openHistory(p.id)" />
           </el-tooltip>
           <el-tooltip content="编辑" placement="top">
             <el-button
@@ -1057,12 +1124,30 @@ onUnmounted(() => {
                 type="password"
                 show-password
                 placeholder="目标数据库连接串（Server=...;Database=...;User Id=...;Password=...）"
-              />
+              >
+                <template #append>
+                  <el-button
+                    :icon="Link"
+                    :loading="testingConn"
+                    :disabled="!activeStage.connectionString?.trim()"
+                    @click="onTestConnection(activeStage)"
+                  >测试连接</el-button>
+                </template>
+              </el-input>
+              <!-- 测试结果内联常驻：绿=连通（含版本与耗时），红=失败原因原文；改连接串/切阶段自动清空 -->
+              <div v-if="connTestResult" class="conn-test-result" :class="connTestResult.success ? 'is-ok' : 'is-fail'">
+                <el-icon v-if="connTestResult.success"><CircleCheckFilled /></el-icon>
+                <el-icon v-else><CircleCloseFilled /></el-icon>
+                <span>{{ connTestResult.success
+                  ? `连接成功（${connTestResult.serverVersion || '已连通'}，${connTestResult.elapsedMs} ms）`
+                  : `连接失败：${connTestResult.message}` }}</span>
+              </div>
             </el-form-item>
             <el-form-item label="SQL 文件">
               <el-input v-model="activeStage.sqlSource" placeholder="SQL 文件或目录；留空 = 上一个构建阶段的产物目录">
                 <template #append>
-                  <el-button :icon="Document" @click="pickSqlFile(activeStage)" title="选择 SQL 文件" />
+                  <el-button :icon="Document" @click="pickSqlFile(activeStage)">选择文件</el-button>
+                  <el-button :icon="FolderOpened" @click="pickSqlFolder(activeStage)">选择目录</el-button>
                 </template>
               </el-input>
             </el-form-item>
@@ -1171,7 +1256,14 @@ onUnmounted(() => {
         <div class="run-panel">
           <div class="run-panel-head">
             <span class="run-panel-title">运行日志</span>
-            <el-checkbox v-model="logAutoFollow" size="small">自动滚动</el-checkbox>
+            <div class="run-panel-actions">
+              <el-checkbox v-model="logAutoFollow" size="small">自动滚动</el-checkbox>
+              <el-tooltip content="复制日志" placement="top">
+                <el-icon class="copy-icon" :class="{ 'is-disabled': !currentRun?.log }" @click="currentRun?.log && copyLog()">
+                  <DocumentCopy />
+                </el-icon>
+              </el-tooltip>
+            </div>
           </div>
           <div ref="logTerminalRef" class="log-terminal" @scroll="onLogScroll">
             <pre v-if="currentRun.log">{{ currentRun.log }}</pre>
@@ -1183,7 +1275,7 @@ onUnmounted(() => {
 
       <template #footer>
         <el-button v-if="running && $has('pipeline:cancel')" type="danger" plain @click="onCancelRun">取消运行</el-button>
-        <el-button :icon="Document" @click="openHistory()">运行历史</el-button>
+        <el-button :icon="Document" @click="openHistory(currentRun?.pipelineId)">运行历史</el-button>
         <el-button type="primary" @click="runVisible = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -1946,6 +2038,24 @@ onUnmounted(() => {
   color: #909399;
 }
 
+/* 测试连接结果：内联常驻，绿=连通 / 红=失败；长错误信息换行不溢出 */
+.conn-test-result {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  word-break: break-all;
+}
+
+.conn-test-result.is-ok {
+  color: #67c23a;
+}
+
+.conn-test-result.is-fail {
+  color: #f56c6c;
+}
+
 .stage-actions-bar {
   display: flex;
   align-items: center;
@@ -1974,6 +2084,27 @@ onUnmounted(() => {
 .run-panel-title {
   font-weight: 600;
   font-size: 13px;
+}
+
+.copy-icon {
+  font-size: 14px;
+  color: #909399;
+  cursor: pointer;
+  transition: color 0.2s;
+  margin-left: 8px;
+}
+
+.copy-icon:hover {
+  color: #409eff;
+}
+
+.copy-icon.is-disabled {
+  color: #c0c4cc;
+  cursor: not-allowed;
+}
+
+.copy-icon.is-disabled:hover {
+  color: #c0c4cc;
 }
 
 .log-terminal {

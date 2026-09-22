@@ -101,6 +101,8 @@ internal sealed class WebHostService : IHostedService, IDisposable
             ("launcher-items.json", "json"),
         ]));
         builder.Services.AddSingleton<LocalCodeScanService>();
+        // 本机 Hosts 管理：解析/备份/写回本机 hosts 文件，不能转发到云
+        builder.Services.AddSingleton<HostsFileService>();
         builder.Services.AddSingleton<PipelineStore>();
         builder.Services.AddSingleton<PipelineService>();
         builder.Services.AddSingleton<UniversalScheduleService>();
@@ -109,7 +111,11 @@ internal sealed class WebHostService : IHostedService, IDisposable
         builder.Services.AddSingleton<IApiExporter, OpenApiYamlExporter>();
         builder.Services.AddSingleton<IApiExporter, PostmanExporter>();
         builder.Services.AddSingleton<IApiExporter, MarkdownExporter>();
+        // 统一异步任务中心：本地进程无 SignalR Hub，用空推送器（前端轮询 AsyncTask 接口获取进度）
+        builder.Services.AddSingleton<IAsyncTaskNotifier, NoopAsyncTaskNotifier>();
+        builder.Services.AddSingleton<AsyncTaskCenter>();
         builder.Services.AddSingleton<ApiSpecService>();
+        builder.Services.AddSingleton<ApiDebugService>();
         builder.Services.AddControllers()
             .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
@@ -135,6 +141,8 @@ internal sealed class WebHostService : IHostedService, IDisposable
 
         var app = builder.Build();
 
+        // 宿主标识注入：必须在 UseDefaultFiles 之前注册，为 index.html 注入 cs-host meta
+        app.UseMiddleware<HostKindInjectionMiddleware>();
         app.UseDefaultFiles();
         app.UseStaticFiles(new StaticFileOptions
         {

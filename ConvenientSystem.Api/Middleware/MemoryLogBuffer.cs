@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 
@@ -18,7 +19,7 @@ namespace ConvenientSystem.Api.Middleware
 
             var entry = new LogEntry
             {
-                Timestamp = DateTime.Now,
+                Timestamp = TimeHelper.Now,
                 Level = level.ToString(),
                 Category = category.Length > 60 ? category[^60..] : category,
                 Message = message,

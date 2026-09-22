@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { inject, computed } from 'vue'
-import { Folder, Document, Rank, Edit, Delete, Plus, Position, Link } from '@element-plus/icons-vue'
-import CommonTooltip from '@/common/components/CommonTooltip.vue'
+import { Folder, Document, Collection, Rank, MoreFilled, Link, ArrowRight, ArrowDown } from '@element-plus/icons-vue'
 import type { MenuNode } from '@/common/types'
 
 const props = defineProps<{
@@ -13,13 +12,17 @@ const props = defineProps<{
 /** 从父级注入的菜单操作集合 */
 interface MenuActions {
   hasChildren: (node: MenuNode) => boolean
-  formatComponent: (path?: string | null) => string
   isEditable: (node: MenuNode) => boolean
   toggleEnabled: (path: number[], val: boolean) => void
   addChildMenu: (parentPath: number[]) => void
   editMenu: (path: number[]) => void
   deleteMenu: (path: number[]) => void
   openMoveDialog: (path: number[]) => void
+  select: (path: number[]) => void
+  isSelected: (path: number[]) => boolean
+  isKeywordHit: (node: MenuNode) => boolean
+  isRowExpanded: (node: MenuNode, path: number[]) => boolean
+  toggleExpand: (node: MenuNode, path: number[]) => void
   dragState: {
     dragPath: number[] | null
     dragOverPath: number[] | null
@@ -36,7 +39,52 @@ const actions = inject<MenuActions>('menuActions')!
 
 const isFolder = computed(() => actions.hasChildren(props.node))
 const editable = computed(() => actions.isEditable(props.node))
-const showGuide = computed(() => props.depth > 0)
+const expanded = computed(() => actions.isRowExpanded(props.node, props.path))
+const selected = computed(() => actions.isSelected(props.path))
+const keywordHit = computed(() => actions.isKeywordHit(props.node))
+const enabled = computed(() => props.node.enabled !== false)
+
+/** 行内图标类型：分组（有子级）/ 外链叶子 / 内部叶子 / 空分组（无地址无子级） */
+const iconKind = computed<'folder' | 'external' | 'leaf' | 'group'>(() => {
+  if (isFolder.value) return 'folder'
+  if (props.node.external) return 'external'
+  if (!props.node.page) return 'group'
+  return 'leaf'
+})
+
+/** 行内元信息（紧跟标题）：内部菜单展示「路由地址 · 路由名称 · 组件短路径」，外链展示完整 URL；无则 null */
+const metaLine = computed<string | null>(() => {
+  const n = props.node
+  if (n.external && n.page) return n.page
+  const parts: string[] = []
+  if (n.page) parts.push(n.page)
+  if (n.name) parts.push(n.name)
+  const comp = (n.component || '').replace(/^\/src\//, '')
+  if (comp) parts.push(comp)
+  return parts.length ? parts.join(' · ') : null
+})
+
+/** 分组子菜单数（紧跟标题的小药丸） */
+const childCount = computed(() => props.node.children?.length ?? 0)
+
+function onCommand(cmd: string | number | object) {
+  const c = String(cmd)
+  if (c === 'add') actions.addChildMenu(props.path)
+  else if (c === 'edit') actions.editMenu(props.path)
+  else if (c === 'move') actions.openMoveDialog(props.path)
+  else if (c === 'delete') actions.deleteMenu(props.path)
+}
+
+function onToggleExpand() {
+  if (isFolder.value) actions.toggleExpand(props.node, props.path)
+}
+
+/** 双击整行展开/折叠（开关、按钮、下拉等交互控件上不触发） */
+function onDblClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.closest('button') || target.closest('.el-switch') || target.closest('.expand-toggle') || target.closest('.el-dropdown')) return
+  if (isFolder.value) actions.toggleExpand(props.node, props.path)
+}
 
 function pathEqual(a: number[] | null, b: number[]): boolean {
   if (!a) return false
@@ -52,82 +100,92 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
 <template>
   <li class="tree-item">
     <div
-      class="menu-row"
+      class="row-wrap"
       :class="{
         'is-dragging': isDragging,
+        'is-selected': selected,
         'drop-before': dropBefore,
         'drop-after': dropAfter,
-        'is-group': isFolder,
-        'no-guide': !showGuide,
       }"
       :style="{ '--depth': depth }"
       draggable="true"
+      @click="actions.select(props.path)"
+      @dblclick="onDblClick"
       @dragstart="actions.onDragStart(props.path, $event)"
       @dragover="actions.onDragOver(props.path, $event)"
       @dragleave="actions.onDragLeave(props.path)"
       @drop="actions.onDrop(props.path, $event)"
       @dragend="actions.onDragEnd()"
     >
-      <!-- 拖拽手柄 -->
-      <span class="drag-handle" title="拖动排序">
-        <el-icon><Rank /></el-icon>
-      </span>
+      <!-- 单行：展开箭头 + 手柄 + 图标 + 标题 + 计数 + 路由信息 + 状态标 + 开关 + 更多 -->
+      <div class="row-line row-main">
+        <span class="expand-toggle" :class="{ leaf: !isFolder }" @click.stop="onToggleExpand">
+          <el-icon v-if="isFolder" :size="12">
+            <ArrowDown v-if="expanded" />
+            <ArrowRight v-else />
+          </el-icon>
+        </span>
 
-      <!-- 类型图标 -->
-      <span class="row-icon" :class="isFolder ? 'icon-folder' : 'icon-leaf'">
-        <el-icon v-if="isFolder"><Folder /></el-icon>
-        <el-icon v-else><Document /></el-icon>
-      </span>
+        <span class="drag-handle" title="拖动排序">
+          <el-icon :size="14"><Rank /></el-icon>
+        </span>
 
-      <!-- 标题 -->
-      <span class="row-title">{{ node.title }}</span>
+        <span class="row-icon" :class="`tint-${iconKind}`">
+          <el-icon :size="14">
+            <Folder v-if="iconKind === 'folder'" />
+            <Link v-else-if="iconKind === 'external'" />
+            <Collection v-else-if="iconKind === 'group'" />
+            <Document v-else />
+          </el-icon>
+        </span>
 
-      <!-- 徽章 -->
-      <CommonTooltip v-if="node.page" :content="node.page">
-        <span class="row-badge badge-page">{{ node.page }}</span>
-      </CommonTooltip>
-      <span v-else class="row-badge badge-group">分组</span>
-      <span v-if="node.external" class="row-badge badge-external">
-        <el-icon :size="11"><Link /></el-icon>外链
-      </span>
-      <span v-if="node.name" class="row-badge badge-name">{{ node.name }}</span>
-      <CommonTooltip v-if="node.component" :content="node.component">
-        <span class="row-badge badge-component">{{ actions.formatComponent(node.component) }}</span>
-      </CommonTooltip>
+        <span class="row-title" :class="{ hit: keywordHit }">{{ node.title }}</span>
 
-      <!-- 启用开关 -->
-      <el-switch
-        class="row-switch"
-        :model-value="node.enabled !== false"
-        :disabled="!editable"
-        size="small"
-        inline-prompt
-        active-text="启"
-        inactive-text="停"
-        @change="(val: string | number | boolean) => actions.toggleEnabled(props.path, !!val)"
-      />
+        <span v-if="isFolder && childCount" class="row-count" :title="`${childCount} 个子菜单`">{{ childCount }}</span>
 
-      <!-- 操作按钮 -->
-      <span class="row-actions">
-        <template v-if="editable">
-          <el-button size="small" type="primary" link title="移动到其他父级" @click="actions.openMoveDialog(props.path)">
-            <el-icon><Position /></el-icon>
+        <span v-if="metaLine" class="row-meta" :title="metaLine">{{ metaLine }}</span>
+
+        <span v-if="!enabled" class="row-tag tag-gray">已停用</span>
+        <span v-if="!isFolder && !node.page" class="row-tag tag-green">分组</span>
+
+        <el-switch
+          class="row-switch"
+          :model-value="enabled"
+          :disabled="!editable"
+          size="small"
+          inline-prompt
+          active-text="启"
+          inactive-text="停"
+          @click.stop
+          @change="(val: string | number | boolean) => actions.toggleEnabled(props.path, !!val)"
+        />
+
+        <el-dropdown
+          class="row-more"
+          trigger="click"
+          @command="onCommand"
+          @click.stop
+        >
+          <el-button text size="small" class="more-btn" title="更多操作">
+            <el-icon :size="16"><MoreFilled /></el-icon>
           </el-button>
-          <el-button size="small" type="success" link title="新增子菜单" @click="actions.addChildMenu(props.path)">
-            <el-icon><Plus /></el-icon>
-          </el-button>
-          <el-button size="small" type="warning" link title="编辑" @click="actions.editMenu(props.path)">
-            <el-icon><Edit /></el-icon>
-          </el-button>
-          <el-button size="small" type="danger" link title="删除" @click="actions.deleteMenu(props.path)">
-            <el-icon><Delete /></el-icon>
-          </el-button>
-        </template>
-      </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-if="editable" command="add">新增子级</el-dropdown-item>
+              <el-dropdown-item v-if="editable" command="edit">编辑</el-dropdown-item>
+              <el-dropdown-item v-if="editable" command="move">移动到…</el-dropdown-item>
+              <el-dropdown-item v-if="editable" command="delete" divided>
+                <span class="danger-text">删除</span>
+              </el-dropdown-item>
+              <el-dropdown-item v-if="!editable" disabled>该菜单已被锁定编辑</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </div>
 
-    <!-- 子级递归 -->
-    <ul v-if="isFolder" class="menu-tree sub">
+    <!-- 子级递归（收起时不渲染） -->
+    <ul v-if="isFolder && expanded" class="menu-tree sub">
       <MenuTreeRow
         v-for="(child, cidx) in node.children"
         :key="cidx"
@@ -145,32 +203,80 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   margin: 0;
 }
 
-.menu-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding-left: calc(var(--depth, 0) * 24px + 12px);
-  padding-right: 12px;
-  border-radius: var(--radius-sm, 8px);
-  transition: background 0.15s ease;
+/* 两行整体包裹：hover/选中/拖拽视觉统一作用于整个卡片 */
+.row-wrap {
   position: relative;
+  margin: 2px 4px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid transparent;
+  cursor: pointer;
   user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.menu-row:hover {
+.row-wrap:hover {
   background: var(--page-bg, #f8fafc);
 }
 
+.row-wrap.is-selected {
+  background: var(--brand-50, #eff6ff);
+  border-color: var(--brand-200, #bfdbfe);
+}
+
 /* 嵌套引导线 */
-.menu-row:not(.no-guide)::before {
+.row-wrap::before {
   content: '';
   position: absolute;
-  left: calc((var(--depth, 0) - 1) * 24px + 18px);
+  left: calc(var(--depth, 0) * 24px + 20px);
   top: 0;
   bottom: 0;
   width: 1px;
   background: var(--border, #e2e8f0);
+  pointer-events: none;
+}
+
+.row-wrap:hover::before,
+.row-wrap.is-selected::before {
+  display: none;
+}
+
+.row-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: calc(var(--depth, 0) * 24px + 12px);
+  padding-right: 10px;
+}
+
+.row-main {
+  height: 38px;
+}
+
+/* 展开箭头 */
+.expand-toggle {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-sub, #64748b);
+  border-radius: 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.expand-toggle:hover {
+  background: var(--border, #e2e8f0);
+  color: var(--text-main, #0f172a);
+}
+
+.expand-toggle.leaf {
+  cursor: default;
+}
+
+.expand-toggle.leaf:hover {
+  background: transparent;
+  color: var(--text-sub, #64748b);
 }
 
 /* 拖拽手柄 */
@@ -187,7 +293,7 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   flex-shrink: 0;
 }
 
-.menu-row:hover .drag-handle {
+.row-wrap:hover .drag-handle {
   opacity: 1;
 }
 
@@ -195,7 +301,7 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   cursor: grabbing;
 }
 
-/* 类型图标 */
+/* 类型图标：扁平柔色 chip（分组蓝 / 外链琥珀 / 内部叶子石板灰 / 空分组浅灰） */
 .row-icon {
   width: 24px;
   height: 24px;
@@ -203,18 +309,18 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
   flex-shrink: 0;
-  color: #fff;
 }
 
-.icon-folder {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-}
+.row-icon.tint-folder { background: #eff6ff; color: #2563eb; }
+.row-icon.tint-external { background: #fffbeb; color: #d97706; }
+.row-icon.tint-leaf { background: #f1f5f9; color: #475569; }
+.row-icon.tint-group { background: #f8fafc; color: #94a3b8; }
 
-.icon-leaf {
-  background: linear-gradient(135deg, #64748b, #475569);
-}
+html.dark .row-icon.tint-folder { background: rgba(59, 130, 246, 0.16); color: #7db9ff; }
+html.dark .row-icon.tint-external { background: rgba(245, 158, 11, 0.16); color: #fbbf24; }
+html.dark .row-icon.tint-leaf { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+html.dark .row-icon.tint-group { background: rgba(148, 163, 184, 0.12); color: #64748b; }
 
 /* 标题 */
 .row-title {
@@ -222,52 +328,62 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   font-weight: 500;
   color: var(--text-main, #0f172a);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.menu-row.is-group .row-title {
+.row-title.hit {
+  color: var(--brand, #3b82f6);
   font-weight: 600;
 }
 
-/* 徽章 */
-.row-badge {
+/* 分组子菜单计数：紧跟标题的小药丸 */
+.row-count {
   font-size: 11px;
-  padding: 1px 8px;
+  line-height: 16px;
+  padding: 0 6px;
   border-radius: 999px;
+  background: var(--page-bg, #f8fafc);
+  color: var(--text-sub, #64748b);
   flex-shrink: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+html.dark .row-count {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+/* 状态标（只保留停用/分组两个轻量标记；外链身份由标题前图标表达） */
+.row-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
+  flex-shrink: 0;
 }
 
-.badge-page {
+.tag-gray {
   color: var(--text-sub, #64748b);
   background: var(--page-bg, #f8fafc);
-  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  max-width: 200px;
 }
 
-.badge-group {
+.tag-green {
   color: #16a34a;
   background: #f0fdf4;
 }
 
-.badge-external {
-  color: #2563eb;
-  background: #eff6ff;
-}
-
-.badge-name {
-  color: #d97706;
-  background: #fffbeb;
-}
-
-.badge-component {
-  color: #7c3aed;
-  background: #f5f3ff;
-  max-width: 140px;
+/* 行内元信息：路由地址 · 路由名称 · 组件短路径（紧跟标题，占满剩余宽度，超长省略，悬浮看全文） */
+.row-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-sub, #64748b);
+  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 开关 */
@@ -284,38 +400,40 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   font-size: 10px;
 }
 
-/* 操作按钮 */
-.row-actions {
-  display: flex;
-  gap: 2px;
+/* 更多按钮 */
+.row-more {
   flex-shrink: 0;
+}
+
+.more-btn {
+  padding: 4px;
+  margin: 0;
+  color: var(--text-sub, #64748b);
   opacity: 0;
   transition: opacity 0.15s;
 }
 
-.menu-row:hover .row-actions {
+.row-wrap:hover .more-btn {
   opacity: 1;
 }
 
-.row-actions .el-button {
-  padding: 4px;
-  margin: 0;
+.danger-text {
+  color: var(--el-color-danger);
 }
 
-/* 拖拽视觉反馈：仅用背景色标记被拖拽行，不加 opacity/outline 避免与原生 ghost 叠加产生虚影 */
-.menu-row.is-dragging {
+/* 拖拽视觉反馈 */
+.row-wrap.is-dragging {
   background: var(--brand-50, #eff6ff);
 }
 
-/* 放置目标高亮 */
-.menu-row.drop-before,
-.menu-row.drop-after {
+.row-wrap.drop-before,
+.row-wrap.drop-after {
   background: var(--brand-50, #eff6ff);
 }
 
-/* 蓝色指示线 — 用 ::after 避免与引导线 ::before 冲突 */
-.menu-row.drop-before::after,
-.menu-row.drop-after::after {
+/* 蓝色放置指示线 */
+.row-wrap.drop-before::after,
+.row-wrap.drop-after::after {
   content: '';
   position: absolute;
   left: 8px;
@@ -328,11 +446,11 @@ const dropAfter = computed(() => isDropTarget.value && actions.dragState.dropPos
   pointer-events: none;
 }
 
-.menu-row.drop-before::after {
+.row-wrap.drop-before::after {
   top: -2px;
 }
 
-.menu-row.drop-after::after {
+.row-wrap.drop-after::after {
   bottom: -2px;
 }
 

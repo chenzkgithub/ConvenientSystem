@@ -17,6 +17,7 @@ const lock = useLockStore()
 /** 分组图标映射 */
 const CATEGORY_ICONS: Record<string, string> = {
   '锁屏设置': '🔐',
+  '彩票设置': '🎰',
 }
 
 const myGroups = ref<UserConfigGroup[]>([])

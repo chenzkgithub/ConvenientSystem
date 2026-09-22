@@ -27,7 +27,7 @@ namespace ConvenientSystem.Shared.Common.Sms
         public void Compensate()
         {
             var pendingTasks = _fsql.Select<Entity.Sms.SmsTaskEntity>()
-                .Where(t => t.Status == 0 && t.SendTime > DateTime.Now)
+                .Where(t => t.Status == 0 && t.SendTime > TimeHelper.Now)
                 .ToList();
 
             if (pendingTasks.Count == 0)
@@ -40,14 +40,14 @@ namespace ConvenientSystem.Shared.Common.Sms
 
             foreach (var task in pendingTasks)
             {
-                var delay = task.SendTime - DateTime.Now;
+                var delay = task.SendTime - TimeHelper.Now;
                 var jobId = BackgroundJob.Schedule<SmsSendJob>(
                     job => job.SendAsync(task.Id, default),
                     delay);
 
                 _fsql.Update<Entity.Sms.SmsTaskEntity>()
                     .Set(t => t.HangfireJobId, jobId)
-                    .Set(t => t.UpdateTime, DateTime.Now)
+                    .Set(t => t.UpdateTime, TimeHelper.Now)
                     .Where(t => t.Id == task.Id)
                     .ExecuteAffrows();
 

@@ -12,6 +12,9 @@ namespace ConvenientSystem.Shared.Model.Common
         public bool Enabled { get; set; }
         public int SortOrder { get; set; }
 
+        /// <summary>运行环境（both/desktop/web，管理面登记，默认 both）</summary>
+        public string Env { get; set; } = "both";
+
         /// <summary>该视图下的权限点列表</summary>
         public List<ViewPermissionDto> Permissions { get; set; } = new();
     }
@@ -36,6 +39,9 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? RoutePath { get; set; }
         public string? Description { get; set; }
         public bool Enabled { get; set; } = true;
+
+        /// <summary>运行环境（both/desktop/web；空或非法值按 both 处理）</summary>
+        public string? Env { get; set; }
     }
 
     /// <summary>新增/编辑视图权限点请求</summary>

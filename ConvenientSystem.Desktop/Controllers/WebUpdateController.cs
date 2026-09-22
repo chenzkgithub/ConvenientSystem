@@ -9,6 +9,8 @@ namespace ConvenientSystem;
 /// 本地 wwwroot，完成后前端 reload 即生效。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/web-update")]
 [Route("api/Common/WebUpdate")]
 public class WebUpdateController : ControllerBase
 {

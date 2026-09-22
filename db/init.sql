@@ -274,7 +274,7 @@ BEGIN
     -- 监控
     (54, NULL, N'监控', NULL, 0, 1, 0, 1, 1, NULL, NULL, 12, 0),
     (55, 54, N'网站监控', N'/web-monitor', 0, 1, 0, 1, 1, N'web-monitor', N'/src/common/views/WebMonitorView.vue', 1, 1),
-    (56, 54, N'本机监控', N'/local-monitor', 1, 1, 0, 1, 1, N'local-monitor', N'/src/common/views/LocalMonitorView.vue', 2, 1),
+    (56, 54, N'本机监控', N'/local-monitor', 1, 1, 0, 1, 1, N'local-monitor', N'/src/common/views/LocalMonitorView.vue', 2, 1);
     -- Web版本管理、构建与发布、通用构建发布已移至构建发布一级菜单下
 
     SET IDENTITY_INSERT dbo.SysMenu OFF;
@@ -1199,6 +1199,7 @@ BEGIN
         RoutePath   NVARCHAR(200)     NULL,
         Description NVARCHAR(500)     NULL,
         Enabled     BIT               NOT NULL DEFAULT 1,
+        Env         NVARCHAR(20)      NOT NULL DEFAULT N'both',
         SortOrder   INT               NOT NULL DEFAULT 0
     );
 END
@@ -1290,9 +1291,35 @@ BEGIN
     (38, N'web-package',      N'系统版本管理',N'/src/common/views/WebPackageView.vue',        N'/web-package',      38),
     (40, N'universal-build',   N'通用构建发布', N'/src/common/views/UniversalBuildView.vue',  N'/universal-build',  40),
     (41, N'api-spec',          N'API文档生成',  N'/src/common/views/ApiSpecView.vue',         N'/api-spec',         41),
-    (42, N'pipeline',          N'流水线',        N'/src/common/views/PipelineView.vue',        N'/pipeline',         42);
+    (42, N'pipeline',          N'流水线',        N'/src/common/views/PipelineView.vue',        N'/pipeline',         42),
+    (43, N'hosts',             N'Hosts管理',     N'/src/common/views/HostsView.vue',            N'/hosts',            43);
     SET IDENTITY_INSERT dbo.SysView OFF;
 END
+GO
+
+-- ========== 老库补齐：视图运行环境 Env 列 + 桌面专属视图登记（列级/行级幂等，可重复执行） ==========
+-- 新库由上方建表段直接具备 Env 列；老库在此补列，避免 ViewService 查询/保存报 "Invalid column name 'Env'"。
+-- 与 db/migrate-add-view-env.sql 等效：部署脚本仅在库不存在时执行 init.sql，老库需执行本段或该迁移脚本。
+IF COL_LENGTH(N'dbo.SysView', N'Env') IS NULL
+BEGIN
+    ALTER TABLE dbo.SysView ADD Env NVARCHAR(20) NOT NULL DEFAULT N'both';
+END
+GO
+
+EXEC dbo.usp_AddColumnComment N'SysView', N'Env', N'运行环境：both通用 / desktop桌面端 / web服务器端（管理面镜像，运行时过滤以代码元数据为准）';
+GO
+
+-- 桌面专属视图登记：与前端 VIEW_META（viewComponents.ts）初始清单一致；只对齐仍为默认 both 的行，不覆盖手动调整过的值
+UPDATE dbo.SysView SET Env = N'desktop' WHERE Env = N'both' AND Component IN (
+    N'/src/common/views/UniversalBuildView.vue',
+    N'/src/common/views/PipelineView.vue',
+    N'/src/common/views/GitWorkbenchView.vue',
+    N'/src/common/views/LocalMonitorView.vue',
+    N'/src/common/views/ApiSpecView.vue',
+    N'/src/common/views/CodeScanView.vue',
+    N'/src/common/views/ConfigEditorView.vue',
+    N'/src/common/views/HostsView.vue'
+);
 GO
 
 -- 视图权限点种子数据
@@ -1406,13 +1433,14 @@ BEGIN
     -- API文档生成（C# Controller 源码 → OpenAPI/Postman 等格式）
     (80, 41, N'api-spec',        N'查看API文档生成', 0),
     (81, 41, N'api-spec:export', N'导出API数据文件', 1),
+    (88, 41, N'api-spec:debug',  N'调试接口',       2),
     -- 流水线
     (82, 42, N'pipeline',           N'查看流水线', 0),
     (83, 42, N'pipeline:add',       N'新增流水线', 1),
     (84, 42, N'pipeline:edit',      N'编辑流水线', 2),
     (85, 42, N'pipeline:delete',    N'删除流水线', 3),
     (86, 42, N'pipeline:run',       N'运行流水线', 4),
-    (87, 42, N'pipeline:cancel',    N'取消运行',   5),
+    (87, 42, N'pipeline:cancel',    N'取消运行',   5);
 
     SET IDENTITY_INSERT dbo.SysViewPermission OFF;
 END
@@ -1512,6 +1540,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'api-spec:export')
         INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
         VALUES (@ApiSpecViewId, N'api-spec:export', N'导出API数据文件', 1);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'api-spec:debug')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ApiSpecViewId, N'api-spec:debug', N'调试接口', 2);
 END
 GO
 
@@ -2139,7 +2170,161 @@ WHERE r.Code = N'admin' AND m.Name = N'code-scan'
   AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
 GO
 
--- admin 角色自动拥有所有视图权限点
+-- ========== AI 能力：模型/会话/消息/用量/任务五表（幂等建表） ==========
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AiModel')
+BEGIN
+    CREATE TABLE dbo.AiModel (
+        Id              INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        Name            NVARCHAR(100)    NOT NULL,
+        BaseUrl         NVARCHAR(500)    NOT NULL,
+        ApiKey          NVARCHAR(4000)   NOT NULL DEFAULT N'',
+        ModelId         NVARCHAR(200)    NOT NULL,
+        Scenes          NVARCHAR(200)    NOT NULL DEFAULT N'chat',
+        IsDefault       BIT              NOT NULL DEFAULT 0,
+        Enabled         BIT              NOT NULL DEFAULT 1,
+        MaxContextChars INT              NOT NULL DEFAULT 60000,
+        SortOrder       INT              NOT NULL DEFAULT 0,
+        CreateTime      DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AiConversation')
+BEGIN
+    CREATE TABLE dbo.AiConversation (
+        Id         BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UserId     NVARCHAR(64)  NOT NULL,
+        Title      NVARCHAR(200) NOT NULL DEFAULT N'新对话',
+        ModelId    INT           NOT NULL DEFAULT 0,
+        UpdateTime DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+        CreateTime DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX IX_AiConversation_User ON dbo.AiConversation(UserId, UpdateTime DESC);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AiMessage')
+BEGIN
+    CREATE TABLE dbo.AiMessage (
+        Id             BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        ConversationId BIGINT        NOT NULL,
+        UserId         NVARCHAR(64)  NOT NULL,
+        Role           NVARCHAR(20)  NOT NULL,
+        Content        NVARCHAR(MAX) NOT NULL DEFAULT N'',
+        Status         INT           NOT NULL DEFAULT 1,
+        TokensIn       INT           NOT NULL DEFAULT 0,
+        TokensOut      INT           NOT NULL DEFAULT 0,
+        ElapsedMs      INT           NOT NULL DEFAULT 0,
+        Error          NVARCHAR(500) NULL,
+        CreateTime     DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX IX_AiMessage_Conversation ON dbo.AiMessage(ConversationId, Id);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AiUsageDaily')
+BEGIN
+    CREATE TABLE dbo.AiUsageDaily (
+        Id           INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UtcDate      DATETIME2    NOT NULL,
+        UserId       NVARCHAR(64) NOT NULL,
+        RequestCount INT          NOT NULL DEFAULT 0,
+        TokensIn     INT          NOT NULL DEFAULT 0,
+        TokensOut    INT          NOT NULL DEFAULT 0,
+        UpdateTime   DATETIME2    NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT UQ_AiUsageDaily_UserDate UNIQUE (UtcDate, UserId)
+    );
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AiTask')
+BEGIN
+    CREATE TABLE dbo.AiTask (
+        Id          BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UserId      NVARCHAR(64)  NOT NULL,
+        Title       NVARCHAR(200) NOT NULL,
+        Description NVARCHAR(MAX) NULL,
+        DueDate     DATETIME2     NULL,
+        Status      INT           NOT NULL DEFAULT 0,
+        CreateTime  DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX IX_AiTask_User ON dbo.AiTask(UserId, Status, CreateTime DESC);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'AiModel', N'AI 模型配置（OpenAI 兼容协议，Key 加密存储）';
+EXEC dbo.usp_AddColumnComment N'AiModel', N'ApiKey', N'API Key（DataProtection 加密，永不回传明文）';
+EXEC dbo.usp_AddTableComment N'AiConversation', N'AI 对话会话（超保留期由定时任务清理）';
+EXEC dbo.usp_AddTableComment N'AiMessage', N'AI 对话消息（Status：0生成中/1完成/2失败/3已停止）';
+EXEC dbo.usp_AddTableComment N'AiUsageDaily', N'AI 每日用量（每用户每天一行，请求次数+token 双配额）';
+EXEC dbo.usp_AddTableComment N'AiTask', N'AI 助手创建的任务/待办（create_task 工具落库，助手抽屉任务面板维护）';
+GO
+
+-- AI 系统配置 KV（系统配置页「AI 配置」页签，TabGroup='ai'）
+IF NOT EXISTS (SELECT 1 FROM dbo.SysConfig WHERE ConfigKey = N'ai.enabled')
+    INSERT INTO dbo.SysConfig (ConfigKey, ConfigValue, Category, DisplayName, Description, InputType, TabGroup, SortOrder)
+    VALUES (N'ai.enabled', N'false', N'AI 服务', N'AI 功能总开关', N'开启后 AI 助手可用（还需给用户授予 ai-chat 权限）', N'switch', N'ai', 1);
+IF NOT EXISTS (SELECT 1 FROM dbo.SysConfig WHERE ConfigKey = N'ai.quota.dailyRequests')
+    INSERT INTO dbo.SysConfig (ConfigKey, ConfigValue, Category, DisplayName, Description, InputType, TabGroup, SortOrder)
+    VALUES (N'ai.quota.dailyRequests', N'50', N'AI 服务', N'每日请求配额', N'每用户每日可发起的对话次数，0 表示不限制', N'number', N'ai', 2);
+IF NOT EXISTS (SELECT 1 FROM dbo.SysConfig WHERE ConfigKey = N'ai.quota.dailyTokensK')
+    INSERT INTO dbo.SysConfig (ConfigKey, ConfigValue, Category, DisplayName, Description, InputType, TabGroup, SortOrder)
+    VALUES (N'ai.quota.dailyTokensK', N'200', N'AI 服务', N'每日 Token 配额', N'每用户每日 token 上限，单位：千（输入+输出合计），0 表示不限制', N'number', N'ai', 3);
+IF NOT EXISTS (SELECT 1 FROM dbo.SysConfig WHERE ConfigKey = N'ai.conversation.retentionDays')
+    INSERT INTO dbo.SysConfig (ConfigKey, ConfigValue, Category, DisplayName, Description, InputType, TabGroup, SortOrder)
+    VALUES (N'ai.conversation.retentionDays', N'30', N'AI 服务', N'会话保留天数', N'超过天数的会话自动清理，0 表示永久保留', N'number', N'ai', 4);
+GO
+
+-- AI 助手视图权限点（全局抽屉无页面路由，仅用于控制「谁能用 AI 对话」）
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'ai-assistant')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'ai-assistant', N'AI 助手', NULL, NULL, 90);
+GO
+
+DECLARE @AiAssistantViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'ai-assistant');
+IF @AiAssistantViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'ai-chat')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@AiAssistantViewId, N'ai-chat', N'AI 对话', 0);
+END
+GO
+
+-- ========== 老库补齐：Hosts 管理视图/菜单/权限点（行级幂等） ==========
+-- 桌面端本机功能（读写本机 hosts 文件），挂「开发工具」组下
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'hosts')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'hosts', N'Hosts管理', N'/src/common/views/HostsView.vue', N'/hosts', 43);
+GO
+
+DECLARE @HostsViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'hosts');
+IF @HostsViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'hosts')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@HostsViewId, N'hosts', N'查看Hosts管理', 0);
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'hosts:edit')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@HostsViewId, N'hosts:edit', N'编辑Hosts条目', 1);
+END
+GO
+
+-- 菜单：挂「开发工具」组下（按组标题查父 Id，不依赖固定 Id，避免 Identity 偏移错挂）
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'hosts')
+    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type)
+    SELECT p.Id, N'Hosts管理', N'/hosts', 0, 1, 0, 1, 1, N'hosts', N'/src/common/views/HostsView.vue', 6, 1
+    FROM (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'开发工具' AND Page IS NULL AND Name IS NULL ORDER BY Id) p;
+GO
+
+-- admin 角色关联新菜单（视图权限点由下方「admin 角色自动拥有所有视图权限点」幂等块自动关联）
+INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
+SELECT r.Id, m.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
+WHERE r.Code = N'admin' AND m.Name = N'hosts'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
+GO
+
+-- admin 角色自动拥有所有视图权限点（含上方新增的 hosts / hosts:edit）
 INSERT INTO dbo.SysRoleViewPerm (RoleId, ViewPermId)
 SELECT r.Id, vp.Id
 FROM dbo.SysRole r CROSS JOIN dbo.SysViewPermission vp

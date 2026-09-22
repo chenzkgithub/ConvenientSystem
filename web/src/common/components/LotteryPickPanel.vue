@@ -7,6 +7,7 @@ import { fullscreenElement } from '@/common/utils/fullscreen'
 import { formatDate, todayYmd } from '@/common/formatDate'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonTooltip from '@/common/components/CommonTooltip.vue'
+import LotteryCalcDialog from '@/common/components/LotteryCalcDialog.vue'
 import {
   getLotteryConfig, isPositional, fmtNumber,
   type LotteryConfig, type LotteryZone,
@@ -75,6 +76,9 @@ const ruleText = computed(() => {
 // 选号状态：分区键 → 已选号码
 const pickState = ref<Record<string, number[]>>({})
 const betHistory = ref<LotteryBet[]>([])
+
+// 金额计算对话框
+const showCalcDialog = ref(false)
 
 // ── 时间工具（右面板分组用） ──
 /** 截取到秒精度作为分组 key：yyyy-MM-dd HH:mm:ss */
@@ -432,6 +436,7 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
             <el-button type="primary" @click="randomPick">机选一注</el-button>
             <el-button @click="clearPick">清空选号</el-button>
             <el-button type="success" :disabled="!isComplete" @click="confirmBet">添加该注</el-button>
+            <el-button type="warning" plain @click="showCalcDialog = true">💰 金额计算</el-button>
           </div>
           <!-- 当前选号预览 -->
           <div class="current-pick" v-if="pickZones.some(z => zoneCount(z.key) > 0)">
@@ -548,6 +553,9 @@ onUnmounted(() => document.removeEventListener('fullscreenchange', onFullscreenC
       </div>
     </div>
   </div>
+
+  <!-- 金额计算对话框 -->
+  <LotteryCalcDialog v-model="showCalcDialog" />
 </template>
 
 <style scoped>

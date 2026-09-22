@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
@@ -28,7 +29,7 @@ namespace ConvenientSystem.Shared.Entity.Common
         public bool IsActive { get; set; }
 
         /// <summary>上传时间</summary>
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
 
         /// <summary>上传人用户 Id（GUID，关联 SysUser.Id）</summary>
         public Guid? CreatedById { get; set; }

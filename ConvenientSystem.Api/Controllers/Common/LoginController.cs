@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Model.Common;
 using ConvenientSystem.Service.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -89,7 +90,7 @@ namespace ConvenientSystem.Api.Controllers.Common
                 DateTime? lastActiveAt = null;
                 if (!string.IsNullOrWhiteSpace(lastActivity)
                     && DateTime.TryParse(lastActivity, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
-                    lastActiveAt = parsed;
+                    lastActiveAt = TimeHelper.FromUtc(parsed);
 
                 _tracker.Track(userId.Value, account, displayName, avatar, ip, lastActiveAt);
             }

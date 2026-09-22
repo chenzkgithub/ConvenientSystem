@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node -r ./polyfill.cjs ./node_modules/vite/bin/vite.js",
     "build": "node -r ./polyfill.cjs ./node_modules/vite/bin/vite.js build",
+    "audit:views": "node scripts/audit-view-env.mjs",
     "type-check": "vue-tsc -b",
     "preview": "vite preview"
   },

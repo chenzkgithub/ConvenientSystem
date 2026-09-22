@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -40,7 +41,6 @@ namespace ConvenientSystem.Shared.Entity.Common
         public string Ip { get; set; } = string.Empty;
 
         /// <summary>发生时间</summary>
-        [Column(CanInsert = false, CanUpdate = false)]
-        public DateTime CreateTime { get; set; }
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 }

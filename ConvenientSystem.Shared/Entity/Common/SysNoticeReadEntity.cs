@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -19,6 +20,6 @@ namespace ConvenientSystem.Shared.Entity.Common
         public Guid UserId { get; set; }
 
         /// <summary>阅读时间</summary>
-        public DateTime ReadTime { get; set; } = DateTime.Now;
+        public DateTime ReadTime { get; set; } = TimeHelper.Now;
     }
 }

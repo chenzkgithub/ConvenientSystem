@@ -101,6 +101,19 @@ internal static class Program
 
         var app = builder.Build();
 
+        // 本地接口兜底：/api/local/* 是桌面端专属路由，服务器端恒 410（避免 404 误导排查方向）
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/api/local", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = StatusCodes.Status410Gone;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                await context.Response.WriteAsync("{\"message\":\"此接口仅桌面端可用，服务器端未实现\"}");
+                return;
+            }
+            await next();
+        });
+
         // JWT 认证/授权：读取 Bearer Token 并填充 User，供审计中间件与接口鉴权特性使用。
         app.UseAuthentication();
         app.UseAuthorization();

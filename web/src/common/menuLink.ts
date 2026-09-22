@@ -1,4 +1,6 @@
 import type { MenuNode } from '@/common/types'
+import { getViewEnv } from '@/common/viewComponents'
+import { IS_DESKTOP_HOST } from '@/common/hostContext'
 
 /** 判断菜单 page 是否为第三方外部链接 */
 export function isExternalLink(node: { page?: string | null; external?: boolean }): boolean {
@@ -62,14 +64,23 @@ export function openExternalWindow(node: { page?: string | null; title: string }
 }
 
 /**
+ * 菜单节点在当前宿主是否可用：桌面专属视图（VIEW_META 元数据）的菜单在 Web 端隐藏。
+ * 过滤真源是代码元数据而非 DB SysView.Env（后者只是管理面镜像）。
+ */
+export function isMenuNodeAvailable(node: { component?: string | null }): boolean {
+  return IS_DESKTOP_HOST || getViewEnv(node.component) !== 'desktop'
+}
+
+/**
  * 剪出侧栏要展示的菜单树：按 visible 和 enabled 过滤——visible/enabled 为 false 的不显示；
+ * 桌面专属视图在非桌面宿主隐藏（isMenuNodeAvailable）；
  * 另外去掉剪完后没有任何叶子的空分组。
  * 外链叶子点击时不走内部路由，由 openExternalWindow 开独立窗口（见 MainLayout 的 onMenuSelect）。
  */
 export function filterVisibleMenus(nodes: MenuNode[]): MenuNode[] {
   const result: MenuNode[] = []
   for (const n of nodes) {
-    if (n.visible === false || n.enabled === false) continue
+    if (n.visible === false || n.enabled === false || !isMenuNodeAvailable(n)) continue
     if (Array.isArray(n.children) && n.children.length > 0) {
       const children = filterVisibleMenus(n.children)
       if (children.length > 0) result.push({ ...n, children })

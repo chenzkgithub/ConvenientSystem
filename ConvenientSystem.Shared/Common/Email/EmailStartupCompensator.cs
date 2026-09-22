@@ -64,9 +64,9 @@ namespace ConvenientSystem.Shared.Common.Email
             switch (task.ScheduleType)
             {
                 case "once":
-                    if (task.SendTime.HasValue && task.SendTime.Value > DateTime.Now)
+                    if (task.SendTime.HasValue && task.SendTime.Value > TimeHelper.Now)
                     {
-                        var delay = task.SendTime.Value - DateTime.Now;
+                        var delay = task.SendTime.Value - TimeHelper.Now;
                         return BackgroundJob.Schedule<EmailSendJob>(
                             job => job.SendAsync(task.Id, default), delay);
                     }

@@ -17,6 +17,7 @@ import {
   sendChatMessage,
 } from '@/common/api/chat'
 import type { ChatConversationDto, ChatGroupCreateRequest, ChatMessageDto, ChatOpenDto } from '@/common/api/chat'
+import type { AsyncTaskDto } from '@/common/api/asyncTask'
 
 /** SignalR 不可用时的轮询间隔（ms） */
 const POLL_INTERVAL = 5_000
@@ -145,6 +146,15 @@ export const useChatStore = defineStore('chat', () => {
     // 通知与聊天共用本条 SignalR 连接（单连接多事件）；可见性/去重由各组件拉取时自行处理。
     conn.on(CHAT_EVENTS.noticeCreated, () => {
       window.dispatchEvent(new CustomEvent('notice:created'))
+    })
+    // 统一异步任务进度推送（定向推给任务发起人）：转发 window 事件，asyncTask store 更新任务面板
+    conn.on(CHAT_EVENTS.asyncTaskProgress, (task: AsyncTaskDto) => {
+      window.dispatchEvent(new CustomEvent('asyncTask:progress', { detail: task }))
+    })
+    // AI 流式生成 chunk（定向推给发起人）：转发 window 事件，ai store 拼接流式内容；
+    // 推送通道不可用时 ai store 自动降级为轮询 Messages（后端内容已落库，不依赖本事件）
+    conn.on(CHAT_EVENTS.aiResponseChunk, (chunk: unknown) => {
+      window.dispatchEvent(new CustomEvent('ai:chunk', { detail: chunk }))
     })
 
     conn.onreconnecting(() => { connected.value = false })
@@ -303,6 +313,8 @@ export const useChatStore = defineStore('chat', () => {
       msgType,
       isGroup ? convId : 0,
       mentions,
+      // 无感发送：不弹全局遮罩（输入区自带 sending 态），失败仍弹错误提示
+      { noLoading: true },
     )
     handleReceiveMessage(msg)
     return msg
@@ -317,15 +329,20 @@ export const useChatStore = defineStore('chat', () => {
     return conv
   }
 
-  /** 向上翻页加载更早消息；返回是否可能还有更早的一页 */
+  /** 向上翻页加载更早消息；返回是否可能还有更早的一页。静默：滚动翻页属高频本地操作，不弹遮罩 */
   async function loadEarlierMessages(): Promise<boolean> {
     const convId = activeConversationId.value
     const first = messages.value[0]
     if (!convId || !first) return false
-    const list = await getChatMessages(convId, first.id, PAGE_SIZE)
-    if (!list.length) return false
-    messages.value = [...list, ...messages.value]
-    return list.length >= PAGE_SIZE
+    try {
+      const list = await getChatMessages(convId, first.id, PAGE_SIZE, { silent: true })
+      if (!list.length) return false
+      messages.value = [...list, ...messages.value]
+      return list.length >= PAGE_SIZE
+    } catch {
+      /* 静默：再次上拉可重试 */
+      return false
+    }
   }
 
   /** 轮询模式下当前会话消息增量合并（SignalR 不可用时的兜底） */

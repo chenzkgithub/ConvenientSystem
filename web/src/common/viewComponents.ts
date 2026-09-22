@@ -13,7 +13,44 @@ export const viewModules = import.meta.glob('../**/views/**/*.vue')
 export interface ViewOption {
   label: string
   value: string
+  /** 运行环境（接口分离）：供菜单管理分组下拉与对账使用，运行时过滤以 VIEW_META 真源为准 */
+  env: ViewEnv
 }
+
+/** 视图运行环境：desktop=仅桌面端 / web=仅服务器端 / both=双宿主通用 */
+export type ViewEnv = 'desktop' | 'web' | 'both'
+
+/**
+ * 视图元数据注册表（接口分离的运行时真源）：
+ * - 以 normalizeKey 后的 /src/... 组件路径为键，登记环境归属；未登记的视图默认 both（通用）；
+ * - desktopViews 由本表派生（不再单独硬编码清单），与 router/index.ts 静态路由真正同源；
+ * - DB SysView.Env 只是管理面镜像（呈现/筛选/对账），不参与运行时过滤。
+ */
+const VIEW_META: Record<string, { env: ViewEnv }> = {
+  '/src/common/views/UniversalBuildView.vue': { env: 'desktop' },
+  '/src/common/views/PipelineView.vue': { env: 'desktop' },
+  '/src/common/views/GitWorkbenchView.vue': { env: 'desktop' },
+  '/src/common/views/LocalMonitorView.vue': { env: 'desktop' },
+  '/src/common/views/ApiSpecView.vue': { env: 'desktop' },
+  '/src/common/views/CodeScanView.vue': { env: 'desktop' },
+  '/src/common/views/ConfigEditorView.vue': { env: 'desktop' },
+  '/src/common/views/HostsView.vue': { env: 'desktop' },
+  // 双宿主锚点：桌面端（本地内网库直连）与 Web 端（服务器统计库）均可运行，模块内部按宿主自适应
+  '/src/yunhan/views/AttendanceView.vue': { env: 'both' },
+}
+
+/** 查询组件运行环境（未登记默认 both）；入参先做 normalizeKey 归一，兼容 ./views/ 与 ../ 旧写法 */
+export function getViewEnv(path?: string | null): ViewEnv {
+  if (!path) return 'both'
+  return VIEW_META[normalizeKey(path)]?.env ?? 'both'
+}
+
+/** 桌面专属视图组件路径集合（由 VIEW_META 派生）：菜单动态注册过滤与路由守卫的唯一依据 */
+export const desktopViews: ReadonlySet<string> = new Set(
+  Object.entries(VIEW_META)
+    .filter(([, meta]) => meta.env === 'desktop')
+    .map(([path]) => path),
+)
 
 /**
  * 把 glob 返回的相对 key 统一转换为规范路径 /src/...：
@@ -51,6 +88,7 @@ export const viewComponentOptions: ViewOption[] = Object.keys(viewModules)
     return {
       label: value.replace(/^\/src\//, ''),
       value,
+      env: getViewEnv(value),
     }
   })
   .sort((a, b) => a.label.localeCompare(b.label))

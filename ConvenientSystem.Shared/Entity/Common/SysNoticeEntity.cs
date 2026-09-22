@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -42,7 +43,7 @@ namespace ConvenientSystem.Shared.Entity.Common
 
         /// <summary>发布时间（应用侧写入：容器化 SQL Server 时区多为 UTC，依赖数据库默认 GETDATE() 会比北京时间慢 8 小时）</summary>
         [Column(CanUpdate = false)]
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
 
         public DateTime UpdateTime { get; set; }
     }

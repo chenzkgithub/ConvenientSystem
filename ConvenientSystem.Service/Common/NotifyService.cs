@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Exceptions;
 using ConvenientSystem.Shared.Common.Sms;
 using ConvenientSystem.Shared.Common.Webhook;
@@ -91,7 +92,7 @@ namespace ConvenientSystem.Service.Common
                     UseCard = dto.UseCard,
                     IsDefault = dto.IsDefault,
                     Enabled = dto.Enabled,
-                    UpdateTime = DateTime.Now
+                    UpdateTime = TimeHelper.Now
                 };
 
                 if (dto.Id <= 0)
@@ -146,7 +147,7 @@ namespace ConvenientSystem.Service.Common
                 throw new BadRequestException("配置未启用任何发送模式");
 
             var result = await _notifier.SendOneAsync(cfg, "测试消息",
-                $"这是一条来自 ConvenientSystem 的测试推送。\n时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                $"这是一条来自 ConvenientSystem 的测试推送。\n时间：{TimeHelper.Now:yyyy-MM-dd HH:mm:ss}");
             return new WebhookSendResultDto
             {
                 Success = result.Success,

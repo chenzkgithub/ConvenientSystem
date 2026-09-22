@@ -173,7 +173,7 @@ namespace ConvenientSystem.Service.Common
         /// 历史号码匹配：全库检索同时满足全部条件的期（条件之间是“且”，不是命中任意一个）。
         /// 号码集合条件要求该期包含所选的每一个号码（选 5 个就要 5 个全开出），
         /// 数位条件要求指定的每一个数位都对上，两者可同时生效。
-        /// 结果按期号降序（新期在前）截断到展示上限。
+        /// 结果按期号降序截断到展示上限（取最近的匹配期），再反转为正序（从旧到新）展示。
         /// </summary>
         /// <param name="matchTotal">截断前的匹配总期数</param>
         private List<LotteryDrawDto> MatchDraws(string type, int[] front, int[] back,
@@ -200,8 +200,9 @@ namespace ConvenientSystem.Service.Common
             }
             matchTotal = matched.Count;
 
-            // all 已按期号降序取出，此处仅截断：条件全命中后各期之间无优劣之分，按期号展示最近的部分
-            return matched.Take(MatchMaxPeriods).ToList();
+            // all 已按期号降序取出，故 matched 亦为期号降序：先截断到展示上限（取最近的部分），
+            // 再反转为正序返回——与常规走势一致从旧到新展示，便于按时间顺序阅读命中分布
+            return matched.Take(MatchMaxPeriods).Reverse().ToList();
         }
 
         /// <summary>

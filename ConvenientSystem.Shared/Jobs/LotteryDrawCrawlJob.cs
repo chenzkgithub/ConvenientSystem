@@ -317,7 +317,7 @@ namespace ConvenientSystem.Shared.Jobs
                 if (DateTime.TryParse(head, out var dt))
                     return dt;
             }
-            return DateTime.Now;
+            return TimeHelper.Now;
         }
 
         /// <summary>号码数组 → 逗号分隔字符串：位置型按位原样存储，池选型升序补零</summary>

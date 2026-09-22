@@ -12,6 +12,7 @@ import { ElMessage } from 'element-plus'
 import { Lock } from '@element-plus/icons-vue'
 import { httpGet, httpPost, httpPut } from '@/api/request'
 import CommonDialog from '@/common/components/CommonDialog.vue'
+import AiModelCard from '@/common/components/AiModelCard.vue'
 
 interface SysConfigItem {
   id: number
@@ -38,6 +39,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   '系统安全': '🔒',
   '日志管理': '📋',
   '系统配置': '⚙️',
+  'AI 服务': '🤖',
 }
 
 const allGroups = ref<SysConfigGroup[]>([])
@@ -59,12 +61,15 @@ const revealKey = ref('')
 const revealPassword = ref('')
 const revealLoading = ref(false)
 
-/** 按页签筛选分组 */
+/** 按页签筛选分组（tabGroup：system 系统配置 / thirdparty 第三方 / ai AI 配置） */
 const systemGroups = computed(() =>
-  allGroups.value.filter(g => g.items.some(i => i.tabGroup !== 'thirdparty'))
+  allGroups.value.filter(g => g.items.some(i => i.tabGroup !== 'thirdparty' && i.tabGroup !== 'ai'))
 )
 const thirdpartyGroups = computed(() =>
   allGroups.value.filter(g => g.items.some(i => i.tabGroup === 'thirdparty'))
+)
+const aiGroups = computed(() =>
+  allGroups.value.filter(g => g.items.some(i => i.tabGroup === 'ai'))
 )
 const hasAnyData = computed(() => allGroups.value.length > 0)
 
@@ -394,6 +399,86 @@ loadConfigs()
         <el-empty v-if="thirdpartyGroups.length === 0 && !loading" description="暂无第三方配置" />
       </el-tab-pane>
 
+      <!-- AI 配置：AI 服务 KV 分组（跟随组保存）+ 模型列表（即时保存，AiModelCard 独立管理） -->
+      <el-tab-pane label="AI 配置" name="ai">
+        <el-alert
+          title="模型接入说明"
+          type="info"
+          :closable="false"
+          show-icon
+          description="任何 OpenAI 兼容协议均可接入（DeepSeek / 通义 / Kimi / GLM / Ollama / vLLM）；API Key 加密存储、永不回传明文。上方配置项随「保存」按钮提交；模型增删改/测试/设默认即时生效。"
+          class="security-alert"
+        />
+        <div v-for="group in aiGroups" :key="group.category" class="config-card-wrapper">
+          <el-card shadow="hover" class="config-card">
+            <template #header>
+              <div class="card-header">
+                <span class="card-title">
+                  <span class="card-icon">{{ CATEGORY_ICONS[group.category] || '📦' }}</span>
+                  {{ group.category }}
+                </span>
+                <el-button
+                  v-if="$has('sys-config:save')"
+                  type="primary"
+                  size="small"
+                  :loading="savingGroup.has(group.category)"
+                  :disabled="!isGroupDirty(group.category)"
+                  @click="saveGroup(group)"
+                >
+                  保存{{ isGroupDirty(group.category) ? ' *' : '' }}
+                </el-button>
+              </div>
+            </template>
+            <div class="config-form">
+              <div
+                v-for="item in group.items"
+                :key="item.configKey"
+                class="config-item"
+                :title="item.configKey"
+              >
+                <div class="config-label">
+                  <span class="config-name">{{ item.displayName }}</span>
+                  <span v-if="item.description" class="config-desc">{{ item.description }}</span>
+                </div>
+                <div class="config-control">
+                  <!-- switch -->
+                  <el-switch
+                    v-if="item.inputType === 'switch'"
+                    :model-value="getSwitchVal(item.configKey)"
+                    @update:model-value="(v: string | number | boolean) => setSwitchVal(item.configKey, v === true)"
+                    active-text="开启"
+                    inactive-text="关闭"
+                    inline-prompt
+                    style="--el-switch-on-color: #409eff;"
+                  />
+
+                  <!-- number -->
+                  <el-input-number
+                    v-else-if="item.inputType === 'number'"
+                    :model-value="getNumberVal(item.configKey)"
+                    @update:model-value="(v: number | undefined) => setNumberVal(item.configKey, v)"
+                    :min="0"
+                    controls-position="right"
+                    class="config-number"
+                  />
+
+                  <!-- text -->
+                  <el-input
+                    v-else
+                    v-model="editMap[item.configKey]"
+                    :placeholder="`请输入${item.displayName}`"
+                    class="config-input"
+                  />
+                </div>
+              </div>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- 模型列表（即时保存：增删改/测试/设默认不跟随组保存按钮） -->
+        <AiModelCard class="config-card-wrapper" />
+      </el-tab-pane>
+
     </el-tabs>
 
     <!-- 密码验证弹窗 -->
@@ -427,6 +512,11 @@ loadConfigs()
   max-width: 720px;
   margin: 0 auto;
   padding: 24px;
+  /* height:100% + 自身滚动（非依赖外层）：主窗口 .layout-main 与独立窗口
+     .standalone-page（100vh+overflow:hidden）下父容器高度均确定，页面自身接管滚动 */
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .config-tabs {

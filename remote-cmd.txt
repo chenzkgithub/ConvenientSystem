@@ -1,12 +1,11 @@
-F=202609/91d604b9578146cdaaa2e5d2b87b3f86.gif
-echo ===GET-RAW-SLASH===
-curl -s -o /dev/null -w 'direct=%{http_code} type=%{content_type} size=%{size_download}\n' "http://localhost:51943/api/Common/Chat/Image?f=$F" --max-time 10
-curl -s -o /dev/null -w 'via_nginx=%{http_code} type=%{content_type} size=%{size_download}\n' "http://localhost/api/Common/Chat/Image?f=$F" --max-time 10
-echo ===GET-ENCODED-P2F===
-curl -s -o /dev/null -w 'direct=%{http_code} type=%{content_type} size=%{size_download}\n' 'http://localhost:51943/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif' --max-time 10
-curl -s -o /dev/null -w 'via_nginx=%{http_code} type=%{content_type} size=%{size_download}\n' 'http://localhost/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif' --max-time 10
-echo ===BODY-PEEK===
-curl -s "http://localhost/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif" --max-time 10 | head -c 300
-echo
-echo ===EXT-INTERNET===
-curl -s -o /dev/null -w 'internet80=%{http_code}\n' 'http://123.56.68.132/api/Common/Chat/Image?f=202609%2F91d604b9578146cdaaa2e5d2b87b3f86.gif' --max-time 10
+cp /opt/convenient/Dockerfile.web /opt/convenient/Dockerfile.web.bak-entrypoint
+cat >> /opt/convenient/Dockerfile.web <<'EOF'
+
+# Skip /docker-entrypoint.d scripts: 10-listen-on-ipv6-by-default.sh intermittently
+# hangs on the first start after image build, leaving port 80 unlistened and failing
+# the pipeline health check. Static conf is copied verbatim, no entrypoint behavior needed.
+ENTRYPOINT []
+CMD ["nginx", "-g", "daemon off;"]
+EOF
+echo ===VERIFY===
+tail -n 10 /opt/convenient/Dockerfile.web

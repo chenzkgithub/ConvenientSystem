@@ -64,10 +64,10 @@ namespace ConvenientSystem.Service.Sms
                 Category = string.IsNullOrWhiteSpace(dto.Category) ? "通知" : dto.Category,
                 Enabled = dto.Enabled,
                 CreatedById = _currentUser.UserId,
-                UpdateTime = DateTime.Now
+                UpdateTime = TimeHelper.Now
             };
             entity.Id = (int)_fsql.Insert(entity).ExecuteIdentity();
-            entity.CreateTime = DateTime.Now;
+            entity.CreateTime = TimeHelper.Now;
             return ToDto(entity, UserDisplayHelper.GetMap(_fsql, new[] { entity.CreatedById }));
         }
 
@@ -82,7 +82,7 @@ namespace ConvenientSystem.Service.Sms
             entity.Signature = dto.Signature;
             entity.Category = dto.Category;
             entity.Enabled = dto.Enabled;
-            entity.UpdateTime = DateTime.Now;
+            entity.UpdateTime = TimeHelper.Now;
             _fsql.Update<SmsTemplateEntity>().SetSource(entity).ExecuteAffrows();
         }
 
@@ -102,7 +102,7 @@ namespace ConvenientSystem.Service.Sms
             if (!IsDataScopeAll && !IsOwner(entity.CreatedById))
                 throw new NotFoundException("模板不存在");
             entity.Enabled = !entity.Enabled;
-            entity.UpdateTime = DateTime.Now;
+            entity.UpdateTime = TimeHelper.Now;
             _fsql.Update<SmsTemplateEntity>().SetSource(entity).ExecuteAffrows();
             return new ToggleEnabledDto { Enabled = entity.Enabled };
         }

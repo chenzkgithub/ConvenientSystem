@@ -348,6 +348,7 @@ body {
   color: var(--text-sub);
   letter-spacing: 1px;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .brand-ver {
   font-size: 10px;
@@ -356,6 +357,31 @@ body {
   letter-spacing: 0;
   margin-left: 4px;
 }
+
+/* 宿主徽标（接口分离）：侧栏品牌区一眼定位当前宿主（桌面端/Web） */
+.host-badge {
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: 1px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.host-badge.is-desktop {
+  color: #1668dc;
+  background: rgba(22, 104, 220, 0.12);
+}
+.host-badge.is-web {
+  color: #389e0d;
+  background: rgba(56, 158, 13, 0.12);
+}
+html.dark .host-badge.is-desktop { color: #7db9ff; background: rgba(125, 185, 255, 0.16); }
+html.dark .host-badge.is-web { color: #73d13d; background: rgba(115, 209, 61, 0.16); }
 
 /* 侧边栏菜单（覆盖 Element Plus 默认样式，胶囊高亮） */
 .layout-aside .el-menu {
@@ -557,6 +583,14 @@ body {
 .layout-aside .el-menu-item.is-hit .hit-group {
   font-size: 11px;
   color: var(--text-sub);
+}
+
+/* 键盘导航高亮项（↑↓ 选择），与首页搜索结果高亮同口径 */
+.layout-aside .el-menu-item.is-hit.kb-active {
+  background: var(--brand-50);
+}
+.layout-aside .el-menu-item.is-hit.kb-active .hit-title {
+  color: var(--brand);
 }
 
 .aside-empty {
@@ -849,106 +883,8 @@ body {
   background: #e4e7ed;
 }
 
-/* ============ 首页：功能块（按顶层菜单分组） ============ */
-.home-page {
-  padding: 16px;
-}
-
-.home-group {
-  margin-bottom: 28px;
-}
-
-.home-group:last-child {
-  margin-bottom: 0;
-}
-
-.home-group-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: 12px;
-  padding-left: 2px;
-  position: relative;
-  padding-left: 12px;
-}
-
-.home-group-title::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--brand);
-}
-
-.home-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
-}
-
-.home-card {
-  background: var(--surface);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  box-shadow: none;
-  padding: 26px 18px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
-}
-
-.home-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-md);
-  border-color: var(--brand-200);
-}
-
-.home-card-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius);
-  background: var(--brand-gradient);
-  color: #fff;
-  font-size: 24px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.10);
-}
-
-/* 首页图标：以蓝色为主的 6 色轮转（蓝/靛/天蓝/青/紫/深蓝） */
-.home-card:nth-child(6n + 1) .home-card-icon {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-}
-.home-card:nth-child(6n + 2) .home-card-icon {
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
-}
-.home-card:nth-child(6n + 3) .home-card-icon {
-  background: linear-gradient(135deg, #0ea5e9, #0284c7);
-}
-.home-card:nth-child(6n + 4) .home-card-icon {
-  background: linear-gradient(135deg, #06b6d4, #0891b2);
-}
-.home-card:nth-child(6n + 5) .home-card-icon {
-  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-}
-.home-card:nth-child(6n + 6) .home-card-icon {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-}
-
-.home-card-title {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-main);
-}
+/* 首页功能分组样式已全部迁移至 HomeView.vue scoped；
+   旧全局样式与 scoped 叠加会产生标题竖条、缩进与 flex 错位，故整段移除 */
 
 /* ============ 占位页 ============ */
 .placeholder-panel {
@@ -1382,24 +1318,19 @@ body {
    Element Plus 控件级年轻化覆盖（Linear 极简风）
    ============================================================ */
 
-/* ---- 全局细滚动条（覆盖 Windows 默认粗滚动条） ---- */
+/* ---- 全局隐藏滚动条（保留滚动能力）：滚轮/触摸/键盘/拖拽照常滚动，仅去掉视觉条 ----
+   桌面壳 WebView2 与 Chrome/Edge 走 ::-webkit-scrollbar；Firefox 用 scrollbar-width 兜底。
+   代价：无滚动位置视觉指示（是否有更多内容需滚动后才知道）；
+   Monaco 编辑器滚动条为自绘 DOM，不受此处影响（配置文件/开发工具页代码区仍显示位置条）。
+   aside-menu/tabs-bar 等局部滚动条规则与深色模式 thumb 规则因此失效但保留，
+   若日后想恢复滚动条，把下方 display:none 还原为 6px 细条样式即可。 */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+  scrollbar-width: none;
 }
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* ---- 表格：浅色背景 + 仅横线 + hover 柔和 ---- */

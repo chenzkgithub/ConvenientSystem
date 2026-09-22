@@ -643,6 +643,16 @@ public sealed class DeployService
                     : "http://localhost:80";
                 var httpCode = await ProbeHttpLinuxAsync(ssh, healthUrl, job, token);
                 job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
+                if (!httpCode.StartsWith("2") && httpCode != "404")
+                {
+                    // 已知问题：web 容器 entrypoint 脚本偶发首次启动卡死（80 端口迟迟无监听），docker restart 一次即可恢复。
+                    // 先自愈重试一轮，仍失败再走回滚，避免整轮「还原 + 重建」耗时约 1 分钟。
+                    job.Log.AppendLine("      ⚠ 健康检查未通过，尝试重启容器自愈（已知 entrypoint 偶发卡死问题）...");
+                    await ExecuteSshAsync(ssh, $"docker restart {siteName}-{serviceName}", job, token);
+                    await Task.Delay(5000, token);
+                    httpCode = await ProbeHttpLinuxAsync(ssh, healthUrl, job, token, attempts: 4);
+                    job.Log.AppendLine($"      重启后健康检查 {healthUrl} → HTTP {httpCode}");
+                }
                 if (httpCode == "404")
                 {
                     job.Log.AppendLine("      ⚠ 服务已响应但无 /api/health 端点（旧版本），跳过深度校验");

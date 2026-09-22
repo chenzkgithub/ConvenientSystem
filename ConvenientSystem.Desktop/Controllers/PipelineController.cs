@@ -8,6 +8,8 @@ namespace ConvenientSystem;
 /// 流水线 = 可保存复用的阶段序列（构建/部署），引擎复用通用构建与部署服务。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/pipeline")]
 [Route("api/Common/Pipeline")]
 public class PipelineController : ControllerBase
 {
@@ -101,6 +103,12 @@ public class PipelineController : ControllerBase
             ? Ok(new { message = "已发送取消请求" })
             : BadRequest(new { message = "取消失败：运行不存在或已结束" });
     }
+
+    /// <summary>测试数据库连接串（数据库阶段“测试连接”按钮）：只探活取版本，不执行脚本、不改任何数据。</summary>
+    [HttpPost]
+    [Route("TestConnection")]
+    public async Task<IActionResult> TestConnection([FromBody] PipelineTestConnectionRequest request)
+        => Ok(await _service.TestConnectionAsync(request.DbType, request.ConnectionString));
 }
 
 public sealed class PipelineStartRequest
@@ -111,4 +119,10 @@ public sealed class PipelineStartRequest
 public sealed class PipelineCancelRunRequest
 {
     public string RunId { get; set; } = string.Empty;
+}
+
+public sealed class PipelineTestConnectionRequest
+{
+    public string DbType { get; set; } = "SqlServer";
+    public string ConnectionString { get; set; } = string.Empty;
 }

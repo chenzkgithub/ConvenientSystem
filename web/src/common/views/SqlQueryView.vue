@@ -2016,6 +2016,69 @@ function clearEditor() {
   }
 }
 
+// ========== AI 生成 SQL（NL2SQL）：自然语言 → 服务端结合当前数据源表结构生成 SQL ==========
+const aiDialogVisible = ref(false)
+const aiPrompt = ref('')
+const aiGenerating = ref(false)
+
+function openAiDialog() {
+  aiPrompt.value = ''
+  aiDialogVisible.value = true
+}
+
+/** 生成成功后把 SQL 插入编辑器光标处（有选区则替换选区） */
+function insertSqlToEditor(sql: string) {
+  const ed = editor.value
+  if (!ed) return
+  const selection = ed.getSelection()
+  const range = selection
+    ? new monaco.Range(selection.startLineNumber, selection.startColumn, selection.endLineNumber, selection.endColumn)
+    : ed.getPosition()
+      ? new monaco.Range(ed.getPosition()!.lineNumber, ed.getPosition()!.column, ed.getPosition()!.lineNumber, ed.getPosition()!.column)
+      : null
+  if (!range) {
+    ed.setValue(sql)
+    return
+  }
+  // 光标前不是行首时先换行，避免拼接到上一行 SQL 尾部
+  const beforeCursor = ed.getModel()?.getLineContent(range.startLineNumber).slice(0, range.startColumn - 1) ?? ''
+  const text = (beforeCursor.trim() ? '\n\n' : '') + sql + '\n'
+  ed.executeEdits('ai-generate', [{ range, text, forceMoveMarkers: true }])
+  ed.focus()
+}
+
+async function submitAiGenerate() {
+  const prompt = aiPrompt.value.trim()
+  if (!prompt) {
+    ElMessage.warning('请描述你的查询需求')
+    return
+  }
+  if (!activeDataSource.value) {
+    ElMessage.warning('请先选择数据源')
+    return
+  }
+  aiGenerating.value = true
+  try {
+    const data = await httpPost<{ sql?: string }>('/api/Common/SqlQuery/GenerateSql', {
+      dataSource: activeDataSource.value,
+      database: activeDatabase.value || '',
+      prompt,
+    })
+    const sql = (data.sql || '').trim()
+    if (!sql) {
+      ElMessage.warning('AI 未返回有效 SQL，请换种描述再试')
+      return
+    }
+    insertSqlToEditor(sql)
+    aiDialogVisible.value = false
+    ElMessage.success('SQL 已插入编辑器，检查后可点击执行')
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '生成失败，请稍后重试')
+  } finally {
+    aiGenerating.value = false
+  }
+}
+
 // ========== 单元格详情（已改为悬浮 tooltip 展示，保留复制功能供右键菜单使用） ==========
 </script>
 
@@ -2065,6 +2128,7 @@ function clearEditor() {
       <el-button size="small" @click="historyVisible = !historyVisible">历史</el-button>
       <el-button size="small" @click="openSnippetDialog">快捷输入</el-button>
       <el-button size="small" @click="openFavoriteDialog">收藏</el-button>
+      <el-button v-if="$has('sql-query:execute')" size="small" type="warning" plain @click="openAiDialog">✨ AI 生成</el-button>
       <span class="toolbar-sep"></span>
       <span class="ctl-label">数据源</span>
       <el-select v-model="activeDataSource" size="small" style="width: 190px;">
@@ -2549,6 +2613,30 @@ function clearEditor() {
       <template #footer>
         <el-button @click="favSaveVisible = false">取消</el-button>
         <el-button type="primary" @click="saveFavorite">保存</el-button>
+      </template>
+    </CommonDialog>
+
+<!-- AI 生成 SQL（NL2SQL）：自然语言描述 → 服务端结合当前数据源表结构生成 SQL 填入编辑器 -->
+    <CommonDialog v-model="aiDialogVisible" title="AI 生成 SQL" width="560px" :close-on-click-modal="false">
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="font-size: 12px; color: #909399; line-height: 1.6;">
+          用自然语言描述查询需求，AI 将结合当前数据源【{{ activeDataSource }}】{{ activeDatabase ? ' / 数据库【' + activeDatabase + '】' : '' }}的表结构生成 SQL。
+        </div>
+        <el-input
+          v-model="aiPrompt"
+          type="textarea"
+          :rows="4"
+          maxlength="2000"
+          show-word-limit
+          placeholder="例如：查询上个月每个部门的考勤异常人数，按人数倒序"
+          @keyup.ctrl.enter="submitAiGenerate"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="aiDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="aiGenerating" :disabled="aiGenerating" @click="submitAiGenerate">
+          {{ aiGenerating ? '生成中...' : '生成 SQL' }}
+        </el-button>
       </template>
     </CommonDialog>
 </template>
@@ -3242,6 +3330,8 @@ function clearEditor() {
   color: #f56c6c;
   font-size: 13px;
   padding: 16px;
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 .lock-empty {
   color: #909399;

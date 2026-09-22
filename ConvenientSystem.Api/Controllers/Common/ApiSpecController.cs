@@ -14,10 +14,12 @@ namespace ConvenientSystem.Api.Controllers.Common
     public class ApiSpecController : BaseController
     {
         private readonly IApiSpecService _service;
+        private readonly IApiDebugService _debugService;
 
-        public ApiSpecController(IApiSpecService service)
+        public ApiSpecController(IApiSpecService service, IApiDebugService debugService)
         {
             _service = service;
+            _debugService = debugService;
         }
 
         /// <summary>支持的导出格式列表（格式卡片网格数据源）。</summary>
@@ -32,25 +34,23 @@ namespace ConvenientSystem.Api.Controllers.Common
         public ActionResult<List<ApiSpecFileDto>> Controllers([FromQuery] string rootDir)
             => Ok(_service.ScanControllers(rootDir));
 
-        /// <summary>扫描解决方案（.sln/.slnx）或目录内全部接口，返回接口级清单。</summary>
-        [HttpGet]
-        [PermissionAuthorize("api-spec")]
-        public ActionResult<List<ApiSpecSolutionEndpointDto>> ScanSolution([FromQuery] string solutionPath)
-            => Ok(_service.ScanSolution(solutionPath));
-
-        /// <summary>解析选中 Controller → 接口清单 + DTO 类型树（前端预览面板）。</summary>
-        [HttpGet]
-        [PermissionAuthorize("api-spec")]
-        public ActionResult<ApiSpecDocumentDto> Parse([FromQuery] string rootDir, [FromQuery] string files,
-            [FromQuery] string? title, [FromQuery] string? baseUrl, [FromQuery] string? solutionPath)
-            => Ok(_service.Parse(rootDir, files, title, baseUrl, solutionPath));
-
-        /// <summary>生成内容预览（返回字符串，不触发浏览器下载）。选择标识放 body，避免接口多时 URL 过长导致 HTTP 414。</summary>
+        /// <summary>启动解决方案扫描后台任务：立即返回任务初始快照（含命名空间的接口清单在完成时随 Result 返回）。</summary>
         [HttpPost]
         [PermissionAuthorize("api-spec")]
-        public ActionResult<ApiSpecExportDto> Preview([FromBody] ApiSpecPreviewRequest req)
-            => Ok(_service.Export(req.RootDir, req.Files, req.Format, req.Title, req.BaseUrl,
-                req.Only, req.SolutionPath, req.SelectionKeys));
+        public ActionResult<AsyncTaskDto> StartScan([FromBody] ApiSpecScanTaskRequest req)
+            => Ok(_service.StartScan(req, CurrentUserId));
+
+        /// <summary>启动解析并生成后台任务：一次解析同时产出 IR 文档与导出内容，替代原 Parse+Preview 两次请求两次全量解析。</summary>
+        [HttpPost]
+        [PermissionAuthorize("api-spec")]
+        public ActionResult<AsyncTaskDto> StartGenerate([FromBody] ApiSpecGenerateRequest req)
+            => Ok(_service.StartGenerate(req, CurrentUserId));
+
+        /// <summary>复用已完成生成任务的解析结果重新导出（换格式/标题不重新解析源码，秒级返回）。</summary>
+        [HttpPost]
+        [PermissionAuthorize("api-spec")]
+        public ActionResult<ApiSpecExportDto> ReExport([FromBody] ApiSpecReExportRequest req)
+            => Ok(_service.ReExport(req, CurrentUserId));
 
         /// <summary>下载生成的 API 数据文件（Content-Disposition 附件）。</summary>
         [HttpGet]
@@ -62,5 +62,11 @@ namespace ConvenientSystem.Api.Controllers.Common
             var bytes = Encoding.UTF8.GetBytes(result.Content);
             return File(bytes, result.ContentType, result.FileName);
         }
+
+        /// <summary>接口调试代理：服务端转发调试请求到目标地址并回传原始响应（规避浏览器 CORS）。</summary>
+        [HttpPost]
+        [PermissionAuthorize("api-spec:debug")]
+        public async Task<ActionResult<ApiDebugResponse>> Debug([FromBody] ApiDebugRequest req)
+            => Ok(await _debugService.DebugAsync(req));
     }
 }

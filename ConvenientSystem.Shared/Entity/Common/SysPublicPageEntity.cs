@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Common
 {
@@ -31,9 +32,9 @@ namespace ConvenientSystem.Shared.Entity.Common
         public int SortOrder { get; set; }
 
         /// <summary>创建时间</summary>
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } = TimeHelper.Now;
 
         /// <summary>更新时间</summary>
-        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime UpdatedAt { get; set; } = TimeHelper.Now;
     }
 }

@@ -19,6 +19,8 @@ export interface ViewDto {
   description?: string | null
   enabled: boolean
   sortOrder: number
+  /** 运行环境（both/desktop/web，管理面登记） */
+  env?: string
   permissions: ViewPermissionDto[]
 }
 
@@ -30,6 +32,8 @@ export interface ViewSaveDto {
   routePath?: string | null
   description?: string | null
   enabled: boolean
+  /** 运行环境（both/desktop/web；缺省 both） */
+  env?: string
 }
 
 export interface ViewPermissionSaveDto {

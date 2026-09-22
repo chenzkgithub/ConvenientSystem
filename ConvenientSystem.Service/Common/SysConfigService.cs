@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
@@ -60,7 +61,7 @@ namespace ConvenientSystem.Service.Common
                 if (item.ConfigValue == MaskedValue) continue;
                 _configDb.Update<SysConfigEntity>()
                     .Set(e => e.ConfigValue, item.ConfigValue ?? string.Empty)
-                    .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                    .Set(e => e.UpdatedAt, TimeHelper.Now)
                     .Where(e => e.ConfigKey == item.ConfigKey)
                     .ExecuteAffrows();
             }

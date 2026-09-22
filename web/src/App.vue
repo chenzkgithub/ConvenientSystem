@@ -9,6 +9,7 @@ import { registerMenuRoutes, registerPublicRoutes, type PublicPageItem } from '@
 import { checkAuthStatus } from '@/common/api/login'
 import { httpGet } from '@/api/request'
 import { IS_PUBLIC_CONTEXT, IS_STANDALONE, IS_BARE_WINDOW } from '@/common/publicContext'
+import { loadHostCapabilities } from '@/common/hostContext'
 import LoginView from '@/common/views/LoginView.vue'
 import MainLayout from '@/common/layout/MainLayout.vue'
 import LockOverlay from '@/common/components/LockOverlay.vue'
@@ -135,6 +136,9 @@ watch([loggedIn, () => auth.sessionTimeoutMinutes], () => {
 
 // 启动时先拉取锁屏功能开关；若刷新页面时已登录，同步启用空闲自动锁屏。
 onMounted(async () => {
+  // 桌面端宿主能力集：启动即拉取一次（幂等、静默失败），供宿主徽标与双宿主视图（考勤引导页）使用
+  void loadHostCapabilities()
+
   // 注册全局用户活动监听，用于空闲超时退出
   for (const evt of IDLE_EVENTS) {
     window.addEventListener(evt, onIdleActivity, { passive: true })
@@ -145,7 +149,10 @@ onMounted(async () => {
     try {
       const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
       if (pages) registerPublicRoutes(pages)
-    } catch { /* 后端不可用时降级 */ }
+    } catch {
+      // 后端不可用时降级：注册空公开路由集让首帧守卫立即放行（渲染占位页），不空等 12s 超时
+      registerPublicRoutes([])
+    }
     return
   }
 
@@ -165,7 +172,10 @@ onMounted(async () => {
   try {
     const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
     if (pages) registerPublicRoutes(pages)
-  } catch { /* 后端不可用时降级，不影响正常登录流程 */ }
+  } catch {
+    // 后端不可用时降级：注册空公开路由集让首帧守卫立即放行，不影响正常登录流程
+    registerPublicRoutes([])
+  }
 
   // 未登录时不拉取锁屏配置：/Lock/AppConfig 需要认证，此时必然 401，
   // 拿不到用户的真实开关反而会污染状态，配置改由登录成功后读取。

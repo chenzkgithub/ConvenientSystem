@@ -30,6 +30,9 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>是否启用</summary>
         public bool Enabled { get; set; } = true;
 
+        /// <summary>运行环境：both通用 / desktop桌面端 / web服务器端（管理面镜像，运行时过滤以代码元数据为准）</summary>
+        public string Env { get; set; } = "both";
+
         /// <summary>排序号</summary>
         public int SortOrder { get; set; }
     }

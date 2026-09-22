@@ -13,14 +13,18 @@ namespace ConvenientSystem;
 /// 必须走桌面端本地控制器，不能转发到云端（云端容器读不到用户本机路径）。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/api-spec")]
 [Route("api/Common/ApiSpec")]
 public class ApiSpecController : ControllerBase
 {
     private readonly ApiSpecService _service;
+    private readonly ApiDebugService _debugService;
 
-    public ApiSpecController(ApiSpecService service)
+    public ApiSpecController(ApiSpecService service, ApiDebugService debugService)
     {
         _service = service;
+        _debugService = debugService;
     }
 
     /// <summary>支持的导出格式列表（格式卡片网格数据源）。</summary>
@@ -62,32 +66,39 @@ public class ApiSpecController : ControllerBase
         return Ok(new { path });
     }
 
-    /// <summary>扫描解决方案（.sln/.slnx）或目录内全部接口，返回接口级清单。</summary>
-    [HttpGet]
-    [Route("ScanSolution")]
-    public IActionResult ScanSolution([FromQuery] string solutionPath)
-    {
-        try { return Ok(_service.ScanSolution(solutionPath)); }
-        catch (BizException ex) { return BadRequest(new { message = ex.Message }); }
-    }
-
-    /// <summary>解析选中 Controller → 接口清单 + DTO 类型树（前端预览面板）。</summary>
-    [HttpGet]
-    [Route("Parse")]
-    public IActionResult Parse([FromQuery] string rootDir, [FromQuery] string files,
-        [FromQuery] string? title, [FromQuery] string? baseUrl, [FromQuery] string? solutionPath)
-    {
-        try { return Ok(_service.Parse(rootDir, files, title, baseUrl, solutionPath)); }
-        catch (BizException ex) { return BadRequest(new { message = ex.Message }); }
-    }
-
-    /// <summary>生成内容预览（下载由前端 Blob 生成，无需服务端附件接口）。选择标识放 body，避免接口多时 URL 过长导致 HTTP 414。</summary>
+    /// <summary>启动解决方案扫描后台任务：立即返回任务初始快照（含命名空间的接口清单在完成时随 Result 返回），进度查询走统一 AsyncTask/Get。</summary>
     [HttpPost]
-    [Route("Preview")]
-    public IActionResult Preview([FromBody] ApiSpecPreviewRequest req)
+    [Route("StartScan")]
+    public IActionResult StartScan([FromBody] ApiSpecScanTaskRequest req)
     {
-        try { return Ok(_service.Export(req.RootDir, req.Files, req.Format, req.Title, req.BaseUrl,
-            req.Only, req.SolutionPath, req.SelectionKeys)); }
+        try { return Ok(_service.StartScan(req, null)); }
+        catch (BizException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    /// <summary>启动解析并生成后台任务：一次解析同时产出 IR 文档与导出内容，替代原 Parse+Preview 两次请求两次全量解析。</summary>
+    [HttpPost]
+    [Route("StartGenerate")]
+    public IActionResult StartGenerate([FromBody] ApiSpecGenerateRequest req)
+    {
+        try { return Ok(_service.StartGenerate(req, null)); }
+        catch (BizException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    /// <summary>复用已完成生成任务的解析结果重新导出（换格式/标题不重新解析源码，秒级返回）。</summary>
+    [HttpPost]
+    [Route("ReExport")]
+    public IActionResult ReExport([FromBody] ApiSpecReExportRequest req)
+    {
+        try { return Ok(_service.ReExport(req, null)); }
+        catch (BizException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    /// <summary>接口调试代理：服务端转发调试请求到目标地址并回传原始响应（规避浏览器 CORS）。</summary>
+    [HttpPost]
+    [Route("Debug")]
+    public async Task<IActionResult> Debug([FromBody] ApiDebugRequest req)
+    {
+        try { return Ok(await _debugService.DebugAsync(req)); }
         catch (BizException ex) { return BadRequest(new { message = ex.Message }); }
     }
 }

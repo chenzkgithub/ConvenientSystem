@@ -72,7 +72,7 @@ namespace ConvenientSystem.Shared.Jobs
             // 标记为执行中
             Fsql.Update<Entity.Sms.SmsTaskEntity>()
                 .Set(t => t.Status, (byte)1)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == taskId)
                 .ExecuteAffrows();
 
@@ -126,7 +126,7 @@ namespace ConvenientSystem.Shared.Jobs
                 {
                     Fsql.Update<SmsRecipientEntity>()
                         .Set(r => r.Status, (byte)1)
-                        .Set(r => r.SentTime, DateTime.Now)
+                        .Set(r => r.SentTime, TimeHelper.Now)
                         .Where(r => r.Id == recipient.Id)
                         .ExecuteAffrows();
                     successCount++;
@@ -146,7 +146,7 @@ namespace ConvenientSystem.Shared.Jobs
                 .Set(t => t.Status, failCount == 0 ? (byte)2 : (byte)4)
                 .Set(t => t.SuccessCount, successCount)
                 .Set(t => t.FailCount, failCount)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == taskId)
                 .ExecuteAffrows();
 
@@ -157,7 +157,7 @@ namespace ConvenientSystem.Shared.Jobs
             if (failCount > 0)
             {
                 await _notifier.SendToDefaultAsync("短信任务执行失败提醒",
-                    $"任务ID：{taskId}\n任务名称：{task.Name}\n成功：{successCount}  失败：{failCount}\n时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                    $"任务ID：{taskId}\n任务名称：{task.Name}\n成功：{successCount}  失败：{failCount}\n时间：{TimeHelper.Now:yyyy-MM-dd HH:mm:ss}");
             }
         });
 
@@ -166,7 +166,7 @@ namespace ConvenientSystem.Shared.Jobs
             Fsql.Update<SmsRecipientEntity>()
                 .Set(r => r.Status, (byte)2)
                 .Set(r => r.ErrorMessage, errorMsg)
-                .Set(r => r.SentTime, DateTime.Now)
+                .Set(r => r.SentTime, TimeHelper.Now)
                 .Where(r => r.Id == recipientId)
                 .ExecuteAffrows();
         }
@@ -175,7 +175,7 @@ namespace ConvenientSystem.Shared.Jobs
         {
             Fsql.Update<Entity.Sms.SmsTaskEntity>()
                 .Set(t => t.Status, status)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == taskId)
                 .ExecuteAffrows();
         }

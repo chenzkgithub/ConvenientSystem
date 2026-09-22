@@ -8,6 +8,8 @@ namespace ConvenientSystem;
 /// 与 ConvenientSystem.Api 中的 CodeScanController 接口一致，但不走权限校验。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/code-scan")]
 [Route("api/Common/CodeScan")]
 public class LocalCodeScanController : ControllerBase
 {

@@ -35,6 +35,7 @@ namespace ConvenientSystem.Service.Common
                     Description = v.Description,
                     Enabled = v.Enabled,
                     SortOrder = v.SortOrder,
+                    Env = v.Env,
                 });
 
             // 批量加载权限点
@@ -86,6 +87,7 @@ namespace ConvenientSystem.Service.Common
                         .Set(v => v.RoutePath, string.IsNullOrWhiteSpace(dto.RoutePath) ? null : dto.RoutePath.Trim())
                         .Set(v => v.Description, string.IsNullOrWhiteSpace(dto.Description) ? null : dto.Description.Trim())
                         .Set(v => v.Enabled, dto.Enabled)
+                        .Set(v => v.Env, NormalizeEnv(dto.Env))
                         .Where(v => v.Id == dto.Id)
                         .ExecuteAffrows();
                     _logger.LogInformation("编辑视图 Id={Id} Name={Name}", dto.Id, name);
@@ -101,6 +103,7 @@ namespace ConvenientSystem.Service.Common
                         RoutePath = string.IsNullOrWhiteSpace(dto.RoutePath) ? null : dto.RoutePath.Trim(),
                         Description = string.IsNullOrWhiteSpace(dto.Description) ? null : dto.Description.Trim(),
                         Enabled = dto.Enabled,
+                        Env = NormalizeEnv(dto.Env),
                         SortOrder = maxSort + 1,
                     }).ExecuteIdentity();
                     _logger.LogInformation("新增视图 Id={Id} Name={Name}", newId, name);
@@ -112,6 +115,9 @@ namespace ConvenientSystem.Service.Common
                 return new ViewSaveResultDto { Ok = false, Msg = ex.Message };
             }
         }
+
+        private static string NormalizeEnv(string? env)
+            => env is "desktop" or "web" ? env : "both";
 
         public void DeleteView(int id)
         {

@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Email
 {
@@ -51,12 +52,12 @@ namespace ConvenientSystem.Shared.Entity.Email
         public DateTime? LastSendTime { get; set; }
 
         /// <summary>创建时间</summary>
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
 
         /// <summary>创建人用户 Id（SysUser.Id，GUID；用于数据权限过滤，列表关联 SysUser 展示账号与姓名）</summary>
         public Guid? CreatedById { get; set; }
 
         /// <summary>更新时间</summary>
-        public DateTime UpdateTime { get; set; } = DateTime.Now;
+        public DateTime UpdateTime { get; set; } = TimeHelper.Now;
     }
 }

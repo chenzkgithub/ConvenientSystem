@@ -1,4 +1,7 @@
-import { httpPost } from '@/api/request'
+import { localPost } from '@/api/request'
+
+/** 接口归属：local=全部走桌面端本地通道（审计脚本依据，勿删） */
+export const API_SIDE = 'local' as const
 
 /** 本地命令超时：仓库多时逐个查询状态较慢（与后端 LocalTimeoutMs 60s 对齐留余量） */
 const LOCAL_TIMEOUT_MS = 30_000
@@ -229,37 +232,37 @@ export interface GitFileDiff {
 
 /** 仓库列表（附带实时状态） */
 export function getGitRepos(opts?: { silent?: boolean }) {
-  return httpPost<GitRepoStatus[]>('/api/Common/Git/Repos', {}, undefined, LOCAL_TIMEOUT_MS, opts)
+  return localPost<GitRepoStatus[]>('/api/local/git/Repos', {}, undefined, LOCAL_TIMEOUT_MS, opts)
 }
 
 /** 仓库健康检查（轻量：目录是否存在，供前端轮询检测失效） */
 export function getGitReposHealth() {
-  return httpPost<Record<string, boolean>>('/api/Common/Git/ReposHealth', {}, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<Record<string, boolean>>('/api/local/git/ReposHealth', {}, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 添加仓库（自动解析仓库根目录，子目录自动归属） */
 export function addGitRepo(request: GitPathRequest) {
-  return httpPost<GitAddRepoResult>('/api/Common/Git/AddRepo', request)
+  return localPost<GitAddRepoResult>('/api/local/git/AddRepo', request)
 }
 
 /** 移除仓库（仅移除列表记录，不碰磁盘） */
 export function removeGitRepo(request: GitPathRequest) {
-  return httpPost('/api/Common/Git/RemoveRepo', request)
+  return httpPost('/api/local/git/RemoveRepo', request)
 }
 
 /** 扫描目录一级子目录，发现其中的 Git 仓库 */
 export function discoverGitRepos(request: GitPathRequest) {
-  return httpPost<GitDiscoveredRepo[]>('/api/Common/Git/Discover', request, undefined, DISCOVER_TIMEOUT_MS)
+  return localPost<GitDiscoveredRepo[]>('/api/local/git/Discover', request, undefined, DISCOVER_TIMEOUT_MS)
 }
 
 /** 查询仓库状态总览 */
 export function getGitStatus(request: GitPathRequest, opts?: { silent?: boolean }) {
-  return httpPost<GitRepoStatus>('/api/Common/Git/Status', request, undefined, undefined, opts)
+  return localPost<GitRepoStatus>('/api/local/git/Status', request, undefined, undefined, opts)
 }
 
 /** 分支列表（本地在前、远程在后） */
 export function getGitBranches(request: GitPathRequest) {
-  return httpPost<GitBranch[]>('/api/Common/Git/Branches', request)
+  return localPost<GitBranch[]>('/api/local/git/Branches', request)
 }
 
 /** 网络命令统一 silent：进行中需要界面可交互（点取消按钮），
@@ -267,80 +270,80 @@ export function getGitBranches(request: GitPathRequest) {
 
 /** 拉取当前分支（无上游时自动回退 origin {branch}） */
 export function gitPull(request: GitPathRequest) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Pull', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/Pull', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 推送当前分支（无上游时自动建立跟踪） */
 export function gitPush(request: GitPathRequest) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Push', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/Push', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 合并来源分支到当前分支 */
 export function gitMerge(request: GitMergeRequest) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Merge', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/Merge', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 切换/新建分支 */
 export function gitCheckout(request: GitCheckoutRequest) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Checkout', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/Checkout', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 白名单执行 git 命令（必须以 git 开头，参数直传不经 shell） */
 export function gitExec(request: GitExecRequest) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Exec', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/Exec', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 克隆远程仓库，成功后自动添加到仓库列表。
  *  silent：长耗时操作（大仓库最长 10 分钟），不用全局 loading 遮罩盖界面，
  *  由调用方按钮 loading + 日志自行反馈，错误提示也由调用方负责。 */
 export function gitClone(request: GitCloneRequest) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Clone', request, undefined, CLONE_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/Clone', request, undefined, CLONE_TIMEOUT_MS, { silent: true })
 }
 
 /** 取消运行中操作：杀对应 git 进程树，原请求随 WaitForExit 返回。
  *  走普通模式（很快，失败时全局提示合理；此刻可取消操作本身是 silent 的，不冲突）。 */
 export function gitCancel(request: GitCancelRequest) {
-  return httpPost<GitCancelResult>('/api/Common/Git/Cancel', request)
+  return localPost<GitCancelResult>('/api/local/git/Cancel', request)
 }
 
 /** 合并中间状态（合并进行中横幅 + 一键放弃） */
 export function getGitMergeState(request: GitPathRequest) {
-  return httpPost<GitMergeState>('/api/Common/Git/MergeState', request)
+  return localPost<GitMergeState>('/api/local/git/MergeState', request)
 }
 
 /** 提交历史（新→旧，含父提交与 refs，画分支线用）；分页滚动加载 */
 export function getGitLog(request: GitLogRequest) {
-  return httpPost<GitLogEntry[]>('/api/Common/Git/Log', request, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<GitLogEntry[]>('/api/local/git/Log', request, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 单提交详情：元信息 + 变更文件 + 按文件切分的 diff */
 export function getGitCommitDetail(request: { path: string; hash: string }) {
-  return httpPost<GitCommitDetail>('/api/Common/Git/Commit', request, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<GitCommitDetail>('/api/local/git/Commit', request, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 工作区改动列表（已暂存/未暂存两组，含未跟踪与冲突） */
 export function getGitChanges(request: GitPathRequest, opts?: { silent?: boolean }) {
-  return httpPost<GitChanges>('/api/Common/Git/Changes', request, undefined, LOCAL_TIMEOUT_MS, opts)
+  return localPost<GitChanges>('/api/local/git/Changes', request, undefined, LOCAL_TIMEOUT_MS, opts)
 }
 
 /** 暂存/取消暂存（单文件或全部，本地快命令不可取消） */
 export function gitStage(request: { path: string; filePath?: string | null; stage: boolean }) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Stage', request)
+  return localPost<GitCommandResult>('/api/local/git/Stage', request)
 }
 
 /** 提交已暂存改动（可选顺带推送；路由避开历史功能的 Commit 详情端点） */
 export function gitCommitChanges(request: { path: string; message: string; push: boolean; opId?: string }) {
-  return httpPost<GitCommandResult>('/api/Common/Git/CommitChanges', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<GitCommandResult>('/api/local/git/CommitChanges', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 放弃改动（不可恢复，前端二次确认） */
 export function gitDiscard(request: { path: string; filePath?: string | null; includeUntracked: boolean }) {
-  return httpPost<GitCommandResult>('/api/Common/Git/Discard', request)
+  return localPost<GitCommandResult>('/api/local/git/Discard', request)
 }
 
 /** 单文件 diff 预览（已暂存/工作区，未跟踪合成 + 行） */
 export function getGitFileDiff(request: { path: string; filePath: string; staged: boolean }) {
-  return httpPost<GitFileDiff>('/api/Common/Git/FileDiff', request, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<GitFileDiff>('/api/local/git/FileDiff', request, undefined, LOCAL_TIMEOUT_MS)
 }
 
 // ==================== Stash 储藏 ====================
@@ -354,22 +357,22 @@ export interface GitStashEntry {
 
 /** 储藏当前未提交改动 */
 export function gitStash(request: { path: string; message?: string }) {
-  return httpPost<{ success: boolean; output: string; exitCode: number }>('/api/Common/Git/Stash', request)
+  return localPost<{ success: boolean; output: string; exitCode: number }>('/api/local/git/Stash', request)
 }
 
 /** 获取 Stash 列表 */
 export function getGitStashList(request: { path: string }) {
-  return httpPost<GitStashEntry[]>('/api/Common/Git/StashList', request, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<GitStashEntry[]>('/api/local/git/StashList', request, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 应用指定 Stash（pop） */
 export function gitStashPop(request: { path: string; index: number }) {
-  return httpPost<{ success: boolean; output: string; exitCode: number }>('/api/Common/Git/StashPop', request)
+  return localPost<{ success: boolean; output: string; exitCode: number }>('/api/local/git/StashPop', request)
 }
 
 /** 删除指定 Stash（drop） */
 export function gitStashDrop(request: { path: string; index: number }) {
-  return httpPost<{ success: boolean; output: string; exitCode: number }>('/api/Common/Git/StashDrop', request)
+  return localPost<{ success: boolean; output: string; exitCode: number }>('/api/local/git/StashDrop', request)
 }
 
 // ==================== 环境检测与配置管理 ====================
@@ -388,27 +391,27 @@ export interface GitConfigItem {
 
 /** Git 环境检测（git 是否已安装、版本、全局身份） */
 export function getGitEnv() {
-  return httpPost<GitEnv>('/api/Common/Git/Env', {}, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<GitEnv>('/api/local/git/Env', {}, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 读取全局 git 配置列表 */
 export function getGitConfigList() {
-  return httpPost<GitConfigItem[]>('/api/Common/Git/ConfigList', {}, undefined, LOCAL_TIMEOUT_MS)
+  return localPost<GitConfigItem[]>('/api/local/git/ConfigList', {}, undefined, LOCAL_TIMEOUT_MS)
 }
 
 /** 设置或删除一项全局配置（value 为 null 时删除） */
 export function gitConfigSet(request: { key: string; value: string | null }) {
-  return httpPost<GitCommandResult>('/api/Common/Git/ConfigSet', request)
+  return localPost<GitCommandResult>('/api/local/git/ConfigSet', request)
 }
 
 // ==================== 远程分支 & 分组 ====================
 
 /** 列出远程仓库的分支列表（git ls-remote --heads） */
 export function gitListRemoteBranches(request: { url: string }) {
-  return httpPost<string[]>('/api/Common/Git/ListRemoteBranches', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
+  return localPost<string[]>('/api/local/git/ListRemoteBranches', request, undefined, NETWORK_TIMEOUT_MS, { silent: true })
 }
 
 /** 更新仓库分组 */
 export function updateRepoGroup(request: { path: string; group: string }) {
-  return httpPost<{ ok: boolean }>('/api/Common/Git/UpdateGroup', request)
+  return localPost<{ ok: boolean }>('/api/local/git/UpdateGroup', request)
 }

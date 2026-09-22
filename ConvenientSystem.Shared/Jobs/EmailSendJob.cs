@@ -49,7 +49,7 @@ namespace ConvenientSystem.Shared.Jobs
             }
 
             // 变量替换
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var variables = new Dictionary<string, string>
             {
                 ["日期"] = now.ToString("yyyy-MM-dd"),
@@ -74,7 +74,7 @@ namespace ConvenientSystem.Shared.Jobs
                 ErrorMessage = result.ErrorMessage,
                 CostMs = result.CostMs,
                 CreatedById = task.CreatedById,
-                CreateTime = DateTime.Now
+                CreateTime = TimeHelper.Now
             };
             Fsql.Insert(log).ExecuteAffrows();
 
@@ -94,7 +94,7 @@ namespace ConvenientSystem.Shared.Jobs
             {
                 // 推送默认机器人失败提醒（异常已在内部吞掉），再抛出交给 Hangfire 重试
                 await _notifier.SendToDefaultAsync("邮件任务执行失败提醒",
-                    $"任务ID：{taskId}\n任务名称：{task.Name}\n错误：{result.ErrorMessage}\n时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                    $"任务ID：{taskId}\n任务名称：{task.Name}\n错误：{result.ErrorMessage}\n时间：{TimeHelper.Now:yyyy-MM-dd HH:mm:ss}");
                 throw new Exception($"邮件发送失败：{result.ErrorMessage}");
             }
         });
@@ -104,7 +104,7 @@ namespace ConvenientSystem.Shared.Jobs
         /// </summary>
         public async Task<EmailSendResult> TestSendAsync(string recipients, string subject, string content)
         {
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var variables = new Dictionary<string, string>
             {
                 ["日期"] = now.ToString("yyyy-MM-dd"),

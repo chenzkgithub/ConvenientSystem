@@ -135,7 +135,7 @@ namespace ConvenientSystem.Service.Common.SqlQuery
             catch (DbException ex)
             {
                 _logger.LogWarning(ex, "SQL查询工具执行失败");
-                throw new BadRequestException($"SQL 执行错误：{ex.Message}");
+                throw new BadRequestException($"SQL 执行错误：{FormatDbError(ex)}");
             }
         }
 
@@ -195,7 +195,7 @@ namespace ConvenientSystem.Service.Common.SqlQuery
             }
             catch (DbException ex)
             {
-                throw new BadRequestException($"SQL 执行错误：{ex.Message}");
+                throw new BadRequestException($"SQL 执行错误：{FormatDbError(ex)}");
             }
             catch (Exception ex)
             {
@@ -399,6 +399,26 @@ namespace ConvenientSystem.Service.Common.SqlQuery
             }
             catch { /* XML 解析失败时退化为纯文本显示 */ }
             return result;
+        }
+
+        /// <summary>
+        /// SQL Server 2022+ 将 VIEW SERVER STATE 拆细为 PERFORMANCE/SECURITY STATE，
+        /// 锁表等 DMV 查询缺少该服务器级权限时报权限拒绝（错误 262）；
+        /// 这种情况把原始英文错误翻译成可操作的授权引导，其余错误原样返回。
+        /// </summary>
+        private static string FormatDbError(DbException ex)
+        {
+            var msg = ex.Message;
+            var isServerStateDenied =
+                msg.Contains("permission was denied on object 'server'", StringComparison.OrdinalIgnoreCase)
+                && (msg.Contains("SERVER PERFORMANCE STATE", StringComparison.OrdinalIgnoreCase)
+                    || msg.Contains("SERVER SECURITY STATE", StringComparison.OrdinalIgnoreCase)
+                    || msg.Contains("SERVER STATE", StringComparison.OrdinalIgnoreCase));
+            if (!isServerStateDenied) return msg;
+            return msg
+                + "\n\n当前账号缺少服务器级 DMV 监控权限（锁表/性能视图需要）。请在 master 库对当前登录名执行："
+                + "\nGRANT VIEW SERVER PERFORMANCE STATE TO [登录名];  （SQL Server 2022 及以上）"
+                + "\nGRANT VIEW SERVER STATE TO [登录名];              （2019 及更早版本）";
         }
 
         /// <summary>解析执行计划中的开销数值（固定用不变文化，避免小数点风格差异）</summary>

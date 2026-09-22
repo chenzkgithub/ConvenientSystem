@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Api.Hubs;
 using ConvenientSystem.Service.Common;
 using ConvenientSystem.Shared.Entity.Common;
@@ -162,7 +163,7 @@ namespace ConvenientSystem.Api.Controllers.Common
                     return BadRequest(new { message = "文件内容不是有效的图片" });
             }
 
-            var dir = Path.Combine(ImageRoot, DateTime.Now.ToString("yyyyMM"));
+            var dir = Path.Combine(ImageRoot, TimeHelper.Now.ToString("yyyyMM"));
             Directory.CreateDirectory(dir);
             var fileName = $"{Guid.NewGuid():N}{ext}";
             var filePath = Path.Combine(dir, fileName);
@@ -170,7 +171,7 @@ namespace ConvenientSystem.Api.Controllers.Common
             {
                 file.CopyTo(fs);
             }
-            return Ok(new ChatImageDto { Path = $"{DateTime.Now:yyyyMM}/{fileName}" });
+            return Ok(new ChatImageDto { Path = $"{TimeHelper.Now:yyyyMM}/{fileName}" });
         }
 
         /// <summary>图片访问：Guid 文件名即访问凭证（img 标签无法携带 JWT，同微信 CDN 模式），匿名可访问但不可枚举。</summary>

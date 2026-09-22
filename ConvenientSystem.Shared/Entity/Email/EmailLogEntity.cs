@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Email
 {
@@ -40,6 +41,6 @@ namespace ConvenientSystem.Shared.Entity.Email
         public Guid? CreatedById { get; set; }
 
         /// <summary>创建时间</summary>
-        public DateTime CreateTime { get; set; } = DateTime.Now;
+        public DateTime CreateTime { get; set; } = TimeHelper.Now;
     }
 }

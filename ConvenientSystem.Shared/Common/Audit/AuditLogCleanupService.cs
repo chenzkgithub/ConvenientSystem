@@ -67,7 +67,7 @@ namespace ConvenientSystem.Shared.Common.Audit
             try
             {
                 var retentionDays = GetRetentionDays();
-                var cutoff = DateTime.Now.AddDays(-retentionDays);
+                var cutoff = TimeHelper.Now.AddDays(-retentionDays);
                 var affected = _fsql.Delete<SysAuditLogEntity>()
                     .Where(l => l.CreateTime < cutoff)
                     .ExecuteAffrows();

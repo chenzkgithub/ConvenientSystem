@@ -535,7 +535,7 @@ async function sendImage(e: Event) {
   if (!isGroupActive.value && (!peer || peer.blockedByMe || peer.blockedMe)) return
   sendingImage.value = true
   try {
-    const dto = await uploadChatImage(file)
+    const dto = await uploadChatImage(file, { noLoading: true })
     // 上传只负责落盘；发送必须显式 MsgType=1，否则服务端会按文本写库并显示相对路径字符串。
     await chatStore.sendMessage(peer?.peerId ?? '', dto.path, 0, 1)
   } catch {

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { getAttendance, getAttendanceDtl, getDailyRanking, getDeptTree } from '@/yunhan/api/attendance'
+import { IS_DESKTOP_HOST, hostCapabilities } from '@/common/hostContext'
 import type { AttendanceRow, DeptNode, DeptViewRaw, RequestDto } from '@/yunhan/types'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 
@@ -171,13 +172,16 @@ function groupSum(list: AttendanceRow[]): AttendanceRow[] {
 }
 
 // ========== 数据加载 ==========
-async function loadDeptTree() {
+/** 加载组织架构；返回是否成功。opts.silent 供桌面端本地模式探测（不弹 loading/错误提示） */
+async function loadDeptTree(opts?: { silent?: boolean }): Promise<boolean> {
   try {
-    const json = await getDeptTree()
+    const json = await getDeptTree(opts)
     treeData.value = Array.isArray(json) ? listToTree(json) : []
+    return true
   } catch {
-    /* 错误已由 request.ts 弹出提示 */
+    /* 错误提示由 request.ts 负责（silent 探测时静默，交给引导页兜底说明） */
     treeData.value = []
+    return false
   }
 }
 
@@ -296,21 +300,71 @@ function openDingTalk(row: AttendanceRow) {
 }
 
 // ========== 初始化 ==========
-onMounted(async () => {
-  setDefaultMonth()
-  await loadDeptTree()
+/** 桌面端本地模式不可用（未配置内网库）：渲染引导页替代原来的 404 空页面 */
+const localModeDown = ref(false)
+const retrying = ref(false)
+
+/** 进入页面/重试的统一引导：桌面端先静默探测本地模式，失败 → 引导页 */
+async function bootstrap() {
+  // 能力中心已明确内网库未配置 → 直接引导页（与 hostContext capabilities 衔接，省一次必然失败的探测）
+  if (IS_DESKTOP_HOST && hostCapabilities.value && !hostCapabilities.value.localDbConfigured) {
+    localModeDown.value = true
+    return
+  }
+  const ok = await loadDeptTree(IS_DESKTOP_HOST ? { silent: true } : undefined)
+  if (!ok) {
+    // Web 端失败已由 request.ts 弹错；桌面端静默探测失败 = 未配置内网库 → 引导页
+    if (IS_DESKTOP_HOST) localModeDown.value = true
+    return
+  }
   if (!treeData.value.length) return
   const target = findNodeByName(treeData.value, DEFAULT_DEPT_NAME) ?? treeData.value[0]
   currentNodeId.value = target.id
   expandedKeys.value = [...collectParentIds(treeData.value, target.id), target.id]
   await searchByDeptCode(target.full_code)
+}
+
+/** 引导页「重新检测」：配置好内网库后无需重启整个应用，直接重探测 */
+async function retry() {
+  retrying.value = true
+  try {
+    await bootstrap()
+  } finally {
+    retrying.value = false
+  }
+}
+
+onMounted(() => {
+  setDefaultMonth()
+  void bootstrap()
 })
 </script>
 
 <template>
   <div class="attendance-page">
+    <!-- 本地模式引导页：桌面端未配置内网考勤库时替代原 404 空页面 -->
+    <div v-if="localModeDown" class="local-guide">
+      <el-result icon="warning" title="本地考勤数据库未配置" sub-title="当前桌面端未配置内网考勤数据库，无法提供本地考勤查询">
+        <template #extra>
+          <div class="guide-options">
+            <div class="guide-option">
+              <div class="guide-option-title">方式一：配置桌面端本地查询</div>
+              <div class="guide-option-desc">
+                打开「配置文件」页面编辑 appsettings.json，填写 <code>ConnectionStrings:YhSystemDb</code> 内网数据库连接串，保存并重启后回到本页重新检测
+              </div>
+            </div>
+            <div class="guide-option">
+              <div class="guide-option-title">方式二：使用服务器端考勤</div>
+              <div class="guide-option-desc">在服务器端部署的 Web 界面中打开本页面，走服务器考勤统计库查询</div>
+            </div>
+          </div>
+          <el-button type="primary" :loading="retrying" @click="retry">重新检测</el-button>
+        </template>
+      </el-result>
+    </div>
+
     <!-- 筛选栏 -->
-    <div class="filter-bar">
+    <div v-if="!localModeDown" class="filter-bar">
       <div class="filter-left">
         <el-date-picker
           v-model="month"
@@ -327,7 +381,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="main-wrap">
+    <div v-if="!localModeDown" class="main-wrap">
       <!-- 组织架构 -->
       <div class="left-tree">
         <div class="tree-title">组织架构</div>
@@ -522,3 +576,46 @@ onMounted(async () => {
     </CommonDialog>
   </div>
 </template>
+
+<style scoped>
+/* 本地模式引导页（桌面端未配置内网库） */
+.local-guide {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.guide-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 540px;
+  margin: 0 auto 20px;
+  text-align: left;
+}
+
+.guide-option {
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.guide-option-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.guide-option-desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+.guide-option-desc code {
+  background: var(--el-fill-color-light, #f5f7fa);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+</style>

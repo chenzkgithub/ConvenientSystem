@@ -4,6 +4,7 @@
  * - 双模式：中文翻译（调 API，自动翻译） / 直接输入（中英文均可，实时拆词）
  * - 批量模式：多行输入，每行独立生成全部命名规则
  * - 10 种命名规则：camelCase / PascalCase / snake_case / kebab-case / UPPER_SNAKE / dot.case / Title Case / flatcase / SCREAMING-KEBAB / path/case
+ * - 名称过长（拼合 > 20 字符）时额外生成缩短版：省略虚词 + 常见开发词汇缩写表
  * - 拼音兼底、示例词、历史记录、一键复制全部、点击值复制
  */
 import { ref, computed, watch } from 'vue'
@@ -30,6 +31,11 @@ interface BatchRow {
   source: string
   words: string[]
   results: NamingItem[]
+  /** 缩短版（该行命名过长时提供） */
+  shortened?: {
+    words: string[]
+    results: NamingItem[]
+  }
 }
 
 /** 工作模式：translate=中文翻译 / direct=直接输入 */
@@ -142,6 +148,144 @@ function smartSplitWords(text: string): string[] {
   return result
 }
 
+// ── 缩短版命名（名称过长时提供） ──
+
+/** 缩短版触发阈值：单词拼合后（不含分隔符）超过该长度才生成缩短版 */
+const SHORTEN_THRESHOLD = 20
+
+/** 无实义虚词：缩短版中直接省略 */
+const STOP_WORDS = new Set(['a', 'an', 'the', 'of', 'for', 'and', 'to', 'in', 'on', 'at', 'by', 'with', 'from', 'or', 'as', 'via'])
+
+/**
+ * 常见开发词汇缩写表（键为拆词后的小写单词，长度均 ≥5）。
+ * 仅收录业界通用缩写，生僻缩写反而不利于阅读；表外的长单词保持原样。
+ */
+const WORD_ABBR: Record<string, string> = {
+  address: 'addr',
+  administrator: 'admin',
+  application: 'app',
+  argument: 'arg',
+  arguments: 'args',
+  array: 'arr',
+  asynchronous: 'async',
+  attribute: 'attr',
+  authentication: 'auth',
+  authorization: 'auth',
+  average: 'avg',
+  background: 'bg',
+  buffer: 'buf',
+  button: 'btn',
+  calculate: 'calc',
+  calculator: 'calc',
+  character: 'char',
+  command: 'cmd',
+  component: 'comp',
+  config: 'cfg',
+  configuration: 'cfg',
+  connection: 'conn',
+  context: 'ctx',
+  controller: 'ctrl',
+  converter: 'conv',
+  current: 'cur',
+  dashboard: 'dash',
+  database: 'db',
+  default: 'def',
+  delete: 'del',
+  description: 'desc',
+  destination: 'dst',
+  development: 'dev',
+  dictionary: 'dict',
+  directory: 'dir',
+  document: 'doc',
+  element: 'elem',
+  environment: 'env',
+  error: 'err',
+  execute: 'exec',
+  executor: 'exec',
+  exporter: 'exp',
+  extension: 'ext',
+  foreground: 'fg',
+  function: 'fn',
+  generate: 'gen',
+  generator: 'gen',
+  header: 'hdr',
+  history: 'hist',
+  identifier: 'id',
+  image: 'img',
+  importer: 'imp',
+  index: 'idx',
+  information: 'info',
+  instance: 'inst',
+  integer: 'int',
+  language: 'lang',
+  length: 'len',
+  library: 'lib',
+  management: 'mgr',
+  manager: 'mgr',
+  maximum: 'max',
+  memory: 'mem',
+  message: 'msg',
+  metadata: 'meta',
+  minimum: 'min',
+  module: 'mod',
+  namespace: 'ns',
+  navigation: 'nav',
+  notification: 'notify',
+  number: 'num',
+  object: 'obj',
+  package: 'pkg',
+  parameter: 'param',
+  password: 'pwd',
+  payment: 'pay',
+  pointer: 'ptr',
+  position: 'pos',
+  previous: 'prev',
+  probability: 'prob',
+  process: 'proc',
+  property: 'prop',
+  reference: 'ref',
+  repository: 'repo',
+  request: 'req',
+  response: 'resp',
+  schedule: 'sched',
+  scheduler: 'sched',
+  segment: 'seg',
+  service: 'svc',
+  source: 'src',
+  statistic: 'stat',
+  statistics: 'stats',
+  string: 'str',
+  synchronize: 'sync',
+  synchronization: 'sync',
+  system: 'sys',
+  template: 'tpl',
+  temporary: 'tmp',
+  timestamp: 'ts',
+  transaction: 'tx',
+  variable: 'var',
+  version: 'ver',
+}
+
+/** 缩写单词：命中缩写表用缩写；复数形式（services）退回单数查表后加 s；短词与表外词保持原样 */
+function abbreviateWord(word: string): string {
+  if (word.length < 5) return word
+  if (WORD_ABBR[word]) return WORD_ABBR[word]
+  if (word.endsWith('s') && WORD_ABBR[word.slice(0, -1)]) return WORD_ABBR[word.slice(0, -1)] + 's'
+  return word
+}
+
+/**
+ * 计算缩短版单词列表。原名单词拼合后超过阈值、且省略虚词/缩写后确实更短时返回缩短列表，
+ * 否则返回 null（不展示缩短版）。
+ */
+function computeShortened(w: string[]): string[] | null {
+  const full = w.join('')
+  if (full.length <= SHORTEN_THRESHOLD) return null
+  const shortened = w.filter(word => !STOP_WORDS.has(word)).map(abbreviateWord)
+  if (shortened.length === 0 || shortened.join('') === full) return null
+  return shortened
+}
+
 // ── 单行模式 ──
 
 /** 直接输入模式：API 翻译结果（含中文时自动翻译，纯英文时为空） */
@@ -160,6 +304,19 @@ const words = computed(() => {
 
 /** 单行命名规则结果 */
 const namingResults = computed(() => generateAll(words.value))
+
+/** 缩短版：命名过长时（拼合 > 20 字符）提供省略虚词 + 缩写常用词的方案 */
+const shortenedWords = computed(() => computeShortened(words.value) ?? [])
+
+/** 缩短版命名规则结果（无缩短需求时为空数组） */
+const shortenedResults = computed(() => shortenedWords.value.length > 0 ? generateAll(shortenedWords.value) : [])
+
+/** 缩短版前后字符数（用于展示说明；无缩短版时为 null） */
+const shortenMeta = computed(() =>
+  shortenedWords.value.length > 0
+    ? { from: words.value.join('').length, to: shortenedWords.value.join('').length }
+    : null,
+)
 
 const hasResult = computed(() => words.value.length > 0)
 
@@ -250,26 +407,32 @@ async function translateDirect(text: string) {
   }
 }
 
+/** 构建批量行：正常结果 + 过长时的缩短版 */
+function buildBatchRow(source: string, w: string[]): BatchRow | null {
+  if (w.length === 0) return null
+  const row: BatchRow = { source, words: w, results: generateAll(w) }
+  const shortened = computeShortened(w)
+  if (shortened) row.shortened = { words: shortened, results: generateAll(shortened) }
+  return row
+}
+
 /** 批量模式：并行翻译含中文的行 */
 async function translateBatch(text: string) {
   loading.value = true
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
   const promises = lines.map(async (line) => {
     if (!/[\u4e00-\u9fa5]/.test(line)) {
-      const w = smartSplitWords(line)
-      return w.length > 0 ? { source: line, words: w, results: generateAll(w) } : null
+      return buildBatchRow(line, smartSplitWords(line))
     }
     try {
       const res = await httpGet<TranslateResult>('/api/Common/CodeNaming/Translate', { text: line })
       const translated = (res.translated && !/[\u4e00-\u9fa5]/.test(res.translated))
         ? res.translated
         : pinyin(line, { toneType: 'none', nonZh: 'consecutive', v: true })
-      const w = smartSplitWords(translated)
-      return w.length > 0 ? { source: line, words: w, results: generateAll(w) } : null
+      return buildBatchRow(line, smartSplitWords(translated))
     } catch {
       const py = pinyin(line, { toneType: 'none', nonZh: 'consecutive', v: true })
-      const w = smartSplitWords(py)
-      return w.length > 0 ? { source: line, words: w, results: generateAll(w) } : null
+      return buildBatchRow(line, smartSplitWords(py))
     }
   })
   const results = await Promise.all(promises)
@@ -295,24 +458,43 @@ async function copyText(text: string, label?: string) {
   }
 }
 
-/** 复制全部命名规则（单行模式） */
+/** 复制全部命名规则（单行模式，含缩短版） */
 function copyAllSingle() {
-  const text = namingResults.value
-    .map(r => `${r.rule}: ${r.value}`)
-    .join('\n')
-  copyText(text, '全部命名规则')
+  const lines = namingResults.value.map(r => `${r.rule}: ${r.value}`)
+  if (shortenedResults.value.length > 0) {
+    lines.push('', '【缩短版】')
+    for (const r of shortenedResults.value) lines.push(`${r.rule}: ${r.value}`)
+  }
+  copyText(lines.join('\n'), '全部命名规则')
 }
 
-/** 复制指定批量行的全部命名规则 */
+/** 复制缩短版全部命名规则 */
+function copyAllShortened() {
+  const text = shortenedResults.value.map(r => `${r.rule}: ${r.value}`).join('\n')
+  copyText(text, '缩短版命名规则')
+}
+
+/** 复制指定批量行的全部命名规则（含缩短版） */
 function copyBatchRow(row: BatchRow) {
-  const text = row.results.map(r => `${r.rule}: ${r.value}`).join('\n')
-  copyText(text, row.source)
+  const lines = row.results.map(r => `${r.rule}: ${r.value}`)
+  if (row.shortened) {
+    lines.push('', '【缩短版】')
+    for (const r of row.shortened.results) lines.push(`${r.rule}: ${r.value}`)
+  }
+  copyText(lines.join('\n'), row.source)
 }
 
 /** 复制全部批量行 */
 function copyAllBatch() {
   const text = batchRows.value
-    .map(row => `# ${row.source}\n${row.results.map(r => `  ${r.rule}: ${r.value}`).join('\n')}`)
+    .map(row => {
+      const lines = row.results.map(r => `  ${r.rule}: ${r.value}`)
+      if (row.shortened) {
+        lines.push('', '  【缩短版】')
+        for (const r of row.shortened.results) lines.push(`  ${r.rule}: ${r.value}`)
+      }
+      return `# ${row.source}\n${lines.join('\n')}`
+    })
     .join('\n\n')
   copyText(text, '全部批量结果')
 }
@@ -430,6 +612,28 @@ function collapseAllRows() {
           </el-button>
         </div>
       </div>
+
+      <!-- 缩短版：原命名过长时提供 -->
+      <div v-if="shortenMeta" class="naming-results shortened">
+        <div class="results-header">
+          <span class="section-label">缩短版命名</span>
+          <span class="shorten-note">原名 {{ shortenMeta.from }} 字符 → 缩短后 {{ shortenMeta.to }} 字符（已省略虚词、缩写常用词）</span>
+          <el-button size="small" text type="primary" @click="copyAllShortened">
+            <el-icon style="margin-right: 4px;"><DocumentCopy /></el-icon>复制全部
+          </el-button>
+        </div>
+        <div class="words-display">
+          <span class="words-label">缩短拆词</span>
+          <el-tag v-for="w in shortenedWords" :key="w" size="small" type="warning" effect="plain">{{ w }}</el-tag>
+        </div>
+        <div v-for="item in shortenedResults" :key="item.rule" class="result-row">
+          <span class="rule-name">{{ item.rule }}</span>
+          <span class="rule-value" @click="copyText(item.value, `缩短版 ${item.rule}`)">{{ item.value }}</span>
+          <el-button size="small" text class="copy-btn" @click="copyText(item.value, `缩短版 ${item.rule}`)">
+            <el-icon><CopyDocument /></el-icon>
+          </el-button>
+        </div>
+      </div>
     </template>
 
     <!-- ════ 直接输入 · 单行 ════ -->
@@ -463,6 +667,28 @@ function collapseAllRows() {
           <span class="rule-name">{{ item.rule }}</span>
           <span class="rule-value" @click="copyText(item.value, item.rule)">{{ item.value }}</span>
           <el-button size="small" text class="copy-btn" @click="copyText(item.value, item.rule)">
+            <el-icon><CopyDocument /></el-icon>
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 缩短版：原命名过长时提供 -->
+      <div v-if="shortenMeta" class="naming-results shortened">
+        <div class="results-header">
+          <span class="section-label">缩短版命名</span>
+          <span class="shorten-note">原名 {{ shortenMeta.from }} 字符 → 缩短后 {{ shortenMeta.to }} 字符（已省略虚词、缩写常用词）</span>
+          <el-button size="small" text type="primary" @click="copyAllShortened">
+            <el-icon style="margin-right: 4px;"><DocumentCopy /></el-icon>复制全部
+          </el-button>
+        </div>
+        <div class="words-display">
+          <span class="words-label">缩短拆词</span>
+          <el-tag v-for="w in shortenedWords" :key="w" size="small" type="warning" effect="plain">{{ w }}</el-tag>
+        </div>
+        <div v-for="item in shortenedResults" :key="item.rule" class="result-row">
+          <span class="rule-name">{{ item.rule }}</span>
+          <span class="rule-value" @click="copyText(item.value, `缩短版 ${item.rule}`)">{{ item.value }}</span>
+          <el-button size="small" text class="copy-btn" @click="copyText(item.value, `缩短版 ${item.rule}`)">
             <el-icon><CopyDocument /></el-icon>
           </el-button>
         </div>
@@ -511,6 +737,18 @@ function collapseAllRows() {
                 <el-icon><CopyDocument /></el-icon>
               </el-button>
             </div>
+            <div v-if="row.shortened" class="batch-shortened">
+              <div class="batch-shortened-title">
+                缩短版命名（原名 {{ row.words.join('').length }} 字符 → 缩短后 {{ row.shortened.words.join('').length }} 字符）
+              </div>
+              <div v-for="item in row.shortened.results" :key="item.rule" class="result-row compact">
+                <span class="rule-name">{{ item.rule }}</span>
+                <span class="rule-value" @click="copyText(item.value, `缩短版 ${item.rule}`)">{{ item.value }}</span>
+                <el-button size="small" text class="copy-btn" @click="copyText(item.value, `缩短版 ${item.rule}`)">
+                  <el-icon><CopyDocument /></el-icon>
+                </el-button>
+              </div>
+            </div>
           </div>
         </el-collapse-transition>
       </div>
@@ -531,6 +769,11 @@ function collapseAllRows() {
   max-width: 820px;
   margin: 0 auto;
   padding: 24px 16px;
+  /* height:100% + 自身滚动（非依赖外层）：主窗口 .layout-main 与独立窗口
+     .standalone-page（100vh+overflow:hidden）下父容器高度均确定，页面自身接管滚动 */
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .naming-toolbar {
@@ -772,5 +1015,31 @@ function collapseAllRows() {
 .naming-empty p {
   margin-top: 12px;
   font-size: 13px;
+}
+
+/* ── 缩短版命名 ── */
+.naming-results.shortened {
+  margin-top: 12px;
+}
+
+.naming-results.shortened .results-header {
+  background: #fdf6ec;
+}
+
+.shorten-note {
+  flex: 1;
+  font-size: 12px;
+  color: #b88230;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-shortened-title {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: #b88230;
+  background: #fdf6ec;
+  border-top: 1px solid #f0f0f0;
 }
 </style>

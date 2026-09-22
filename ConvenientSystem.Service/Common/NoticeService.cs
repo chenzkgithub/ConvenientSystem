@@ -95,7 +95,7 @@ namespace ConvenientSystem.Service.Common
                 Enabled = true,
                 ExpireTime = expireTime,
                 CreatedById = null, // 系统通知：非用户发布（发布人/未发布人不影响可见性，可见性由 targetUserId 决定）
-                UpdateTime = DateTime.Now
+                UpdateTime = TimeHelper.Now
             }).ExecuteIdentity();
 
             // 定向通知：仅目标用户可见（复用管理端的定向用户表与可见性过滤）
@@ -114,7 +114,7 @@ namespace ConvenientSystem.Service.Common
                 throw new BadRequestException("通知标题不能为空");
             if (string.IsNullOrWhiteSpace(dto.Content))
                 throw new BadRequestException("通知内容不能为空");
-            if (dto.ExpireTime.HasValue && dto.ExpireTime.Value <= DateTime.Now)
+            if (dto.ExpireTime.HasValue && dto.ExpireTime.Value <= TimeHelper.Now)
                 throw new BadRequestException("有效期必须晚于当前时间");
 
             var title = dto.Title.Trim();
@@ -135,7 +135,7 @@ namespace ConvenientSystem.Service.Common
                     Enabled = dto.Enabled,
                     ExpireTime = expireTime,
                     CreatedById = _currentUser.UserId,
-                    UpdateTime = DateTime.Now
+                    UpdateTime = TimeHelper.Now
                 }).ExecuteIdentity();
 
                 // 保存定向范围（新建与编辑一致：先清后写，空列表即全员）
@@ -156,7 +156,7 @@ namespace ConvenientSystem.Service.Common
                     .Set(n => n.SendWebhook, dto.SendWebhook)
                     .Set(n => n.Enabled, dto.Enabled)
                     .Set(n => n.ExpireTime, expireTime)
-                    .Set(n => n.UpdateTime, DateTime.Now)
+                    .Set(n => n.UpdateTime, TimeHelper.Now)
                     .Where(n => n.Id == dto.Id)
                     .ExecuteAffrows();
                 if (affected == 0)
@@ -227,7 +227,7 @@ namespace ConvenientSystem.Service.Common
         /// <summary>用户端：当前用户可见的启用且未过期通知列表（含已读状态，按发布时间倒序；发布人自己也可见）。</summary>
         public List<NoticeUserDto> GetMyList(Guid userId)
         {
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var notices = _fsql.Select<SysNoticeEntity>()
                 .Where(n => n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)
@@ -261,7 +261,7 @@ namespace ConvenientSystem.Service.Common
         /// <summary>用户端：当前用户未读通知数（仅统计对他可见且未过期的通知；发布人自己的通知同样计入未读）。</summary>
         public int GetUnreadCount(Guid userId)
         {
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var noticeIds = _fsql.Select<SysNoticeEntity>()
                 .Where(n => n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)
@@ -282,7 +282,7 @@ namespace ConvenientSystem.Service.Common
         /// <summary>用户端：标记单条通知已读（幂等；停用/过期/不可见/不存在的通知不记录）。</summary>
         public void MarkRead(Guid userId, int noticeId)
         {
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var exists = _fsql.Select<SysNoticeEntity>()
                 .Where(n => n.Id == noticeId && n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)
@@ -303,7 +303,7 @@ namespace ConvenientSystem.Service.Common
         /// <summary>用户端：全部未读（启用、未过期、对其可见）通知标记已读。</summary>
         public void MarkAllRead(Guid userId)
         {
-            var now = DateTime.Now;
+            var now = TimeHelper.Now;
             var noticeIds = _fsql.Select<SysNoticeEntity>()
                 .Where(n => n.Enabled)
                 .Where(n => n.ExpireTime == null || n.ExpireTime > now)

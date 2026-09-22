@@ -68,8 +68,8 @@ namespace ConvenientSystem.Service.Email
                 Enabled = true,
                 Status = 0,
                 CreatedById = _currentUser.UserId,
-                CreateTime = DateTime.Now,
-                UpdateTime = DateTime.Now
+                CreateTime = TimeHelper.Now,
+                UpdateTime = TimeHelper.Now
             };
 
             var taskId = (int)_fsql.Insert(entity).ExecuteIdentity();
@@ -107,7 +107,7 @@ namespace ConvenientSystem.Service.Email
                 .Set(t => t.WeekDays, dto.WeekDays)
                 .Set(t => t.DailyTime, dto.DailyTime)
                 .Set(t => t.Enabled, dto.Enabled)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == dto.Id)
                 .ExecuteAffrows();
 
@@ -140,7 +140,7 @@ namespace ConvenientSystem.Service.Email
             var newEnabled = !task.Enabled;
             _fsql.Update<EmailTaskEntity>()
                 .Set(t => t.Enabled, newEnabled)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == id)
                 .ExecuteAffrows();
 
@@ -293,9 +293,9 @@ namespace ConvenientSystem.Service.Email
             switch (task.ScheduleType)
             {
                 case "once":
-                    if (task.SendTime.HasValue && task.SendTime.Value > DateTime.Now)
+                    if (task.SendTime.HasValue && task.SendTime.Value > TimeHelper.Now)
                     {
-                        var delay = task.SendTime.Value - DateTime.Now;
+                        var delay = task.SendTime.Value - TimeHelper.Now;
                         return BackgroundJob.Schedule<EmailSendJob>(
                             job => job.SendAsync(task.Id, default), delay);
                     }

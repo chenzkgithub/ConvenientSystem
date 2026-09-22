@@ -9,6 +9,8 @@ namespace ConvenientSystem;
 /// 路由 api/Common/Monitor/{action}，始终注册（无数据库依赖）。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：action 风格与旧路由一致，过渡期后移除旧路由
+[Route("api/local/monitor/[action]")]
 [Route("api/[area]/[controller]/[action]")]
 [Area("Common")]
 [AllowAnonymous]

@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using ConvenientSystem.Shared.Entity.Common;
@@ -191,7 +192,7 @@ public class CodeScanService : ICodeScanService
             WarningCount = issues.Count(i => i.Severity == "Warning"),
             InfoCount = issues.Count(i => i.Severity == "Info"),
             DurationMs = sw.ElapsedMilliseconds,
-            CreateTime = DateTime.Now,
+            CreateTime = TimeHelper.Now,
         };
         _db.Insert(resultEntity).ExecuteAffrows();
 

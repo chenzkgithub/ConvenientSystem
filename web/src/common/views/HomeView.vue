@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import {
   Search, Warning, User, TrendCharts, Grid,
   Calendar, ChatDotRound, Tools, Suitcase, Trophy,
-  Timer, Menu, Promotion, Lock, Setting, Folder,
+  Timer, Menu, Promotion, Lock, Setting, Folder, Star,
 } from '@element-plus/icons-vue'
 import { useMenuStore } from '@/common/stores/menu'
 import { useAuthStore } from '@/common/stores/auth'
@@ -63,8 +63,24 @@ const filteredLeaves = computed(() => {
   // sort 稳定，rank 相同时保持菜单原顺序
   return ranked.sort((a, b) => a.rank - b.rank).map((r) => r.leaf)
 })
+// 键盘上下键在搜索结果中选择（配合 handleSearchKeydown），回车打开当前高亮项
+const activeSearchIndex = ref(0)
+watch(keyword, () => { activeSearchIndex.value = 0 })
+function handleSearchKeydown(e: KeyboardEvent) {
+  const list = filteredLeaves.value
+  const len = Math.min(list.length, 8)
+  if (!len) return
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    activeSearchIndex.value = (activeSearchIndex.value + 1) % len
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    activeSearchIndex.value = (activeSearchIndex.value - 1 + len) % len
+  }
+}
 function handleSearchEnter() {
-  if (filteredLeaves.value.length > 0) openLeaf(filteredLeaves.value[0])
+  const list = filteredLeaves.value
+  if (list.length > 0) openLeaf(list[Math.min(activeSearchIndex.value, list.length - 1)])
 }
 
 // ===== 在线用户 =====
@@ -235,6 +251,17 @@ const statusOption = computed<EChartsCoreOption>(() => {
   }
 })
 
+// 图表空态判断：合计为 0 / 无任何数据点时不渲染空坐标轴，改显提示文案
+const hasTrendPoints = computed(() =>
+  Boolean(smsTrend.value?.points.length || emailTrend.value?.points.length || auditTrend.value?.points.length))
+const hasStatusData = computed(() => {
+  let total = 0
+  if (canViewSms.value && smsTrend.value) total += smsTrend.value.totalSuccess + smsTrend.value.totalFailed
+  if (canViewEmail.value && emailTrend.value) total += emailTrend.value.totalSuccess + emailTrend.value.totalFailed
+  if (canViewAudit.value && auditTrend.value) total += auditTrend.value.totalSuccess + auditTrend.value.totalFailed
+  return total > 0
+})
+
 // ===== 监控健康度（首页数据看板） =====
 interface MonitorHealthFailedItem {
   id: number
@@ -297,6 +324,20 @@ const loginOption = computed<EChartsCoreOption>(() => {
     ],
   }
 })
+
+// ===== KPI 卡片跳转目标（按菜单编码匹配，未分配该菜单则卡片不可点击） =====
+const kpiTargets = computed(() => ({
+  online: allLeaves.value.find(l => l.name === 'online-users'),
+  sms: allLeaves.value.find(l => l.name === 'sms-log'),
+  email: allLeaves.value.find(l => l.name === 'email-log'),
+}))
+function openKpiLeaf(target: MenuNode | undefined) {
+  if (target) openLeaf(target)
+}
+
+// ===== 彩票面板快捷入口（走势图按路由路径前缀匹配，选号记录按菜单编码；无菜单则不显示） =====
+const trendLeaf = computed(() => allLeaves.value.find(l => (l.page || '').startsWith('/lottery-trend')))
+const recordsLeaf = computed(() => allLeaves.value.find(l => l.name === 'lottery-records'))
 
 // ===== 统计汇总 =====
 const stats = computed(() => {
@@ -366,12 +407,19 @@ function maskPhone(phone: string): string {
 }
 
 // ===== 生命周期 =====
-/** 轻量面板数据：登录后实时性要求高，每 30s 轮询刷新 */
+let lastRealtimeAt = 0
+let lastSlowAt = 0
+/** 实时性要求高的面板（30s 轮询）：在线用户、短信统计与最近日志、邮件日志 */
 function loadRealtime() {
+  lastRealtimeAt = Date.now()
   loadOnlineUsers()
   loadSmsStats()
   loadSmsLogs()
   loadEmailLogs()
+}
+/** 低频面板（5 分钟随趋势图刷新）：开奖结果一天仅数期、监控按分钟级探测，无需 30s 轮询 */
+function loadSlow() {
+  lastSlowAt = Date.now()
   loadLotteryResults()
   loadMonitorHealth()
 }
@@ -380,27 +428,66 @@ onMounted(() => {
   if (!menuStore.loaded) menuStore.load()
   // 并行加载所有面板数据
   loadRealtime()
+  loadSlow()
   loadTrends()
   loadLoginTrend()
   timer = setInterval(() => {
+    if (document.hidden) return // 后台标签页暂停轮询，切回时由 onActivated 按节流补刷
     now.value = new Date()
     loadRealtime()
   }, 30_000)
-  // 趋势图为按日聚合数据，每 5 分钟刷新一次即可
+  // 趋势图为按日聚合数据，每 5 分钟刷新一次即可（低频面板随之刷新）
   trendTimer = setInterval(() => {
+    if (document.hidden) return
     loadTrends()
     loadLoginTrend()
+    loadSlow()
   }, 300_000)
 })
-// keep-alive 缓存切回首页时也刷新一次，避免看到过期数据
-onActivated(() => loadRealtime())
+// keep-alive 缓存切回首页时也刷新一次：距上次不足 15s/60s 则跳过，避免频繁切页打满接口
+onActivated(() => {
+  if (Date.now() - lastRealtimeAt > 15_000) loadRealtime()
+  if (Date.now() - lastSlowAt > 60_000) loadSlow()
+})
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
   if (trendTimer) clearInterval(trendTimer)
 })
 
+// ===== 常用功能（按点击计数取前 4 置顶；计数持久化到 localStorage） =====
+const FREQUENT_KEY = 'home.frequentClicks'
+function readFrequentClicks(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(FREQUENT_KEY) || '{}') as Record<string, number>
+  } catch {
+    return {}
+  }
+}
+const clickCounts = ref<Record<string, number>>(readFrequentClicks())
+const frequentLeaves = computed<MenuNode[]>(() => {
+  return allLeaves.value
+    .map(l => ({ leaf: l, count: clickCounts.value[l.page || l.title || ''] || 0 }))
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4)
+    .map(r => r.leaf)
+})
+const frequentKeys = computed(() => new Set(frequentLeaves.value.map(l => l.page || l.title)))
+/** 渲染分组时剔除已置顶的常用项，避免同一功能在首页出现两次 */
+const displayGroups = computed(() =>
+  groups.value
+    .map(g => ({ ...g, leaves: g.leaves.filter(l => !frequentKeys.value.has(l.page || l.title)) }))
+    .filter(g => g.leaves.length > 0),
+)
+
 function openLeaf(node: MenuNode) {
   if (!node.page) return
+  // 记录点击计数（搜索/常用/卡片跳转都算），供「常用功能」置顶排序
+  const key = node.page || node.title || ''
+  clickCounts.value = { ...clickCounts.value, [key]: (clickCounts.value[key] || 0) + 1 }
+  try {
+    localStorage.setItem(FREQUENT_KEY, JSON.stringify(clickCounts.value))
+  } catch { /* 存储不可用时计数仅本次会话内有效 */ }
   void router.push(toMenuLocation(node))
 }
 
@@ -438,6 +525,7 @@ function getGroupIcon(title: string): unknown {
             placeholder="搜索功能名称或拼音首字母，回车快速打开…"
             size="large"
             clearable
+            @keydown="handleSearchKeydown"
             @keyup.enter="handleSearchEnter"
           >
             <template #prefix>
@@ -446,9 +534,10 @@ function getGroupIcon(title: string): unknown {
           </el-input>
           <div v-if="filteredLeaves.length" class="search-results">
             <div
-              v-for="leaf in filteredLeaves.slice(0, 8)"
+              v-for="(leaf, index) in filteredLeaves.slice(0, 8)"
               :key="leaf.page || leaf.title"
               class="search-result-item"
+              :class="{ active: index === activeSearchIndex }"
               @click="openLeaf(leaf)"
             >
               <span class="search-result-icon">{{ (leaf.title || '').slice(0, 1) }}</span>
@@ -469,28 +558,28 @@ function getGroupIcon(title: string): unknown {
 
     <!-- ===== KPI 统计卡片 ===== -->
     <div class="kpi-row">
-      <div v-if="canViewOnline" class="kpi-card">
+      <div v-if="canViewOnline" class="kpi-card" :class="{ clickable: !!kpiTargets.online }" @click="openKpiLeaf(kpiTargets.online)">
         <div class="kpi-icon kpi-online"><el-icon :size="22"><User /></el-icon></div>
         <div class="kpi-body">
           <div class="kpi-value">{{ onlineUsers.length }}</div>
           <div class="kpi-label">在线用户</div>
         </div>
       </div>
-      <div v-if="canViewSms && smsStats" class="kpi-card">
+      <div v-if="canViewSms && smsStats" class="kpi-card" :class="{ clickable: !!kpiTargets.sms }" @click="openKpiLeaf(kpiTargets.sms)">
         <div class="kpi-icon kpi-sms"><el-icon :size="22"><ChatDotRound /></el-icon></div>
         <div class="kpi-body">
           <div class="kpi-value">{{ smsStats.todayCount }}</div>
           <div class="kpi-label">今日短信</div>
         </div>
       </div>
-      <div v-if="canViewSms && smsStats" class="kpi-card">
+      <div v-if="canViewSms && smsStats" class="kpi-card" :class="{ clickable: !!kpiTargets.sms }" @click="openKpiLeaf(kpiTargets.sms)">
         <div class="kpi-icon kpi-rate"><el-icon :size="22"><TrendCharts /></el-icon></div>
         <div class="kpi-body">
           <div class="kpi-value">{{ smsStats.successRate.toFixed(1) }}%</div>
           <div class="kpi-label">短信成功率</div>
         </div>
       </div>
-      <div v-if="canViewEmail" class="kpi-card">
+      <div v-if="canViewEmail" class="kpi-card" :class="{ clickable: !!kpiTargets.email }" @click="openKpiLeaf(kpiTargets.email)">
         <div class="kpi-icon kpi-email"><el-icon :size="22"><Promotion /></el-icon></div>
         <div class="kpi-body">
           <div class="kpi-value">{{ emailLogs.length }}</div>
@@ -546,7 +635,8 @@ function getGroupIcon(title: string): unknown {
           </el-radio-group>
         </div>
         <div v-loading="loginLoading" class="panel-body">
-          <BaseChart :option="loginOption" height="260px" />
+          <BaseChart v-if="loginTrend?.points.length" :option="loginOption" height="260px" />
+          <div v-else-if="!loginLoading" class="panel-empty">所选范围暂无登录数据</div>
         </div>
       </div>
     </div>
@@ -620,6 +710,8 @@ function getGroupIcon(title: string): unknown {
       <div class="panel-header">
         <span class="panel-title">彩票中奖结果</span>
         <span class="panel-count">最新一期</span>
+        <el-button v-if="trendLeaf" link type="primary" size="small" class="lottery-link" @click="openLeaf(trendLeaf)">走势图</el-button>
+        <el-button v-if="recordsLeaf" link type="primary" size="small" class="lottery-link" @click="openLeaf(recordsLeaf)">选号记录</el-button>
         <span class="lottery-hint">双击可查看官网通告</span>
       </div>
       <div class="panel-body lottery-body">
@@ -676,7 +768,8 @@ function getGroupIcon(title: string): unknown {
           </el-radio-group>
         </div>
         <div v-loading="trendLoading" class="panel-body">
-          <BaseChart :option="trendOption" height="280px" />
+          <BaseChart v-if="hasTrendPoints" :option="trendOption" height="280px" />
+          <div v-else-if="!trendLoading" class="panel-empty">所选范围暂无操作数据</div>
         </div>
       </div>
       <div class="panel chart-panel chart-status">
@@ -684,14 +777,39 @@ function getGroupIcon(title: string): unknown {
           <span class="panel-title">状态分布</span>
         </div>
         <div v-loading="trendLoading" class="panel-body">
-          <BaseChart :option="statusOption" height="280px" />
+          <BaseChart v-if="hasStatusData" :option="statusOption" height="280px" />
+          <div v-else-if="!trendLoading" class="panel-empty">暂无状态数据</div>
         </div>
       </div>
     </div>
 
-    <!-- ===== 功能分组 ===== -->
-    <div v-if="groups.length" class="home-groups">
-      <div v-for="group in groups" :key="group.title" class="home-group">
+    <!-- ===== 功能分组（常用功能按点击计数置顶，分组内剔除已置顶项避免重复） ===== -->
+    <div v-if="frequentLeaves.length || displayGroups.length" class="home-groups">
+      <!-- 常用功能：全站点击计数前 4 -->
+      <div v-if="frequentLeaves.length" class="home-group">
+        <div class="home-group-header">
+          <span class="home-group-icon home-group-icon-star"><el-icon :size="16"><Star /></el-icon></span>
+          <span class="home-group-title">常用功能</span>
+          <span class="home-group-count">{{ frequentLeaves.length }} 项</span>
+        </div>
+        <div class="home-grid">
+          <div
+            v-for="leaf in frequentLeaves"
+            :key="'frequent-' + (leaf.page || leaf.title)"
+            class="home-card"
+            @click="openLeaf(leaf)"
+          >
+            <div class="home-card-icon">{{ (leaf.title || '').slice(0, 1) }}</div>
+            <div class="home-card-body">
+              <div class="home-card-title">{{ leaf.title }}</div>
+            </div>
+            <div v-if="leaf.external === true || /^https?:\/\//i.test(leaf.page || '')" class="home-card-badge">
+              外链
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-for="group in displayGroups" :key="group.title" class="home-group">
         <div class="home-group-header">
           <span class="home-group-icon"><el-icon :size="16"><component :is="getGroupIcon(group.title)" /></el-icon></span>
           <span class="home-group-title">{{ group.title }}</span>
@@ -728,6 +846,11 @@ function getGroupIcon(title: string): unknown {
   padding: 20px;
   max-width: 1280px;
   margin: 0 auto;
+  /* height:100% + 自身滚动（非依赖外层）：主窗口 .layout-main 与独立窗口
+     .standalone-page（100vh+overflow:hidden）下父容器高度均确定，页面自身接管滚动 */
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 /* ===== Hero 欢迎区 ===== */
@@ -807,6 +930,8 @@ function getGroupIcon(title: string): unknown {
   transform: translateY(-3px);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
 }
+/* 有跳转目标的 KPI 卡片呈现可点击形态（无目标菜单时保持纯展示） */
+.kpi-card.clickable { cursor: pointer; }
 .kpi-icon {
   width: 46px;
   height: 46px;
@@ -867,6 +992,9 @@ function getGroupIcon(title: string): unknown {
 }
 .panel-count { font-size: 12px; color: var(--text-sub); background: var(--brand-50); padding: 2px 8px; border-radius: 10px; }
 .lottery-hint { font-size: 12px; color: var(--text-sub); margin-left: auto; }
+/* 彩票面板头部快捷入口：首个链接贴合「最新一期」标签，其余紧凑排列 */
+.lottery-panel .lottery-link { margin-left: 8px; }
+.lottery-panel .lottery-link + .lottery-link { margin-left: 0; }
 /* 彩票面板头部：标题与“最新一期”靠左，双击提示靠右 */
 .lottery-panel .panel-count { margin-left: 8px; margin-right: auto; }
 .panel-body { padding: 8px 18px 16px; max-height: 320px; overflow-y: auto; }
@@ -1065,7 +1193,8 @@ function getGroupIcon(title: string): unknown {
   cursor: pointer;
   transition: background 0.12s;
 }
-.search-result-item:hover { background: var(--brand-50); }
+.search-result-item:hover,
+.search-result-item.active { background: var(--brand-50); }
 .search-result-icon {
   width: 32px;
   height: 32px;
@@ -1088,7 +1217,7 @@ function getGroupIcon(title: string): unknown {
   align-items: center;
   gap: 8px;
   margin-bottom: 14px;
-  padding-left: 2px;
+  padding-left: 0;
   line-height: 28px;
 }
 .home-group-icon {
@@ -1102,6 +1231,8 @@ function getGroupIcon(title: string): unknown {
   justify-content: center;
   flex-shrink: 0;
 }
+/* 常用功能分组图标用暖色区分 */
+.home-group-icon-star { background: #fef3c7; color: #d97706; }
 .home-group-title {
   font-size: 16px;
   font-weight: 600;

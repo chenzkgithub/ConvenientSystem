@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Lock, Close, User, Delete, SwitchButton, ArrowDown, Search, Fold, Expand, Refresh, Operation, Sunny, Moon, Collection, Document } from '@element-plus/icons-vue'
 import MenuTree from '@/common/components/MenuTree.vue'
 import ChatBell from '@/common/components/ChatBell.vue'
+import AsyncTaskBell from '@/common/components/AsyncTaskBell.vue'
+import AiAssistant from '@/common/components/AiAssistant.vue'
 import ChatDialog from '@/common/components/ChatDialog.vue'
 import NoticeBell from '@/common/components/NoticeBell.vue'
 import NoticeAlert from '@/common/components/NoticeAlert.vue'
@@ -19,6 +21,7 @@ import { useTabsStore } from '@/common/stores/tabs'
 import { useThemeStore } from '@/common/stores/theme'
 import { useRecentStore } from '@/common/stores/recent'
 import { useChatStore } from '@/common/stores/chat'
+import { useAsyncTaskStore } from '@/common/stores/asyncTask'
 import { useUserPrefs } from '@/common/composables/useUserPrefs'
 import { useAppVersion } from '@/common/composables/useAppVersion'
 import {
@@ -28,6 +31,7 @@ import {
   EXTERNAL_ROUTE_NAME,
 } from '@/common/menuLink'
 import { registerMenuRoutes } from '@/router'
+import { IS_DESKTOP_HOST, hostCapabilities } from '@/common/hostContext'
 import { pinyinMatchIndex } from '@/common/pinyin'
 import type { MenuNode } from '@/common/types'
 
@@ -40,7 +44,22 @@ const tabsStore = useTabsStore()
 const themeStore = useThemeStore()
 const recentStore = useRecentStore()
 const chatStore = useChatStore()
+const asyncTaskStore = useAsyncTaskStore()
 const { data: appVersion, fetch: fetchVersion } = useAppVersion()
+
+/** 宿主徽标（接口分离）：一眼定位当前宿主，排查本地接口问题时首当其冲的确认项 */
+const hostBadgeText = computed(() => {
+  if (!IS_DESKTOP_HOST) return 'Web 端'
+  // ProductVersion 可能带 git 提交哈希后缀（如 1.0.0.0+5834...），徽标只展示基础版本号
+  const ver = hostCapabilities.value?.appVersion?.split('+')[0]
+  return ver ? `桌面端 v${ver}` : '桌面端'
+})
+const hostBadgeTitle = computed(() => {
+  if (!IS_DESKTOP_HOST) return '服务器宿主：无本地接口上下文（/api/local 恒 410）'
+  const caps = hostCapabilities.value
+  if (!caps) return '桌面端宿主（能力集未加载）'
+  return `桌面端宿主：应用 v${caps.appVersion}，内网考勤库${caps.localDbConfigured ? '已配置' : '未配置'}，git${caps.gitAvailable ? '可用' : '不可用'}`
+})
 
 // ===== 侧栏折叠状态 =====
 const SIDEBAR_COLLAPSE_KEY = 'UI.SidebarCollapsed'
@@ -158,10 +177,35 @@ const menuHits = computed<MenuHit[]>(() => {
   return ranked.sort((a, b) => a.rank - b.rank).map((r) => r.hit)
 })
 
-/** 回车打开相关度最高的那条结果 */
+/** 键盘上下键在命中项中选择（配合 onSearchKeydown），回车打开当前高亮项 */
+const activeHitIndex = ref(0)
+watch(menuKeyword, () => { activeHitIndex.value = 0 })
+const asideMenuRef = ref<HTMLElement>()
+
+function onSearchKeydown(e: KeyboardEvent) {
+  const len = menuHits.value.length
+  if (!len) return
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    activeHitIndex.value = (activeHitIndex.value + 1) % len
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    activeHitIndex.value = (activeHitIndex.value - 1 + len) % len
+  } else {
+    return
+  }
+  // 命中项多于一屏时让高亮项跟随滚动（aside-menu 固定高度，不会自动跟随）
+  nextTick(() => {
+    const items = asideMenuRef.value?.querySelectorAll('.el-menu-item.is-hit')
+    const el = items?.[activeHitIndex.value] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+/** 回车打开当前高亮的那条结果（无高亮时退回首条） */
 function onSearchEnter() {
-  const first = menuHits.value[0]
-  if (first) onMenuSelect(first.index)
+  const hit = menuHits.value[Math.min(activeHitIndex.value, menuHits.value.length - 1)]
+  if (hit) onMenuSelect(hit.index)
 }
 
 // 侧栏点击：统一走内部路由，外链由 toMenuLocation 换成 /external 承载页。
@@ -457,6 +501,8 @@ onMounted(async () => {
   // 启动聊天实时连接（幂等：ChatView 进入时重复调用安全；
   // 实时通道不可用时 store 内部自动降级为 REST 轮询）
   void chatStore.start()
+  // 恢复异步任务面板（localStorage 清单回查 + 本机 GetAll 兜底；重复调用幂等）
+  void asyncTaskStore.restore()
   // 拉取当前前端版本号（侧栏展示）
   await fetchVersion()
   // 登录后从数据库加载 UI 偏好并同步各 store
@@ -497,7 +543,7 @@ function formatRecentTime(ts: number): string {
         </div>
         <div class="brand-text">
           <span class="brand-name">ConvenientSystem</span>
-          <span class="brand-sub">Convenient<span v-if="appVersion" class="brand-ver"> v{{ appVersion.version }}</span></span>
+          <span class="brand-sub">Convenient<span v-if="appVersion" class="brand-ver"> v{{ appVersion.version }}</span><span class="host-badge" :class="IS_DESKTOP_HOST ? 'is-desktop' : 'is-web'" :title="hostBadgeTitle">{{ hostBadgeText }}</span></span>
         </div>
       </div>
       <div class="aside-search">
@@ -506,6 +552,7 @@ function formatRecentTime(ts: number): string {
           placeholder="搜索菜单（支持拼音）"
           :prefix-icon="Search"
           clearable
+          @keydown="onSearchKeydown"
           @keyup.enter="onSearchEnter"
           @keyup.esc="menuKeyword = ''"
         />
@@ -534,10 +581,16 @@ function formatRecentTime(ts: number): string {
         </div>
       </div>
       <!-- 只有菜单区滚动，品牌区与搜索框始终可见 -->
-      <div class="aside-menu">
+      <div ref="asideMenuRef" class="aside-menu">
         <!-- 搜索态：平铺命中的菜单，第二行给出所在分组，便于区分同名页面 -->
         <el-menu v-if="menuKeyword.trim()" :default-active="activeIndex" @select="onMenuSelect">
-          <el-menu-item v-for="hit in menuHits" :key="hit.index" :index="hit.index" class="is-hit">
+          <el-menu-item
+            v-for="(hit, idx) in menuHits"
+            :key="hit.index"
+            :index="hit.index"
+            class="is-hit"
+            :class="{ 'kb-active': idx === activeHitIndex }"
+          >
             <span class="hit-title">{{ hit.title }}</span>
             <span v-if="hit.group" class="hit-group">{{ hit.group }}</span>
           </el-menu-item>
@@ -594,6 +647,8 @@ function formatRecentTime(ts: number): string {
           </el-button>
           <ChatBell />
           <ChatDialog />
+          <AsyncTaskBell />
+          <AiAssistant />
           <NoticeBell />
           <el-button v-if="lock.featureEnabled" :icon="Lock" @click="lock.lock()">立即锁屏</el-button>
           <!-- 点击用户名/箭头展开：个人资料 / 清理缓存 / 退出登录；点头像则放大查看 -->

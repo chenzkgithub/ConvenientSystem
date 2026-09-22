@@ -1,0 +1,21 @@
+# Simple nginx image with pre-built static files
+# Frontend is built locally (npm run build) before docker compose up
+#
+# NOTE: This is a copy of /opt/convenient/Dockerfile.web on the deploy server
+# (backup: Dockerfile.web.bak-entrypoint). The deploy pipeline builds the image
+# from the server-side file, so keep both in sync when changing.
+FROM nginx:alpine
+
+# Copy pre-built frontend
+COPY web /usr/share/nginx/html
+
+# Copy nginx config
+COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+# Skip /docker-entrypoint.d scripts: 10-listen-on-ipv6-by-default.sh intermittently
+# hangs on the first start after image build, leaving port 80 unlistened and failing
+# the pipeline health check. Static conf is copied verbatim, no entrypoint behavior needed.
+ENTRYPOINT []
+CMD ["nginx", "-g", "daemon off;"]

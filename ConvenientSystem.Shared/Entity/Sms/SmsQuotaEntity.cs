@@ -1,4 +1,5 @@
-﻿using FreeSql.DataAnnotations;
+﻿﻿using ConvenientSystem.Shared.Common;
+using FreeSql.DataAnnotations;
 
 namespace ConvenientSystem.Shared.Entity.Sms
 {
@@ -18,6 +19,6 @@ namespace ConvenientSystem.Shared.Entity.Sms
         public int MaxCount { get; set; } = 100;
 
         /// <summary>更新时间</summary>
-        public DateTime UpdateTime { get; set; } = DateTime.Now;
+        public DateTime UpdateTime { get; set; } = TimeHelper.Now;
     }
 }

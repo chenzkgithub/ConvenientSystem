@@ -80,7 +80,7 @@ namespace ConvenientSystem.Service.Sms
         {
             if (string.IsNullOrWhiteSpace(req.Name)) throw new BadRequestException("任务名称不能为空");
             if (req.TemplateId <= 0) throw new BadRequestException("请选择模板");
-            if (req.SendTime <= DateTime.Now) throw new BadRequestException("发送时间必须晚于当前时间");
+            if (req.SendTime <= TimeHelper.Now) throw new BadRequestException("发送时间必须晚于当前时间");
             if (req.Recipients == null || req.Recipients.Count == 0) throw new BadRequestException("请添加至少一个收件人");
 
             // 校验手机号格式
@@ -110,8 +110,8 @@ namespace ConvenientSystem.Service.Sms
                 Status = 0,
                 TotalCount = distinctRecipients.Count,
                 CreatedById = _currentUser.UserId,
-                CreateTime = DateTime.Now,
-                UpdateTime = DateTime.Now
+                CreateTime = TimeHelper.Now,
+                UpdateTime = TimeHelper.Now
             };
             var taskId = (int)_fsql.Insert(task).ExecuteIdentity();
             task.Id = taskId;
@@ -127,7 +127,7 @@ namespace ConvenientSystem.Service.Sms
             _fsql.Insert(recipients).ExecuteAffrows();
 
             // Schedule 到 Hangfire
-            var delay = req.SendTime - DateTime.Now;
+            var delay = req.SendTime - TimeHelper.Now;
             var jobId = BackgroundJob.Schedule<SmsSendJob>(
                 job => job.SendAsync(taskId, default),
                 delay);
@@ -152,7 +152,7 @@ namespace ConvenientSystem.Service.Sms
 
             _fsql.Update<SmsTaskEntity>()
                 .Set(t => t.Status, (byte)3)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == id)
                 .ExecuteAffrows();
         }
@@ -180,7 +180,7 @@ namespace ConvenientSystem.Service.Sms
             _fsql.Update<SmsTaskEntity>()
                 .Set(t => t.Status, (byte)0)
                 .Set(t => t.HangfireJobId, jobId)
-                .Set(t => t.UpdateTime, DateTime.Now)
+                .Set(t => t.UpdateTime, TimeHelper.Now)
                 .Where(t => t.Id == id)
                 .ExecuteAffrows();
         }

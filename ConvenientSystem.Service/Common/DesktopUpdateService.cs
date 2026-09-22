@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using System.IO;
 using System.Net.Http.Headers;
 using ConvenientSystem.Shared.Entity.Common;
@@ -151,7 +152,7 @@ namespace ConvenientSystem.Service.Common
                 throw;
             }
 
-            var fileName = $"desktop-{safeVersion}-{DateTime.Now:yyyyMMddHHmmss}{ext}";
+            var fileName = $"desktop-{safeVersion}-{TimeHelper.Now:yyyyMMddHHmmss}{ext}";
             var filePath = Path.Combine(_storageDir, fileName);
             File.Move(tempPath, filePath, overwrite: true);
 
@@ -220,7 +221,7 @@ namespace ConvenientSystem.Service.Common
             catch { /* 临时文件清理失败不影响主流程 */ }
         }
 
-        /// <summary>发布一条"桌面程序已更新"的系统通知，仅发布人可见（userId 为空时兑底全员）且不触发外部推送。</summary>
+        /// <summary>发布一条"桌面程序已更新"的系统通知，仅发布人可见（userId 为空时兜底全员）且不触发外部推送。</summary>
         private void NotifyVersionChanged(string version, string? description, Guid? userId)
         {
             try

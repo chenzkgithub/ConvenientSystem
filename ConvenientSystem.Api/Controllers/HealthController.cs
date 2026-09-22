@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,6 +16,6 @@ namespace ConvenientSystem.Api.Controllers
         /// <summary>存活探测：返回 200 即视为服务已启动。</summary>
         [HttpGet]
         public IActionResult Get()
-            => Ok(new { status = "ok", time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") });
+            => Ok(new { status = "ok", time = TimeHelper.Now.ToString("yyyy-MM-dd HH:mm:ss") });
     }
 }

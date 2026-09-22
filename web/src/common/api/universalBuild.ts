@@ -1,4 +1,7 @@
-import { httpPost } from '@/api/request'
+import { localPost } from '@/api/request'
+
+/** 接口归属：local=全部走桌面端本地通道（审计脚本依据，勿删） */
+export const API_SIDE = 'local' as const
 
 /** 通用构建类型 */
 export type UniversalBuildType = 'Web' | 'Node' | 'DotNet' | 'JavaMaven' | 'JavaGradle' | 'Installer'
@@ -69,37 +72,37 @@ export interface DefaultOutputDirRequest {
 
 /** 检测全部环境 */
 export function checkUniversalEnvironment() {
-  return httpPost<UniversalEnvironmentInfo[]>('/api/Common/UniversalBuild/Environment', {})
+  return localPost<UniversalEnvironmentInfo[]>('/api/local/universal-build/Environment', {})
 }
 
 /** 检测指定类型所需环境（opts.silent = true 时后台静默检测，不弹 loading，供构建前自动检测用） */
 export function checkUniversalEnvironmentForType(request: EnvironmentForTypeRequest, opts?: { silent?: boolean }) {
-  return httpPost<UniversalEnvironmentInfo[]>('/api/Common/UniversalBuild/EnvironmentForType', request, undefined, undefined, opts)
+  return localPost<UniversalEnvironmentInfo[]>('/api/local/universal-build/EnvironmentForType', request, undefined, undefined, opts)
 }
 
 /** 启动构建任务（opts.silent = true 时不弹全局 loading，供卡片内局部 loading 场景使用） */
 export function startUniversalBuild(request: UniversalBuildRequest, opts?: { silent?: boolean }) {
-  return httpPost<UniversalBuildJobDto>('/api/Common/UniversalBuild/Build', request, undefined, undefined, opts)
+  return localPost<UniversalBuildJobDto>('/api/local/universal-build/Build', request, undefined, undefined, opts)
 }
 
 /** 获取任务进度 */
 export function getUniversalBuildProgress(request: ProgressRequest) {
-  return httpPost<UniversalBuildJobDto | null>('/api/Common/UniversalBuild/Progress', request)
+  return localPost<UniversalBuildJobDto | null>('/api/local/universal-build/Progress', request)
 }
 
 /** 获取所有任务 */
 export function getUniversalBuildAllJobs() {
-  return httpPost<UniversalBuildJobDto[]>('/api/Common/UniversalBuild/AllJobs', {})
+  return localPost<UniversalBuildJobDto[]>('/api/local/universal-build/AllJobs', {})
 }
 
 /** 取消任务 */
 export function cancelUniversalBuild(request: CancelRequest) {
-  return httpPost('/api/Common/UniversalBuild/Cancel', request)
+  return localPost('/api/local/universal-build/Cancel', request)
 }
 
 /** 获取默认输出目录 */
 export function getUniversalDefaultOutputDir(request: DefaultOutputDirRequest) {
-  return httpPost<string>('/api/Common/UniversalBuild/DefaultOutputDir', request)
+  return localPost<string>('/api/local/universal-build/DefaultOutputDir', request)
 }
 
 // ============================ 部署 API ============================
@@ -188,22 +191,22 @@ export interface DeployCancelResult {
 
 /** 启动部署任务 */
 export function startDeploy(request: DeployRequest) {
-  return httpPost<DeployJobDto>('/api/Common/UniversalBuild/Deploy', request)
+  return localPost<DeployJobDto>('/api/local/universal-build/Deploy', request)
 }
 
 /** 获取部署进度 */
 export function getDeployProgress(request: DeployProgressRequest) {
-  return httpPost<DeployJobDto | null>('/api/Common/UniversalBuild/DeployProgress', request)
+  return localPost<DeployJobDto | null>('/api/local/universal-build/DeployProgress', request)
 }
 
 /** 获取所有部署任务 */
 export function getDeployAllJobs() {
-  return httpPost<DeployJobDto[]>('/api/Common/UniversalBuild/DeployAllJobs', {})
+  return localPost<DeployJobDto[]>('/api/local/universal-build/DeployAllJobs', {})
 }
 
 /** 取消部署：中断执行并自动还原部署前环境 */
 export function cancelDeploy(request: DeployCancelRequest) {
-  return httpPost<DeployCancelResult>('/api/Common/UniversalBuild/DeployCancel', request)
+  return localPost<DeployCancelResult>('/api/local/universal-build/DeployCancel', request)
 }
 
 /** 手动回滚请求：把最近一次部署的 .old 备份换回正式目录 */
@@ -227,20 +230,20 @@ export interface RollbackRequest {
 
 /** 启动手动回滚（复用部署任务机制，进度/日志/取消同部署） */
 export function startRollback(request: RollbackRequest) {
-  return httpPost<DeployJobDto>('/api/Common/UniversalBuild/Rollback', request)
+  return localPost<DeployJobDto>('/api/local/universal-build/Rollback', request)
 }
 
 /** 弹出文件夹选择对话框，返回用户选择的目录路径；initialDir 有值时对话框从该路径打开（文件路径自动取所在目录）。
  *  用户在系统对话框里可能停留很久：不弹全局遮罩、超时放宽到 10 分钟，避免超时误报且选择结果丢失 */
 export function selectFolder(initialDir?: string) {
   const q = initialDir?.trim() ? `?initialDir=${encodeURIComponent(initialDir.trim())}` : ''
-  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectFolder${q}`, {}, undefined, 10 * 60 * 1000, { noLoading: true })
+  return localPost<string | null>(`/api/local/universal-build/SelectFolder${q}`, {}, undefined, 10 * 60 * 1000, { noLoading: true })
 }
 
 /** 弹出 SQL 文件选择对话框，返回选中的文件路径；取消返回 null。initialDir 语义同 selectFolder */
 export function selectSqlFile(initialDir?: string) {
   const q = initialDir?.trim() ? `?initialDir=${encodeURIComponent(initialDir.trim())}` : ''
-  return httpPost<string | null>(`/api/Common/UniversalBuild/SelectSqlFile${q}`, {}, undefined, 10 * 60 * 1000, { noLoading: true })
+  return localPost<string | null>(`/api/local/universal-build/SelectSqlFile${q}`, {}, undefined, 10 * 60 * 1000, { noLoading: true })
 }
 
 /** 独立打压缩包请求 */
@@ -259,17 +262,17 @@ export interface PackFolderResult {
 
 /** 把本地文件夹打包成 zip（与构建流程解耦）；大目录耗时较长，可传 timeoutMs 放宽超时 */
 export function packFolderToZip(request: PackFolderRequest, timeoutMs?: number) {
-  return httpPost<PackFolderResult>('/api/Common/UniversalBuild/PackFolder', request, undefined, timeoutMs)
+  return localPost<PackFolderResult>('/api/local/universal-build/PackFolder', request, undefined, timeoutMs)
 }
 
 /** 在资源管理器中打开构建输出目录 */
 export function openOutputFolder(path: string) {
-  return httpPost(`/api/Common/UniversalBuild/OpenFolder?path=${encodeURIComponent(path)}`, {})
+  return localPost(`/api/local/universal-build/OpenFolder?path=${encodeURIComponent(path)}`, {})
 }
 
 /** 检查远程站点/服务是否已存在 */
 export function checkSiteExists(request: CheckSiteExistsRequest) {
-  return httpPost<SiteExistsResult>('/api/Common/UniversalBuild/CheckSiteExists', request)
+  return localPost<SiteExistsResult>('/api/local/universal-build/CheckSiteExists', request)
 }
 
 // ============================ 部署历史 / 定时构建 ============================
@@ -291,7 +294,7 @@ export interface DeployHistoryItem {
 
 /** 获取部署历史（最近 100 条，按时间倒序） */
 export function getDeployHistory() {
-  return httpPost<DeployHistoryItem[]>('/api/Common/UniversalBuild/DeployHistory', {})
+  return localPost<DeployHistoryItem[]>('/api/local/universal-build/DeployHistory', {})
 }
 
 /** 部署任务完整日志（部署历史行查看入口） */
@@ -305,7 +308,7 @@ export interface DeployLogResult {
 
 /** 读取部署任务的完整日志（仅内存中保留的任务，程序重启后旧条目不可查） */
 export function getDeployLog(jobId: string) {
-  return httpPost<DeployLogResult>(`/api/Common/UniversalBuild/DeployLog?jobId=${encodeURIComponent(jobId)}`, {})
+  return localPost<DeployLogResult>(`/api/local/universal-build/DeployLog?jobId=${encodeURIComponent(jobId)}`, {})
 }
 
 // ============================ 产物占用统计与清理 ============================
@@ -321,12 +324,12 @@ export interface ArtifactUsageItem {
 
 /** 统计构建产物目录占用（大小/文件数/最后修改时间） */
 export function getArtifactUsage(dirs: string[]) {
-  return httpPost<ArtifactUsageItem[]>('/api/Common/UniversalBuild/ArtifactUsage', { dirs })
+  return localPost<ArtifactUsageItem[]>('/api/local/universal-build/ArtifactUsage', { dirs })
 }
 
 /** 清空构建产物目录内容（保留目录本身，删除不可恢复） */
 export function cleanArtifact(dir: string) {
-  return httpPost('/api/Common/UniversalBuild/ArtifactClean', { dir })
+  return localPost('/api/local/universal-build/ArtifactClean', { dir })
 }
 
 /** 定时构建配置 */
@@ -351,17 +354,17 @@ export interface ScheduleItem {
 
 /** 查询定时构建列表 */
 export function getScheduleList() {
-  return httpPost<ScheduleItem[]>('/api/Common/UniversalBuild/ScheduleList', {})
+  return localPost<ScheduleItem[]>('/api/local/universal-build/ScheduleList', {})
 }
 
 /** 新增/更新定时构建 */
 export function setSchedule(item: ScheduleItem) {
-  return httpPost<ScheduleItem>('/api/Common/UniversalBuild/ScheduleSet', item)
+  return localPost<ScheduleItem>('/api/local/universal-build/ScheduleSet', item)
 }
 
 /** 删除定时构建 */
 export function removeSchedule(id: string) {
-  return httpPost(`/api/Common/UniversalBuild/ScheduleRemove?id=${encodeURIComponent(id)}`, {})
+  return localPost(`/api/local/universal-build/ScheduleRemove?id=${encodeURIComponent(id)}`, {})
 }
 
 // ============================ SSH 凭据（DPAPI 加密存储） ============================
@@ -380,15 +383,15 @@ export interface SshCredentialResult {
 
 /** 保存 SSH 凭据（DPAPI 加密后落盘本机，供下次部署与自动部署复用） */
 export function saveSshCredential(request: SshCredentialRequest) {
-  return httpPost('/api/Common/UniversalBuild/SaveSshCredential', request)
+  return localPost('/api/local/universal-build/SaveSshCredential', request)
 }
 
 /** 读取已保存的 SSH 密码（本机接口，供部署弹窗回填） */
 export function getSshCredential(host: string, userName: string) {
-  return httpPost<SshCredentialResult>(`/api/Common/UniversalBuild/GetSshCredential?host=${encodeURIComponent(host)}&userName=${encodeURIComponent(userName)}`, {})
+  return localPost<SshCredentialResult>(`/api/local/universal-build/GetSshCredential?host=${encodeURIComponent(host)}&userName=${encodeURIComponent(userName)}`, {})
 }
 
 /** 删除已保存的 SSH 凭据 */
 export function removeSshCredential(host: string, userName: string) {
-  return httpPost(`/api/Common/UniversalBuild/RemoveSshCredential?host=${encodeURIComponent(host)}&userName=${encodeURIComponent(userName)}`, {})
+  return localPost(`/api/local/universal-build/RemoveSshCredential?host=${encodeURIComponent(host)}&userName=${encodeURIComponent(userName)}`, {})
 }

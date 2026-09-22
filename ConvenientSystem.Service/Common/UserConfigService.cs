@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
@@ -43,6 +44,7 @@ namespace ConvenientSystem.Service.Common
                 new() { Value = "dark", Label = "深色" },
                 new() { Value = "system", Label = "跟随系统" },
             }),
+            ("Lottery.RandomPick", "定时生成选号", "开启后每天 13:00 为当天开奖彩种自动生成 10 注随机选号，并发送邮件到您绑定的邮箱", "switch", "彩票设置", 1, "false", null),
         };
 
         public List<UserConfigGroupDto> GetMyConfig()
@@ -112,7 +114,7 @@ namespace ConvenientSystem.Service.Common
                 {
                     _configDb.Update<UserConfigEntity>()
                         .Set(e => e.ConfigValue, item.ConfigValue ?? string.Empty)
-                        .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                        .Set(e => e.UpdatedAt, TimeHelper.Now)
                         .Where(e => e.Id == existing.Id)
                         .ExecuteAffrows();
                 }
@@ -123,8 +125,8 @@ namespace ConvenientSystem.Service.Common
                         UserId = userId.Value,
                         ConfigKey = item.ConfigKey,
                         ConfigValue = item.ConfigValue ?? string.Empty,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow,
+                        CreatedAt = TimeHelper.Now,
+                        UpdatedAt = TimeHelper.Now,
                     }).ExecuteAffrows();
                 }
             }
@@ -182,7 +184,7 @@ namespace ConvenientSystem.Service.Common
             {
                 _configDb.Update<UserConfigEntity>()
                     .Set(e => e.ConfigValue, value)
-                    .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                    .Set(e => e.UpdatedAt, TimeHelper.Now)
                     .Where(e => e.Id == existing.Id)
                     .ExecuteAffrows();
             }
@@ -193,8 +195,8 @@ namespace ConvenientSystem.Service.Common
                     UserId = userId.Value,
                     ConfigKey = key,
                     ConfigValue = value,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow,
+                    CreatedAt = TimeHelper.Now,
+                    UpdatedAt = TimeHelper.Now,
                 }).ExecuteAffrows();
             }
         }

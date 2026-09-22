@@ -24,7 +24,7 @@ namespace ConvenientSystem.Service.YunHan
         {
             _logger.LogInformation("查询部门数据开始");
             string sql = @"SELECT corpId,corpName,dept_id,dept_name,parent_id,full_name,full_code,lvl,deptIsDel FROM DeptView order by corpId";
-            var data = await _fsql.Ado.QueryAsync<DeptView>(sql);
+            var data = await QueryAttendanceGuardedAsync(() => _fsql.Ado.QueryAsync<DeptView>(sql));
             _logger.LogInformation("查询部门数据结束，共{Count}条", data.Count);
             return data;
         }
@@ -98,8 +98,8 @@ namespace ConvenientSystem.Service.YunHan
             {
                 sql += " WHERE " + string.Join(" AND ", whereParts);
             }
-            var data = await _fsql.Ado.QueryAsync<AttendanceDto>(sql,
-                new { FullCode = request.fullCode, UserName = request.userName, DDUserId = request.DDUserId, Start = mStart, End = mEnd });
+            var data = await QueryAttendanceGuardedAsync(() => _fsql.Ado.QueryAsync<AttendanceDto>(sql,
+                new { FullCode = request.fullCode, UserName = request.userName, DDUserId = request.DDUserId, Start = mStart, End = mEnd }));
             _logger.LogInformation("查询考勤明细数据结束，共{Count}条", data.Count);
             if (_logger.IsEnabled(LogLevel.Debug))
                 _logger.LogDebug("查询考勤明细数据结果：{Result}", JsonConvert.SerializeObject(data));
@@ -174,7 +174,24 @@ namespace ConvenientSystem.Service.YunHan
             if (top.HasValue)
                 query = query.Take(top.Value);
 
-            return await query.CommandTimeout(120).ToListAsync(ct);
+            return await QueryAttendanceGuardedAsync(() => query.CommandTimeout(120).ToListAsync(ct));
+        }
+
+        /// <summary>
+        /// 考勤查询统一异常口径：当前库缺少考勤对象（业务库未指向云汉）时，
+        /// 将底层 “Invalid object name / no such table” 转为友好业务提示，不抛原始 SQL 错误。
+        /// </summary>
+        private static async Task<List<T>> QueryAttendanceGuardedAsync<T>(Func<Task<List<T>>> query)
+        {
+            try
+            {
+                return await query();
+            }
+            catch (Exception ex) when (ex.Message.Contains("Invalid object name", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new BizException("当前数据库缺少考勤数据对象（DeptView/bu_attendance），考勤查询仅在连接云汉业务库的环境可用");
+            }
         }
 
         /// <summary>

@@ -29,6 +29,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public string SelectionKey { get; set; }
         /// <summary>Controller 类名（分组名）。</summary>
         public string Group { get; set; }
+        /// <summary>Controller 所在命名空间（已剥掉尾部 .Controllers 段，空串归“未分组”）；前端按命名空间二级分组展示。</summary>
+        public string Namespace { get; set; } = "";
         /// <summary>HTTP 方法（GET/POST/PUT/DELETE/PATCH）。</summary>
         public string Method { get; set; }
         /// <summary>接口路径（如 /api/Notice/List）。</summary>
@@ -82,6 +84,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Permission { get; set; }
         /// <summary>分组名（Controller 类名，如 NoticeController）。</summary>
         public string Group { get; set; }
+        /// <summary>Controller 所在命名空间（导入 Apifox 时作为 tag 前缀生成嵌套目录；空串退化为仅 Controller 分组）。</summary>
+        public string Namespace { get; set; }
         /// <summary>扫描期生成的稳定接口选择标识。</summary>
         public string SelectionKey { get; set; }
         /// <summary>参数列表（含 path/query/body）。</summary>
@@ -151,22 +155,57 @@ namespace ConvenientSystem.Shared.Model.Common
         public List<string> Warnings { get; set; } = new();
     }
 
-    /// <summary>生成预览/导出请求体：将长 only 参数从 URL 移到 body，避免 HTTP 414。</summary>
-    public class ApiSpecPreviewRequest
+    /// <summary>启动解决方案扫描后台任务的请求（扫描含全项目类型索引，耗时随文件数增长，改后台任务 + 轮询进度）。</summary>
+    public class ApiSpecScanTaskRequest
+    {
+        /// <summary>解决方案文件（.sln/.slnx）或项目根目录路径。</summary>
+        public string SolutionPath { get; set; } = "";
+    }
+
+    /// <summary>
+    /// 解析并生成请求：一次解析同时产出 IR 文档与指定格式导出内容，
+    /// 替代原先 Parse + Preview 两次请求两次全量解析的组合。
+    /// </summary>
+    public class ApiSpecGenerateRequest
     {
         public string RootDir { get; set; } = "";
+        /// <summary>选中的 Controller 相对路径集合（逗号分隔，与旧接口一致）。</summary>
         public string Files { get; set; } = "";
+        /// <summary>导出格式标识（见 ApiSpecFormatDto.Format）。</summary>
         public string Format { get; set; } = "";
         public string? Title { get; set; }
         public string? BaseUrl { get; set; }
-        /// <summary>原始解决方案文件或目录路径，用于保持扫描与生成的项目范围一致。</summary>
+        /// <summary>原始解决方案文件或目录路径，用于保持扫描与解析的项目范围一致。</summary>
         public string? SolutionPath { get; set; }
-        /// <summary>扫描期返回的接口选择标识集合，优先于兼容字段 Only 使用。</summary>
+        /// <summary>扫描期返回的稳定接口选择标识集合（筛选导出范围）。</summary>
         public List<string> SelectionKeys { get; set; } = new();
-        /// <summary>旧版接口筛选键，保留以兼容已有调用。</summary>
-        public string? Only { get; set; }
     }
 
+    /// <summary>复用已完成生成任务的解析结果重新导出：换格式/换标题不重新解析源码，秒级返回。</summary>
+    public class ApiSpecReExportRequest
+    {
+        /// <summary>原生成任务 ID（任务完成后 30 分钟内有效）。</summary>
+        public Guid TaskId { get; set; }
+        public string Format { get; set; } = "";
+        public string? Title { get; set; }
+        public string? BaseUrl { get; set; }
+    }
+
+    /// <summary>扫描任务的完成结果（AsyncTaskDto.Result 载体）。</summary>
+    public class ApiSpecScanTaskResult
+    {
+        /// <summary>扫描出的接口清单（含命名空间，前端两级分组展示）。</summary>
+        public List<ApiSpecSolutionEndpointDto> Endpoints { get; set; } = new();
+    }
+
+    /// <summary>生成任务的完成结果（AsyncTaskDto.Result 载体）。</summary>
+    public class ApiSpecGenerateTaskResult
+    {
+        /// <summary>未筛选的完整解析文档（IR；前端类型树/警告展示用）。</summary>
+        public ApiSpecDocumentDto Document { get; set; } = new();
+        /// <summary>按选择标识筛选后的导出内容。</summary>
+        public ApiSpecExportDto Export { get; set; } = new();
+    }
     /// <summary>当前用户的 Apifox Access Token 保存状态，不返回任何令牌内容。</summary>
     public class ApifoxAccessTokenStatusDto
     {
@@ -203,4 +242,32 @@ namespace ConvenientSystem.Shared.Model.Common
         public int SchemaIgnored { get; set; }
         public List<string> Errors { get; set; } = new();
     }
+
+    /// <summary>批量删除 Apifox 项目接口的请求。目录 ID 可选：填写后只删该目录（含子目录）下的接口，不填删项目全部接口。</summary>
+    public class ApifoxDeleteRequest
+    {
+        public string ProjectId { get; set; } = "";
+        /// <summary>接口目录 ID（Apifox 目录树中复制）；空表示整个项目。</summary>
+        public long? FolderId { get; set; }
+    }
+
+    /// <summary>强制终止 Apifox 进行中任务的请求：仅允许 apifox-import / apifox-delete 两种类型。</summary>
+    public class ApifoxCancelRunningRequest
+    {
+        public string Kind { get; set; } = "";
+    }
+
+    /// <summary>Apifox 批量删除结果摘要。</summary>
+    public class ApifoxDeleteResultDto
+    {
+        /// <summary>实际删除的接口数。</summary>
+        public int Deleted { get; set; }
+        /// <summary>删除失败的接口数。</summary>
+        public int Failed { get; set; }
+        /// <summary>失败明细（每条已截断，最多保留 20 条）。</summary>
+        public List<string> Errors { get; set; } = new();
+        /// <summary>删除接口后顺带清掉的空目录数（失败忽略不计）。</summary>
+        public int FoldersRemoved { get; set; }
+    }
+
 }

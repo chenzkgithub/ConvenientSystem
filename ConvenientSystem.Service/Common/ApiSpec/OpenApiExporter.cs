@@ -40,9 +40,9 @@ namespace ConvenientSystem.Service.Common.ApiSpec
                 ["servers"] = new JsonArray { new JsonObject { ["url"] = doc.BaseUrl } },
             };
 
-            // tags：按 Controller 分组
+            // tags：命名空间/Controller 两层分组（Apifox 导入时 tag 中的 / 生成嵌套目录：命名空间目录下建 Controller 子目录）
             var tags = new JsonArray();
-            foreach (var group in doc.Endpoints.Select(e => e.Group).Distinct())
+            foreach (var group in doc.Endpoints.Select(e => TagOf(e)).Distinct())
                 tags.Add(new JsonObject { ["name"] = group, ["description"] = $"{group} 接口集合" });
             root["tags"] = tags;
 
@@ -58,7 +58,7 @@ namespace ConvenientSystem.Service.Common.ApiSpec
 
                 var operation = new JsonObject
                 {
-                    ["tags"] = new JsonArray { JsonValue.Create(ep.Group) },
+                    ["tags"] = new JsonArray { JsonValue.Create(TagOf(ep)) },
                     ["summary"] = ep.Summary,
                     ["operationId"] = $"{ep.Group}_{ep.ActionName}",
                 };
@@ -162,6 +162,10 @@ namespace ConvenientSystem.Service.Common.ApiSpec
             root["components"] = new JsonObject { ["schemas"] = schemas };
             return root;
         }
+
+        /// <summary>tag 取名：有命名空间时 "命名空间/Controller"（Apifox 导入生成嵌套目录）；无则退化为 Controller 名。</summary>
+        private static string TagOf(ApiSpecEndpointDto ep)
+            => string.IsNullOrEmpty(ep.Namespace) ? ep.Group : $"{ep.Namespace}/{ep.Group}";
     }
 
     /// <summary>OpenAPI 3.0 JSON 导出器（缩进 2 空格）。</summary>

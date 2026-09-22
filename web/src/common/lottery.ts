@@ -412,3 +412,64 @@ export function getLotteryAnalysis(type: string, periods = 100) {
   return httpGet<LotteryAnalysis>('/api/Common/LotteryAnalysis/Predict', { type, periods })
 }
 
+// ─────────────── 投注金额计算（纯前端组合数学）───────────────
+
+/** 组合数 C(n, k) = n! / (k! × (n-k)!) */
+function comb(n: number, k: number): number {
+  if (k < 0 || k > n) return 0
+  if (k === 0 || k === n) return 1
+  let r = 1
+  for (let i = 1; i <= k; i++) r = r * (n - i + 1) / i
+  return Math.round(r)
+}
+
+/**
+ * 计算投注注数。
+ * @param type 彩种代码
+ * @param mode 玩法：单式/复式/胆拖/直选/组选6/组选3
+ * @param sel 选号状态
+ *   - 池选型单式/复式：front=已选前区号码，back=已选后区号码
+ *   - 池选型胆拖：front=胆码，trail=拖码，back=后区号码
+ *   - 位置型：positional=各位已选数字（长度=位数，每个元素≥1）
+ *   - FC3D 组选：front=已选号码
+ */
+export function calculateLotteryBets(
+  type: string,
+  mode: string,
+  sel: { front?: number[]; back?: number[]; trail?: number[]; positional?: number[][]; backDan?: number[]; backTrail?: number[] }
+): number {
+  const fc = sel.front?.length ?? 0
+  const bc = sel.back?.length ?? 0
+
+  if (mode === '单式') return 1
+
+  if (mode === '复式') {
+    if (type === 'SSQ') return comb(fc, 6) * Math.max(bc, 1)
+    if (type === 'DLT') return comb(fc, 5) * comb(bc, 2)
+    // PL5 / FC3D 直选复式：各位选号数的乘积
+    if (sel.positional) return sel.positional.reduce((a, p) => a * Math.max(p.length, 1), 1)
+    return 0
+  }
+
+  if (mode === '胆拖') {
+    const tc = sel.trail?.length ?? 0
+    const bdc = sel.backDan?.length ?? 0
+    const btc = sel.backTrail?.length ?? 0
+    // 后区胆拖：C(后区拖码数, 后区pick - 后区胆码数)
+    const backPart = bdc > 0 ? comb(btc, (type === 'DLT' ? 2 : 1) - bdc) : (type === 'DLT' ? comb(bc, 2) : Math.max(bc, 1))
+    if (type === 'SSQ') return comb(tc, 6 - fc) * backPart
+    if (type === 'DLT') return comb(tc, 5 - fc) * backPart
+    return 0
+  }
+
+  if (mode === '直选') {
+    if (sel.positional) return sel.positional.reduce((a, p) => a * Math.max(p.length, 1), 1)
+    return 0
+  }
+
+  if (mode === '组选6') return comb(fc, 3)
+  if (mode === '组选3') return fc >= 2 ? 1 : 0
+
+  return 0
+}
+

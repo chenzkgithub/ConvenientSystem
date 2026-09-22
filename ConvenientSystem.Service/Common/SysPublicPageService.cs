@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
 
@@ -111,7 +112,7 @@ namespace ConvenientSystem.Service.Common
                 .Set(e => e.Description, dto.Description?.Trim())
                 .Set(e => e.Enabled, dto.Enabled)
                 .Set(e => e.SortOrder, dto.SortOrder)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Set(e => e.UpdatedAt, TimeHelper.Now)
                 .Where(e => e.Id == dto.Id)
                 .ExecuteAffrows();
         }

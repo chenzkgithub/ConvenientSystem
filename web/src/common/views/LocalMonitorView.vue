@@ -2,7 +2,7 @@
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick, h, type Component } from 'vue'
 import { ElMessage, ElCheckbox, ElButton, ElIcon, TableV2SortOrder } from 'element-plus'
 import { CopyDocument, Refresh, Search, Document, Picture, VideoCamera, Headset, Box, Setting, Cpu, Tickets, Delete } from '@element-plus/icons-vue'
-import { httpGet, httpPost } from '@/api/request'
+import { localGet, localPost } from '@/api/request'
 import { formatDate } from '@/common/formatDate'
 import BaseChart from '@/common/components/BaseChart.vue'
 import CommonTooltip from '@/common/components/CommonTooltip.vue'
@@ -31,7 +31,7 @@ async function loadOverview(silent = false) {
   overviewFetching = true
   if (!silent) overviewLoading.value = true
   try {
-    metrics.value = await httpGet<HostMetrics>('/api/Common/Monitor/Overview', undefined, undefined, { silent })
+    metrics.value = await localGet<HostMetrics>('/api/local/monitor/Overview', undefined, undefined, { silent })
   } catch { if (!silent) metrics.value = null }
   finally { overviewFetching = false; if (!silent) overviewLoading.value = false }
 }
@@ -49,7 +49,7 @@ const sysInfo = ref<HostSystemInfo | null>(null)
 let sysInfoCached: HostSystemInfo | null = null
 async function loadSystemInfo(force = false) {
   if (!force && sysInfoCached) { sysInfo.value = sysInfoCached; return }
-  try { const info = await httpGet<HostSystemInfo>('/api/Common/Monitor/SystemInfo', undefined, 60_000); sysInfoCached = info; sysInfo.value = info } catch { sysInfo.value = null }
+  try { const info = await localGet<HostSystemInfo>('/api/local/monitor/SystemInfo', undefined, 60_000); sysInfoCached = info; sysInfo.value = info } catch { sysInfo.value = null }
 }
 const sysInfoVisible = ref(false)
 function openSysInfo() { sysInfoVisible.value = true; loadSystemInfo() }
@@ -168,7 +168,7 @@ async function loadFileIcons() {
   const exts = new Set<string>(); for (const f of [...scanData.value.files, ...(scanData.value.recycleFiles ?? [])]) { const i = f.name.lastIndexOf('.'); if (i >= 0) exts.add(f.name.slice(i).toLowerCase()) }
   const missing = [...exts].filter(e => !iconRequestedExts.has(e)); if (missing.length === 0) return
   missing.forEach(e => iconRequestedExts.add(e))
-  try { const res = await httpGet<Record<string, string>>('/api/Common/Monitor/FileIcons', { exts: missing.join(',') }, undefined, { silent: true }); if (res && Object.keys(res).length > 0) fileIconMap.value = { ...fileIconMap.value, ...res } } catch { /* 静默降级 */ }
+  try { const res = await localGet<Record<string, string>>('/api/local/monitor/FileIcons', { exts: missing.join(',') }, undefined, { silent: true }); if (res && Object.keys(res).length > 0) fileIconMap.value = { ...fileIconMap.value, ...res } } catch { /* 静默降级 */ }
 }
 const scanColumns = computed<any[]>(() => {
   const list = filteredScanFiles.value, all = scanData.value?.files ?? [], icons = fileIconMap.value
@@ -223,10 +223,10 @@ async function scanFiles() {
   scanning.value = true; scanProgress.value = { count: 0, kb: 0 }
   try {
     let start: ScanJob
-    try { start = await httpGet<ScanJob>('/api/Common/Monitor/ScanDiskStart', { categories: cleanCategories.value.join(','), drive: cleanDrive.value }, undefined, { silent: true }) } catch { ElMessage.error('扫描启动失败，请重试'); return }
+    try { start = await localGet<ScanJob>('/api/local/monitor/ScanDiskStart', { categories: cleanCategories.value.join(','), drive: cleanDrive.value }, undefined, { silent: true }) } catch { ElMessage.error('扫描启动失败，请重试'); return }
     while (cleanVisible.value) {
       await new Promise(r => setTimeout(r, 600))
-      let p: ScanJob; try { p = await httpGet<ScanJob>('/api/Common/Monitor/ScanProgress', { jobId: start.jobId }, undefined, { silent: true }) } catch { ElMessage.error('扫描进度获取失败，请重试'); return }
+      let p: ScanJob; try { p = await localGet<ScanJob>('/api/local/monitor/ScanProgress', { jobId: start.jobId }, undefined, { silent: true }) } catch { ElMessage.error('扫描进度获取失败，请重试'); return }
       scanProgress.value = { count: p.scannedCount, kb: p.foundKb }; if (!p.done) continue
       if (p.error) { ElMessage.error(p.error); return }; scanData.value = p.result ?? null; break
     }
@@ -236,9 +236,9 @@ async function scanFiles() {
     loadFileIcons(); calcCleanTableHeights(); cleanStep.value = 'files'
   } finally { scanning.value = false; scanProgress.value = null }
 }
-async function openFolderAt(filePath: string) { if (isHostAvailable()) { hostOpenLocation(filePath); return }; await httpPost(`/api/Common/Monitor/OpenFolder?path=${encodeURIComponent(filePath)}`, {}) }
+async function openFolderAt(filePath: string) { if (isHostAvailable()) { hostOpenLocation(filePath); return }; await localPost(`/api/local/monitor/OpenFolder?path=${encodeURIComponent(filePath)}`, {}) }
 async function openFolder(row: HostDiskFile) { await openFolderAt(row.path) }
-async function openRecycleBin() { if (isHostAvailable()) { hostOpenRecycleBin(); return }; await httpPost('/api/Common/Monitor/OpenRecycleBin', {}) }
+async function openRecycleBin() { if (isHostAvailable()) { hostOpenRecycleBin(); return }; await localPost('/api/local/monitor/OpenRecycleBin', {}) }
 interface CleanJob { jobId: string; done: boolean; totalCount: number; deletedCount: number; freedMb: number; error?: string | null; result?: HostDiskClean | null }
 const cleanProgress = ref<{ deleted: number; total: number; freedMb: number } | null>(null)
 const cleanPercent = computed(() => { const p = cleanProgress.value; if (!p || p.total <= 0) return 0; return Math.min(100, Math.round((p.deleted / p.total) * 100)) })
@@ -247,10 +247,10 @@ async function doCleanDisk() {
   cleaning.value = true; cleanProgress.value = { deleted: 0, total: (hasFileCategories.value ? selectedFiles.value.length : 0) + selectedRecycle.value.length, freedMb: 0 }
   try {
     let start: CleanJob
-    try { start = await httpPost<CleanJob>('/api/Common/Monitor/CleanDiskStart', { drive: cleanDrive.value, userTemp: hasCat('userTemp'), windowsTemp: hasCat('winTemp'), prefetch: hasCat('prefetch'), updateCache: hasCat('updateCache'), browserCache: hasCat('browserCache'), thumbnailCache: hasCat('thumbnailCache'), logFiles: hasCat('logFiles'), oldDownloads: hasCat('oldDownloads'), driveJunk: hasCat('driveJunk'), recycleBin: selectedRecycle.value.length > 0, paths: hasFileCategories.value ? selectedFiles.value.map(f => f.path) : [], pathCategories: Object.fromEntries(selectedFiles.value.map(f => [f.path, f.category])), recyclePaths: selectedRecycle.value.map(f => f.path) }, undefined, undefined, { silent: true }) } catch { ElMessage.error('清理启动失败，请重试'); return }
+    try { start = await localPost<CleanJob>('/api/local/monitor/CleanDiskStart', { drive: cleanDrive.value, userTemp: hasCat('userTemp'), windowsTemp: hasCat('winTemp'), prefetch: hasCat('prefetch'), updateCache: hasCat('updateCache'), browserCache: hasCat('browserCache'), thumbnailCache: hasCat('thumbnailCache'), logFiles: hasCat('logFiles'), oldDownloads: hasCat('oldDownloads'), driveJunk: hasCat('driveJunk'), recycleBin: selectedRecycle.value.length > 0, paths: hasFileCategories.value ? selectedFiles.value.map(f => f.path) : [], pathCategories: Object.fromEntries(selectedFiles.value.map(f => [f.path, f.category])), recyclePaths: selectedRecycle.value.map(f => f.path) }, undefined, undefined, { silent: true }) } catch { ElMessage.error('清理启动失败，请重试'); return }
     while (cleanVisible.value) {
       await new Promise(r => setTimeout(r, 600))
-      let p: CleanJob; try { p = await httpGet<CleanJob>('/api/Common/Monitor/CleanProgress', { jobId: start.jobId }, undefined, { silent: true }) } catch { ElMessage.error('清理进度获取失败，请重试'); return }
+      let p: CleanJob; try { p = await localGet<CleanJob>('/api/local/monitor/CleanProgress', { jobId: start.jobId }, undefined, { silent: true }) } catch { ElMessage.error('清理进度获取失败，请重试'); return }
       cleanProgress.value = { deleted: p.deletedCount, total: p.totalCount > 0 ? p.totalCount : (cleanProgress.value?.total ?? 0), freedMb: p.freedMb }
       if (!p.done) continue; if (p.error) { ElMessage.error(p.error); return }
       cleanVisible.value = false; cleanResult.value = p.result ?? null; cleanResultVisible.value = true; loadOverview(); break

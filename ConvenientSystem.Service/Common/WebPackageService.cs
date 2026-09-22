@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using System.IO;
 using System.Net.Http.Headers;
 using ConvenientSystem.Shared.Entity.Common;
@@ -40,7 +41,7 @@ namespace ConvenientSystem.Service.Common
             }
         }
 
-        /// <summary>发布一条"Web 前端版本已更新"的系统通知，仅操作人可见（userId 为空时兑底全员）且不触发外部推送。</summary>
+        /// <summary>发布一条"Web 前端版本已更新"的系统通知，仅操作人可见（userId 为空时兜底全员）且不触发外部推送。</summary>
         private void NotifyVersionChanged(string version, string? description, string action, Guid? userId)
         {
             try
@@ -116,7 +117,7 @@ namespace ConvenientSystem.Service.Common
 
             var safeVersion = version.Trim();
             var ext = Path.GetExtension(file.FileName);
-            var fileName = $"web-{safeVersion}-{DateTime.Now:yyyyMMddHHmmss}{ext}";
+            var fileName = $"web-{safeVersion}-{TimeHelper.Now:yyyyMMddHHmmss}{ext}";
             var filePath = Path.Combine(_storageDir, fileName);
 
             // 保存文件
@@ -134,7 +135,7 @@ namespace ConvenientSystem.Service.Common
                 FileSize = file.Length,
                 Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
                 IsActive = true,
-                CreateTime = DateTime.Now,
+                CreateTime = TimeHelper.Now,
                 CreatedById = userId,
             };
 

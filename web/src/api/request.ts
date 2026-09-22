@@ -3,13 +3,14 @@
 // 独立浏览器部署时通过 VITE_API_BASE 指定远程接口基址。
 // 所有请求自动带全局 loading：引用计数，并发请求只显示一个遮罩；延迟展示避免快请求闪烁。
 // loading 就近遮罩：存在打开的弹窗/抽屉时始终遮罩最上层窗口，否则遮罩触发位置所在页面区域，不覆盖整个程序窗口。
-import axios, { AxiosError } from 'axios'
+import axios, { AxiosError, type AxiosInstance } from 'axios'
 import { ElLoading, ElMessage, useZIndex } from 'element-plus'
 import 'element-plus/es/components/loading/style/css'
 import 'element-plus/es/components/message/style/css'
 import { isNetworkError } from '@/common/utils/error'
 import { fullscreenElement, ensurePositioned } from '@/common/utils/fullscreen'
 import { IS_PUBLIC_CONTEXT } from '@/common/publicContext'
+import { IS_DESKTOP_HOST } from '@/common/hostContext'
 
 // 远程接口基址：为空时走相对路径（exe 内嵌 Kestrel 或同源部署），
 // 非空时所有 API 请求直接发往指定远程服务器（独立浏览器部署场景）。
@@ -48,6 +49,11 @@ function readToken(): string {
   } catch {
     return ''
   }
+}
+
+/** 读取当前登录 JWT（无则空串）。供接口调试代理注入目标服务 Authorization 头使用。 */
+export function getAuthToken(): string {
+  return readToken()
 }
 
 /** 处理 401：读取后端返回的原因（如挤号、账号停用），展示提示后清除登录态并重新加载。
@@ -228,20 +234,36 @@ const api = axios.create({
   },
 })
 
-// ── 请求拦截器：注入 JWT 令牌 ──
-api.interceptors.request.use((config) => {
-  const token = readToken()
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
+// 本地接口实例：baseURL 恒为空（强制同源，只打桌面端 Kestrel 的 /api/local/*）。
+// Web 端没有本地控制器，服务器对 /api/local 一律 410——local 通道函数在非桌面端环境
+// 会提前抛错不发请求（见文件底部 assertDesktopHost 守卫）。
+const localApi = axios.create({
+  baseURL: '',
+  timeout: REQUEST_TIMEOUT,
+  // 与远程通道共用同一套查询参数序列化规则
+  paramsSerializer: api.defaults.paramsSerializer,
 })
 
-// ── 响应拦截器（成功）：直接返回 data ──
-api.interceptors.response.use(
-  (response) => response.data,
-)
+// ── 请求拦截器：注入 JWT 令牌（远程/本地通道共用） ──
+function attachInterceptors(instance: AxiosInstance) {
+  instance.interceptors.request.use((config) => {
+    const token = readToken()
+    if (token) config.headers.Authorization = `Bearer ${token}`
+    return config
+  })
 
-// ── 响应拦截器（失败）：统一错误处理 ──
-api.interceptors.response.use(undefined, (error: AxiosError) => {
+  // 响应拦截器（成功）：直接返回 data
+  instance.interceptors.response.use((response) => response.data)
+
+  // 响应拦截器（失败）：统一错误处理
+  instance.interceptors.response.use(undefined, handleAxiosError)
+}
+
+attachInterceptors(api)
+attachInterceptors(localApi)
+
+// ── 统一错误处理：远程（api）与本地（localApi）通道共享同一套行为 ──
+function handleAxiosError(error: AxiosError): never {
   const silent = (error.config as unknown as Record<string, unknown>)?.__silent === true
   const url = (error.config?.baseURL ?? '') + (error.config?.url ?? '')
 
@@ -275,6 +297,13 @@ api.interceptors.response.use(undefined, (error: AxiosError) => {
       throw new ApiError(`后端服务暂时不可用（HTTP 404 HTML）：${url}`, {})
     }
 
+    // 410：本地接口打到服务器（本地功能被用于 Web 端环境），提示更明确的原因
+    if (status === 410) {
+      const message = typeof body.message === 'string' ? body.message : '此接口仅桌面端可用，服务器端未实现'
+      if (!silent) ElMessage.error({ message, appendTo: fullscreenElement(), grouping: true })
+      throw new ApiError(`${message}，接口地址：${url}`, body)
+    }
+
     // 其它非 2xx：业务错误
     let detail = (body.message as string) || (body.title as string) || `HTTP ${status}`
     // 模型验证错误：把 errors 字段拼出来，方便定位具体字段
@@ -298,7 +327,7 @@ api.interceptors.response.use(undefined, (error: AxiosError) => {
     })
   }
   throw error
-})
+}
 
 // ==================== 导出方法（签名与原 fetch 版完全一致） ====================
 
@@ -370,6 +399,66 @@ export async function httpDelete<T>(url: string): Promise<T> {
   loadingStart()
   try {
     return await api.delete<T>(url)
+  } finally {
+    loadingEnd()
+  }
+}
+
+// ==================== 本地接口通道（仅桌面端可用） ====================
+
+/** 本地通道守卫：非桌面端环境直接抛错，不发出请求。
+ *  Web 端没有本地 Kestrel，请求打到服务器只会收获 410——提前拦截，避免噪音报错。 */
+function assertDesktopHost(): void {
+  if (!IS_DESKTOP_HOST) throw new ApiError('此功能仅桌面端可用', {})
+}
+
+/** 本地 GET：请求桌面端 /api/local/*；签名与 httpGet 一致 */
+export async function localGet<T>(url: string, params?: Record<string, unknown>, timeoutMs?: number, opts?: { silent?: boolean }): Promise<T> {
+  assertDesktopHost()
+  const silent = opts?.silent === true
+  if (!silent) loadingStart()
+  try {
+    return await localApi.get<T>(url, {
+      params,
+      timeout: timeoutMs,
+      __silent: silent,
+    } as Record<string, unknown>)
+  } finally {
+    if (!silent) loadingEnd()
+  }
+}
+
+/** 本地 POST：请求桌面端 /api/local/*；语义与 httpPost 一致（signal/timeoutMs/opts） */
+export async function localPost<T>(url: string, body: unknown, signal?: AbortSignal, timeoutMs?: number, opts?: HttpPostOptions): Promise<T> {
+  assertDesktopHost()
+  const silent = opts?.silent === true
+  // silent 必然不显示遮罩；noLoading 只关遮罩，保留错误提示
+  const hideLoading = silent || opts?.noLoading === true
+  if (!hideLoading) loadingStart()
+  try {
+    return await localApi.post<T>(url, body, {
+      signal,
+      // 调用方已提供 signal 时由其自行管理超时，禁用 axios 内置超时
+      timeout: signal ? 0 : timeoutMs,
+      __silent: silent,
+      headers: opts?.headers,
+      onUploadProgress: opts?.onUploadProgress
+        ? (e: ProgressEvent) => {
+            if (e.total) opts.onUploadProgress!(Math.round((e.loaded / e.total) * 100))
+          }
+        : undefined,
+    } as Record<string, unknown>)
+  } finally {
+    if (!hideLoading) loadingEnd()
+  }
+}
+
+/** 本地 DELETE：请求桌面端 /api/local/*；支持查询参数（兼容旧 httpDelete 被误用传参的场景） */
+export async function localDelete<T>(url: string, params?: Record<string, unknown>): Promise<T> {
+  assertDesktopHost()
+  loadingStart()
+  try {
+    return await localApi.delete<T>(url, { params })
   } finally {
     loadingEnd()
   }

@@ -8,6 +8,8 @@ namespace ConvenientSystem;
 /// 由前端按 key 整体读写（value 为前端序列化好的 JSON 字符串）。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/ui-state")]
 [Route("api/Common/UiState")]
 public class UiStateController : ControllerBase
 {

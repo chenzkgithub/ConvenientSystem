@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common;
 using System.Collections.Concurrent;
 
 namespace ConvenientSystem.Api
@@ -26,7 +27,7 @@ namespace ConvenientSystem.Api
         {
             _sessions.AddOrUpdate(
                 userId,
-                _ => new OnlineEntry(userId, account, displayName, avatar, ip, DateTime.Now, DateTime.Now, lastActiveAt ?? DateTime.Now),
+                _ => new OnlineEntry(userId, account, displayName, avatar, ip, TimeHelper.Now, TimeHelper.Now, lastActiveAt ?? TimeHelper.Now),
                 (_, old) =>
                 {
                     var newActive = lastActiveAt.HasValue && lastActiveAt.Value > old.LastActive
@@ -34,7 +35,7 @@ namespace ConvenientSystem.Api
                         : old.LastActive;
                     // 心跳时更新头像：若 claim 中无头像则保留旧值，避免重新登录前清空。
                     var newAvatar = string.IsNullOrEmpty(avatar) ? old.Avatar : avatar;
-                    return old with { LastHeartbeat = DateTime.Now, LastActive = newActive, Ip = ip, Avatar = newAvatar };
+                    return old with { LastHeartbeat = TimeHelper.Now, LastActive = newActive, Ip = ip, Avatar = newAvatar };
                 });
         }
 
@@ -49,7 +50,7 @@ namespace ConvenientSystem.Api
         /// <summary>清理心跳超过指定分钟数的记录（用于服务重启后或僵尸会话清理）。</summary>
         public void CleanupStale(int staleMinutes)
         {
-            var cutoff = DateTime.Now.AddMinutes(-staleMinutes);
+            var cutoff = TimeHelper.Now.AddMinutes(-staleMinutes);
             foreach (var kv in _sessions)
             {
                 if (kv.Value.LastHeartbeat < cutoff)

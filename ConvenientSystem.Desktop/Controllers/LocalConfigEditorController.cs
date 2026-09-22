@@ -10,6 +10,8 @@ namespace ConvenientSystem;
 /// 但不走权限校验（本地功能，由 ReverseProxyMiddleware 白名单保证不转发到云）。
 /// </summary>
 [ApiController]
+// 本地接口新路由（接口分离）：与旧路由并存过渡，前端全部切换后移除旧路由
+[Route("api/local/config-editor")]
 [Route("api/Common/ConfigEditor")]
 public class LocalConfigEditorController : ControllerBase
 {
