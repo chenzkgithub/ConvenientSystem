@@ -276,6 +276,10 @@ export const CHAT_EVENTS = {
   userOffline: 'UserOffline',
   /** 新系统通知广播（全部连接；无参数，前端收到后各自拉取列表/未读数） */
   noticeCreated: 'NoticeCreated',
+  /** 新好友申请（定向推给接收方；FriendRequestDto 单参数，前端拉取申请列表/角标） */
+  friendRequest: 'FriendRequest',
+  /** 好友申请处理结果（定向推给申请人；FriendRequestHandledDto 单参数，同意后前端刷新通讯录） */
+  friendRequestHandled: 'FriendRequestHandled',
   /** 我方另一端清空了聊天记录（仅推给我自己，单方面删除多端同步；conversationId 单参数） */
   messagesCleared: 'MessagesCleared',
   /** 异步任务进度（定向推给任务发起人；AsyncTaskDto 单参数） */

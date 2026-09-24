@@ -64,13 +64,20 @@ const hostBadgeTitle = computed(() => {
 // ===== 侧栏折叠状态 =====
 const SIDEBAR_COLLAPSE_KEY = 'UI.SidebarCollapsed'
 const { getPref, setPref } = useUserPrefs()
-// 登录后左侧菜单默认折叠：未设置时默认折叠，用户手动展开后才保持展开
-const isSidebarCollapsed = ref(getPref(SIDEBAR_COLLAPSE_KEY, 'true') !== 'false')
+// 初始化：数据库默认值 → localStorage 会话覆盖 → 最终默认折叠
+// 侧栏折叠按钮只改 localStorage（当前会话），不改数据库默认值
+function getInitialSidebarCollapsed(): boolean {
+  const local = localStorage.getItem(SIDEBAR_COLLAPSE_KEY)
+  if (local !== null) return local !== 'false'
+  return getPref(SIDEBAR_COLLAPSE_KEY, 'true') !== 'false'
+}
+const isSidebarCollapsed = ref(getInitialSidebarCollapsed())
 const sidebarWidth = computed(() => (isSidebarCollapsed.value ? '0px' : '232px'))
 
 function toggleSidebar() {
   isSidebarCollapsed.value = !isSidebarCollapsed.value
-  setPref(SIDEBAR_COLLAPSE_KEY, String(isSidebarCollapsed.value))
+  // 仅写 localStorage（当前会话生效），不修改数据库中的默认值
+  try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, String(isSidebarCollapsed.value)) } catch { /* ignore */ }
 }
 
 // ===== 导航模式：面包屑（默认）与多标签页可切换 =====
@@ -509,7 +516,8 @@ onMounted(async () => {
   if (auth.loggedIn && Object.keys(auth.uiPrefs).length === 0) {
     await auth.loadUIPrefs()
     // 同步侧栏折叠和导航模式
-    isSidebarCollapsed.value = getPref(SIDEBAR_COLLAPSE_KEY, 'true') !== 'false'
+    // 侧栏折叠：优先 localStorage（当前会话），其次数据库默认值
+    isSidebarCollapsed.value = getInitialSidebarCollapsed()
     navMode.value = getPref(NAV_MODE_KEY, 'breadcrumb') === 'tabs' ? 'tabs' : 'breadcrumb'
     // 同步标签记忆和主题
     tabsStore.applyServerPrefs()

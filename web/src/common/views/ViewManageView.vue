@@ -243,39 +243,42 @@ async function handleDeletePerm(p: ViewPermissionDto) {
     <div ref="mainContent" class="main-content">
       <!-- 左侧：视图列表 -->
       <div class="view-list" :style="{ width: leftWidth + 'px' }">
-        <div class="view-search">
+        <!-- 吸顶筛选区：运行环境单选 + 搜索框；下方列表滚动时保持固定 -->
+        <div class="list-filter-bar">
+          <el-radio-group v-model="envFilter" size="small" class="env-radio">
+            <el-radio-button value="">全部</el-radio-button>
+            <el-radio-button value="both">通用</el-radio-button>
+            <el-radio-button value="desktop">桌面端</el-radio-button>
+            <el-radio-button value="web">服务器</el-radio-button>
+          </el-radio-group>
           <el-input v-model="searchKey" :prefix-icon="Search" placeholder="搜索视图" clearable size="small" />
         </div>
-        <div class="env-filter">
-          <el-select v-model="envFilter" size="small" placeholder="运行环境" clearable>
-            <el-option label="通用" value="both" />
-            <el-option label="桌面端专属" value="desktop" />
-            <el-option label="服务器端专属" value="web" />
-          </el-select>
-        </div>
-        <div v-if="filteredViews.length === 0" class="empty-hint">
-          <el-empty :description="searchKey ? '未找到匹配的视图' : '暂无视图，点击上方按钮添加'" :image-size="60" />
-        </div>
-        <div
-          v-for="v in filteredViews"
-          :key="v.id"
-          class="view-item"
-          :class="{ active: selectedViewId === v.id }"
-          @click="selectedViewId = v.id"
-        >
-          <div class="view-item-header">
-            <span class="view-title">{{ v.title }}</span>
-            <span class="view-badge">{{ v.permissions.length }}</span>
+        <!-- 滚动区：只有视图列表项在这里滚动 -->
+        <div class="list-scroll">
+          <div v-if="filteredViews.length === 0" class="empty-hint">
+            <el-empty :description="searchKey ? '未找到匹配的视图' : '暂无视图，点击上方按钮添加'" :image-size="60" />
           </div>
-          <div class="view-name">{{ v.name }}</div>
-          <div class="view-meta">
-            <span v-if="v.component" class="view-component">{{ v.component }}</span>
-            <el-tag :type="envTag(v.env).type" size="small" effect="light">{{ envTag(v.env).label }}</el-tag>
-            <span v-if="!v.enabled" class="view-disabled">已停用</span>
-          </div>
-          <div class="view-actions">
-            <el-button v-if="$has('view-manage')" size="small" type="primary" link :icon="Edit" @click.stop="openEditView(v)">编辑</el-button>
-            <el-button v-if="$has('view-manage')" size="small" type="danger" link :icon="Delete" @click.stop="handleDeleteView(v)">删除</el-button>
+          <div
+            v-for="v in filteredViews"
+            :key="v.id"
+            class="view-item"
+            :class="{ active: selectedViewId === v.id }"
+            @click="selectedViewId = v.id"
+          >
+            <div class="view-item-header">
+              <span class="view-title">{{ v.title }}</span>
+              <span class="view-badge">{{ v.permissions.length }}</span>
+            </div>
+            <div class="view-name">{{ v.name }}</div>
+            <div class="view-meta">
+              <span v-if="v.component" class="view-component">{{ v.component }}</span>
+              <el-tag :type="envTag(v.env).type" size="small" effect="light">{{ envTag(v.env).label }}</el-tag>
+              <span v-if="!v.enabled" class="view-disabled">已停用</span>
+            </div>
+            <div class="view-actions">
+              <el-button v-if="$has('view-manage')" size="small" type="primary" link :icon="Edit" @click.stop="openEditView(v)">编辑</el-button>
+              <el-button v-if="$has('view-manage')" size="small" type="danger" link :icon="Delete" @click.stop="handleDeleteView(v)">删除</el-button>
+            </div>
           </div>
         </div>
       </div>
@@ -418,10 +421,42 @@ async function handleDeletePerm(p: ViewPermissionDto) {
 /* ===== 左侧视图列表 ===== */
 .view-list {
   flex-shrink: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   padding: 8px;
+}
+
+/* 吸顶筛选区：运行环境单选 + 搜索框，不随下方列表滚动 */
+.list-filter-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* 运行环境单选按钮组：4 项均分整行宽，左栏拖到最窄也不溢出 */
+.env-radio {
+  display: flex;
+  width: 100%;
+}
+.env-radio :deep(.el-radio-button) {
+  flex: 1;
+}
+.env-radio :deep(.el-radio-button__inner) {
+  width: 100%;
+}
+
+/* 滚动区：只有视图列表项在这里滚动 */
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ===== 可拖拽分隔条 ===== */
@@ -451,12 +486,6 @@ async function handleDeletePerm(p: ViewPermissionDto) {
 .splitter.dragging { background: var(--el-fill-color-light); }
 .splitter:hover::after,
 .splitter.dragging::after { background: var(--el-color-primary); }
-.view-search {
-  margin-bottom: 8px;
-}
-.env-filter {
-  margin-bottom: 8px;
-}
 .env-mismatch-alert {
   margin-bottom: 12px;
   flex-shrink: 0;

@@ -18,6 +18,23 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? Body { get; set; }
         /// <summary>超时毫秒数（钳制在 1000~120000，默认 30000）。</summary>
         public int TimeoutMs { get; set; } = 30000;
+        /// <summary>Form Data 键值对（multipart/form-data 或 application/x-www-form-urlencoded）。</summary>
+        public Dictionary<string, string>? FormData { get; set; }
+        /// <summary>文件信息（multipart/form-data 时，文件以 Base64 编码传输）。</summary>
+        public List<ApiDebugFile>? Files { get; set; }
+    }
+
+    /// <summary>调试请求中的文件信息。</summary>
+    public class ApiDebugFile
+    {
+        /// <summary>表单字段名。</summary>
+        public string FieldName { get; set; } = "";
+        /// <summary>文件名。</summary>
+        public string FileName { get; set; } = "";
+        /// <summary>文件内容（Base64 编码）。</summary>
+        public string Content { get; set; } = "";
+        /// <summary>文件 MIME 类型。</summary>
+        public string ContentType { get; set; } = "application/octet-stream";
     }
 
     /// <summary>调试响应：目标服务的原始响应 + 耗时；网络层失败时 Error 有值、StatusCode 为 0。</summary>

@@ -24,6 +24,9 @@ namespace ConvenientSystem.Shared.Common.Security
         public const string DataScopeClaim = "dataScope";
         /// <summary>用户头像 claim（值为 data:image/...;base64 内联图片或 URL）。</summary>
         public const string AvatarClaim = "avatar";
+
+        /// <summary>客户端平台标识（web=Web/桌面端，app=手机端）；缺省按 web 处理</summary>
+        public const string PlatformClaim = "platform";
         /// <summary>超级管理员角色编码：拥有全部菜单与接口权限。</summary>
         public const string AdminRole = "admin";
         /// <summary>普通用户角色编码：新注册用户自动赋予。</summary>
@@ -44,7 +47,8 @@ namespace ConvenientSystem.Shared.Common.Security
             TimeSpan? lifetime = null,
             bool isAdmin = false,
             DataScope dataScope = DataScope.Self,
-            string? avatar = null)
+            string? avatar = null,
+            string platform = ClientPlatform.Web)
         {
             var claims = new List<Claim>
             {
@@ -55,8 +59,10 @@ namespace ConvenientSystem.Shared.Common.Security
                 new(MenuCodesClaim, string.Join(',', menuCodes.Distinct())),
                 new(AdminClaim, isAdmin ? "true" : "false"),
                 new(DataScopeClaim, ((int)dataScope).ToString()),
-                // JWT ID：唯一标识本次签发的令牌，用于挤号（同账号新登录覆盖旧 JTI，旧令牌被中间件拒绝）
+                // JWT ID：唯一标识本次签发的令牌，用于挤号（同账号同平台新登录覆盖旧 JTI，旧令牌被中间件拒绝）
                 new("jti", Guid.NewGuid().ToString("N")),
+                // 客户端平台标识：会话按平台分桶（跨端互不挤号），注册来源也复用该标识
+                new(PlatformClaim, ClientPlatform.Normalize(platform)),
             };
             if (!string.IsNullOrEmpty(displayName))
                 claims.Add(new Claim(DisplayNameClaim, displayName));

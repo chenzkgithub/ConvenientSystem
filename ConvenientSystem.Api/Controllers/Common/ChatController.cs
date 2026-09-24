@@ -1,6 +1,8 @@
 using ConvenientSystem.Shared.Common;
+using ConvenientSystem.Api.Auth;
 using ConvenientSystem.Api.Hubs;
 using ConvenientSystem.Service.Common;
+using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Entity.Common;
 using ConvenientSystem.Shared.Model.Common;
 using FreeSql;
@@ -11,12 +13,14 @@ using Microsoft.AspNetCore.SignalR;
 namespace ConvenientSystem.Api.Controllers.Common
 {
     /// <summary>
-    /// 聊天用户端接口：任何已登录用户的公共功能（会话/消息/通讯录/屏蔽），仅 [Authorize] 不挂菜单权限码（同 NoticeController）。
+    /// 聊天用户端接口：任何已登录用户的公共功能（会话/消息/通讯录/屏蔽），PC 端不挂菜单权限码；
+    /// 手机端（platform=app）要求 app-chat 权限点（两端权限独立，无码即 403）。
     /// 目标用户恒取自 JWT，不接受请求体传入，防越权代他人标记已读/屏蔽。
     /// 实时推送（SignalR）在本层结合 IHubContext 编排：发送推 ReceiveMessage 给双方、已读推 ReadAck 给对方。
     /// </summary>
     [Area("Common")]
     [Authorize]
+    [PermissionAuthorize(AppPerm.Chat, Platform = ClientPlatform.App)]
     public class ChatController : BaseController
     {
         private readonly IChatService _service;
@@ -44,7 +48,7 @@ namespace ConvenientSystem.Api.Controllers.Common
             return Ok(_service.GetConversations(userId));
         }
 
-        /// <summary>通讯录：全部启用用户 + 双向屏蔽标记 + 在线状态（OnlineUserTracker 填充）。</summary>
+        /// <summary>通讯录（= 好友列表）：我的全部好友 + 双向屏蔽标记 + 在线状态（OnlineUserTracker 填充）；手机端好友页可改调 Friend/Friends（同一数据，挂 app-friends 码）。</summary>
         [HttpGet]
         public ActionResult<List<ChatContactDto>> Contacts()
         {

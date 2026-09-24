@@ -50,17 +50,17 @@ export function listLogs(params?: {
   endTime?: string
   page?: number
   size?: number
-}) {
-  return httpGet<{ total: number; list: SmsLogDto[] }>('/api/Sms/SmsLog/List', params)
+}, opts?: { silent?: boolean }) {
+  return httpGet<{ total: number; list: SmsLogDto[] }>('/api/Sms/SmsLog/List', params, undefined, opts)
 }
 
-export function getStatistics() {
-  return httpGet<SmsStatisticsDto>('/api/Sms/SmsLog/Statistics')
+export function getStatistics(opts?: { silent?: boolean }) {
+  return httpGet<SmsStatisticsDto>('/api/Sms/SmsLog/Statistics', undefined, undefined, opts)
 }
 
 /** 按日发送趋势（days：往前天数，含今天） */
-export function getSmsTrend(days: number) {
-  return httpGet<import('@/common/types').SendTrend>('/api/Sms/SmsLog/Trend', { days })
+export function getSmsTrend(days: number, opts?: { silent?: boolean }) {
+  return httpGet<import('@/common/types').SendTrend>('/api/Sms/SmsLog/Trend', { days }, undefined, opts)
 }
 
 export function getQuota() {

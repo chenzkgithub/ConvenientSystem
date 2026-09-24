@@ -259,9 +259,9 @@ export function getLotteryTrend(type: string, periods: number, startDate?: strin
   return httpGet<TrendData>('/api/Common/LotteryDraw/Trend', params)
 }
 
-/** 获取各彩种最新开奖与当前用户中奖结果（首页展示用） */
-export function getLotteryHomeResults() {
-  return httpGet<LotteryHomeResult[]>('/api/Common/Lottery/HomeResults')
+/** 获取各彩种最新开奖与当前用户中奖结果（首页展示用）。opts.silent：定时轮询不弹遮罩 */
+export function getLotteryHomeResults(opts?: { silent?: boolean }) {
+  return httpGet<LotteryHomeResult[]>('/api/Common/Lottery/HomeResults', undefined, undefined, opts)
 }
 
 /** 获取指定开奖期的官网通告数据（全国中奖明细/销量/奖池） */

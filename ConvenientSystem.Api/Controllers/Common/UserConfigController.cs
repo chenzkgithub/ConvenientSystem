@@ -32,6 +32,16 @@ namespace ConvenientSystem.Api.Controllers.Common
             return Ok(new { message = "个人配置已保存" });
         }
 
+        /// <summary>查看密码类个人配置明文（需验证登录密码；仅限元数据中 password 类型的配置项）。</summary>
+        [HttpPost]
+        public ActionResult<UserConfigRevealResult> RevealValue([FromBody] UserConfigRevealDto dto)
+        {
+            var value = _userConfigService.RevealValue(dto?.ConfigKey ?? string.Empty, dto?.Password ?? string.Empty);
+            return Ok(value == null
+                ? new UserConfigRevealResult { Ok = false }
+                : new UserConfigRevealResult { Ok = true, Value = value });
+        }
+
         /// <summary>获取当前用户 UI 偏好键值字典（含默认值），供登录后一次拉取。</summary>
         [HttpGet]
         public ActionResult<Dictionary<string, string>> GetUIPrefs()

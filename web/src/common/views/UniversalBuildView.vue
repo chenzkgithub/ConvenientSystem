@@ -455,7 +455,7 @@ function startPolling() {
     for (const card of runningCards) {
       if (!card.jobId) continue
       try {
-        const dto = await getUniversalBuildProgress({ id: card.jobId })
+        const dto = await getUniversalBuildProgress({ id: card.jobId }, { silent: true })
         if (dto) {
           const prevStatus = card.status
           card.status = dto.status
@@ -1121,7 +1121,7 @@ function startDeployPolling() {
     for (const card of runningCards) {
       if (!card.deployJobId) continue
       try {
-        const dto = await getDeployProgress({ id: card.deployJobId })
+        const dto = await getDeployProgress({ id: card.deployJobId }, { silent: true })
         if (dto) {
           const prevStatus = card.deployStatus
           card.deployStatus = dto.status

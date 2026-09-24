@@ -65,8 +65,65 @@ namespace ConvenientSystem.Service.Common
                         req.Headers.TryAddWithoutValidation(k, v);
                     }
                 }
-                if (!string.IsNullOrEmpty(request.Body))
+                
+                // 根据请求类型构建请求体
+                if (request.Files != null && request.Files.Count > 0)
+                {
+                    // multipart/form-data（带文件）
+                    var multipartContent = new MultipartFormDataContent();
+                    
+                    // 添加表单字段
+                    if (request.FormData != null)
+                    {
+                        foreach (var (k, v) in request.FormData)
+                        {
+                            if (!string.IsNullOrEmpty(k))
+                            {
+                                multipartContent.Add(new StringContent(v), k);
+                            }
+                        }
+                    }
+                    
+                    // 添加文件
+                    foreach (var file in request.Files)
+                    {
+                        if (string.IsNullOrEmpty(file.FieldName) || string.IsNullOrEmpty(file.Content)) continue;
+                        
+                        var fileBytes = Convert.FromBase64String(file.Content);
+                        var byteContent = new ByteArrayContent(fileBytes);
+                        byteContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+                        multipartContent.Add(byteContent, file.FieldName, file.FileName);
+                    }
+                    
+                    req.Content = multipartContent;
+                }
+                else if (request.FormData != null && request.FormData.Count > 0)
+                {
+                    // application/x-www-form-urlencoded 或 multipart/form-data（无文件）
+                    if (contentType?.Contains("multipart/form-data") == true)
+                    {
+                        var multipartContent = new MultipartFormDataContent();
+                        foreach (var (k, v) in request.FormData)
+                        {
+                            if (!string.IsNullOrEmpty(k))
+                            {
+                                multipartContent.Add(new StringContent(v), k);
+                            }
+                        }
+                        req.Content = multipartContent;
+                    }
+                    else
+                    {
+                        // 默认 application/x-www-form-urlencoded
+                        var formContent = new FormUrlEncodedContent(request.FormData!);
+                        req.Content = formContent;
+                    }
+                }
+                else if (!string.IsNullOrEmpty(request.Body))
+                {
+                    // JSON 或其他文本格式
                     req.Content = new StringContent(request.Body, Encoding.UTF8, contentType ?? "application/json");
+                }
 
                 using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
                 response.StatusCode = (int)res.StatusCode;

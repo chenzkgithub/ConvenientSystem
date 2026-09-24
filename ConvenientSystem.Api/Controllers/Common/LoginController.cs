@@ -1,4 +1,5 @@
 using ConvenientSystem.Shared.Common;
+using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Model.Common;
 using ConvenientSystem.Service.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -52,11 +53,15 @@ namespace ConvenientSystem.Api.Controllers.Common
                     result.Avatar,
                     ip);
 
-                // 挤号：注册新令牌的 JTI，覆盖该用户之前的会话。
+                // 挤号：注册新令牌的 JTI，覆盖该用户“同平台”之前的会话（跨平台会话不受影响，如手机端与 Web 端可同时在线）。
                 // 旧令牌携带的 JTI 与存储不匹配，下次请求时被中间件拒绝。
-                var jti = new JwtSecurityTokenHandler().ReadJwtToken(result.Token).Id;
+                var parsedToken = new JwtSecurityTokenHandler().ReadJwtToken(result.Token);
+                var jti = parsedToken.Id;
                 if (!string.IsNullOrEmpty(jti))
-                    _sessionStore.Set(result.UserId, jti);
+                {
+                    var platform = parsedToken.Claims.FirstOrDefault(c => c.Type == JwtHelper.PlatformClaim)?.Value;
+                    _sessionStore.Set(result.UserId, platform, jti);
+                }
             }
             return Ok(result);
         }
@@ -107,7 +112,9 @@ namespace ConvenientSystem.Api.Controllers.Common
             if (User?.Identity?.IsAuthenticated == true && CurrentUserId.HasValue)
             {
                 _tracker.Remove(CurrentUserId.Value);
-                _sessionStore.Remove(CurrentUserId.Value);
+                // 仅移除“当前平台”的会话记录（从 JWT 读取），另一端的会话不受影响
+                var platform = User.FindFirst(JwtHelper.PlatformClaim)?.Value;
+                _sessionStore.Remove(CurrentUserId.Value, platform);
             }
             return Ok(new { ok = true });
         }

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using ConvenientSystem.Shared.Common.Email;
 using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Entity.Common;
+using ConvenientSystem.Service.Common;
 using FreeSql;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -159,6 +160,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
             // 创建账号（邮箱即账号，密码哈希存储；主键为顺序 GUID）
             var hashedPassword = PasswordHasher.Hash(password);
+            var platform = ClientPlatform.Normalize(request?.platform);
             var user = new SysUserEntity
             {
                 Id = ConvenientSystem.Shared.Common.SequentialGuid.NewId(),
@@ -166,6 +168,8 @@ namespace ConvenientSystem.Api.Controllers.Common
                 Password = hashedPassword,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? normalized.Split('@')[0] : displayName,
                 Email = normalized,
+                // 注册来源：手机端传 platform=app，其余（PC/Web/管理端）按 web
+                RegisterSource = platform,
                 Enabled = true,
             };
 
@@ -174,14 +178,22 @@ namespace ConvenientSystem.Api.Controllers.Common
                 var userId = user.Id;
                 _db.Insert(user).ExecuteAffrows();
 
-                // 自动赋予普通用户角色
-                var userRoleId = _db.Select<SysRoleEntity>()
-                    .Where(r => r.Code == "user" && r.Enabled)
-                    .First(r => r.Id);
-                if (userRoleId > 0)
+                // 注册默认值（两端权限独立）：
+                // - Web 端注册：保持自动赋予“普通用户”角色（可用 PC 常用菜单）；
+                // - 手机端注册：不赋任何角色（登录 PC 端会被准入拦截），只用手机端。
+                if (platform != ClientPlatform.App)
                 {
-                    _db.Insert(new SysUserRoleEntity { UserId = userId, RoleId = userRoleId }).ExecuteAffrows();
+                    var userRoleId = _db.Select<SysRoleEntity>()
+                        .Where(r => r.Code == "user" && r.Enabled)
+                        .First(r => r.Id);
+                    if (userRoleId > 0)
+                    {
+                        _db.Insert(new SysUserRoleEntity { UserId = userId, RoleId = userRoleId }).ExecuteAffrows();
+                    }
                 }
+
+                // 预置手机端基础四项权限（登录/消息/好友/通知）：白名单制，管理员可后续在手机端权限管理页调整
+                _db.Insert(AppPermService.BuildDefaultRows(userId, userId)).ExecuteAffrows();
 
                 // 清理验证码缓存
                 CodeCache.TryRemove(normalized, out _);
@@ -221,5 +233,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         public string? password { get; set; }
         public string? code { get; set; }
         public string? displayName { get; set; }
+        /// <summary>客户端平台标识：app=手机端；缺省/其他值按 web（管理端/PC 注册）</summary>
+        public string? platform { get; set; }
     }
 }

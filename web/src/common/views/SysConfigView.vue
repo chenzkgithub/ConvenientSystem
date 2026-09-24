@@ -131,10 +131,6 @@ function openRevealDialog(key: string) {
 
 /** 验证密码并回填明文 */
 async function doReveal() {
-  if (!revealPassword.value) {
-    ElMessage.warning('请输入登录密码')
-    return
-  }
   revealLoading.value = true
   try {
     const result = await httpPost<{ ok: boolean; value: string | null }>(
@@ -237,23 +233,20 @@ loadConfigs()
                       :placeholder="`请输入${item.displayName}`"
                       class="config-input"
                     />
-                    <template v-else>
-                      <el-input
-                        :model-value="MASKED"
-                        type="password"
-                        readonly
-                        class="config-input masked-input"
-                      />
-                      <el-button
-                        v-if="$has('sys-config:reveal')"
-                        type="warning"
-                        plain
-                        size="small"
-                        @click="openRevealDialog(item.configKey)"
-                      >
-                        查看明文
-                      </el-button>
-                    </template>
+                    <el-input
+                      v-else
+                      :model-value="MASKED"
+                      type="password"
+                      readonly
+                      class="config-input reveal-input"
+                      @click="openRevealDialog(item.configKey)"
+                    >
+                      <template #suffix>
+                        <el-icon class="reveal-icon" @click.stop="openRevealDialog(item.configKey)">
+                          <Lock />
+                        </el-icon>
+                      </template>
+                    </el-input>
                   </template>
 
                   <!-- switch -->
@@ -344,23 +337,20 @@ loadConfigs()
                       :placeholder="`请输入${item.displayName}`"
                       class="config-input"
                     />
-                    <template v-else>
-                      <el-input
-                        :model-value="MASKED"
-                        type="password"
-                        readonly
-                        class="config-input masked-input"
-                      />
-                      <el-button
-                        v-if="$has('sys-config:reveal')"
-                        type="warning"
-                        plain
-                        size="small"
-                        @click="openRevealDialog(item.configKey)"
-                      >
-                        查看明文
-                      </el-button>
-                    </template>
+                    <el-input
+                      v-else
+                      :model-value="MASKED"
+                      type="password"
+                      readonly
+                      class="config-input reveal-input"
+                      @click="openRevealDialog(item.configKey)"
+                    >
+                      <template #suffix>
+                        <el-icon class="reveal-icon" @click.stop="openRevealDialog(item.configKey)">
+                          <Lock />
+                        </el-icon>
+                      </template>
+                    </el-input>
                   </template>
 
                   <!-- switch -->
@@ -618,8 +608,18 @@ loadConfigs()
   width: 260px;
 }
 
-.masked-input {
-  width: 180px;
+.reveal-input {
+  cursor: pointer;
+}
+.reveal-input :deep(.el-input__inner) {
+  cursor: pointer;
+}
+.reveal-icon {
+  cursor: pointer;
+  color: var(--el-color-warning);
+}
+.reveal-icon:hover {
+  color: var(--el-color-warning-light-3);
 }
 
 .config-number {

@@ -1,3 +1,4 @@
+using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Entity.Common;
 using Microsoft.AspNetCore.Authorization;
 
@@ -5,7 +6,7 @@ namespace ConvenientSystem.Api.Middleware
 {
     /// <summary>
     /// 用户状态验证中间件：在所有请求通过身份验证后，检查已登录用户是否被停用。
-    /// 同时校验当前令牌的 JTI 是否为该用户最新一次登录签发的（挤号：同账号新登录使旧令牌失效）。
+    /// 同时校验当前令牌的 JTI 是否为该用户“同平台”最新一次登录签发的（挤号：同账号同平台新登录使旧令牌失效；跨平台互不挤号）。
     /// 如果用户被停用或令牌已被新会话挤掉，返回 401 Unauthorized，强制前端重新登录。
     /// 
     /// 调用顺序：应在 UseAuthentication 之后、业务逻辑之前。
@@ -77,9 +78,11 @@ namespace ConvenientSystem.Api.Middleware
                                         return;
                                     }
 
-                                    // 挤号校验：当前令牌的 JTI 必须与该用户最新登录会话一致
+                                    // 挤号校验：当前令牌的 JTI 必须与该用户“同平台”最新登录会话一致。
+                                    // 平台取自 JWT 的 platform claim（缺省按 web），跨平台会话互不影响。
                                     var jti = context.User.FindFirst("jti")?.Value;
-                                    if (!_sessionStore.IsValid(userId, jti))
+                                    var platform = context.User.FindFirst(JwtHelper.PlatformClaim)?.Value;
+                                    if (!_sessionStore.IsValid(userId, platform, jti))
                                     {
                                         var account = context.User.FindFirst("account")?.Value ?? "Unknown";
                                         _logger.LogInformation("用户会话已被挤号，拒绝访问。UserId={UserId}, Account={Account}, Path={Path}",

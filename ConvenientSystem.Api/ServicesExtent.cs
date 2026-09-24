@@ -307,6 +307,9 @@ namespace ConvenientSystem.Api
             services.AddSingleton<INotifyService, NotifyService>();
             services.AddSingleton<IWebhookLogService, WebhookLogService>();
             services.AddSingleton<IUserManageService, UserManageService>();
+
+            // 手机端权限（SysUserAppPerm 白名单：目录/用户列表/差量保存，与 PC 端角色权限完全独立）
+            services.AddSingleton<IAppPermService, AppPermService>();
             services.AddSingleton<IRoleService, RoleService>();
             services.AddSingleton<IProfileService, ProfileService>();
 
@@ -344,8 +347,11 @@ namespace ConvenientSystem.Api
             // 外部公开页面（免登录 standalone=1 页面管理）
             services.AddSingleton<ISysPublicPageService, SysPublicPageService>();
 
-            // 即时聊天（企业通讯录模式单聊：会话/消息/屏蔽，实时推送由 Api 层 ChatHub 编排）
+            // 即时聊天（好友模式单聊+群聊：会话/消息/屏蔽/转发，实时推送由 Api 层 ChatHub 编排）
             services.AddSingleton<IChatService, ChatService>();
+
+            // 好友（搜索/申请/处理/删除；通讯规则校验在 ChatService，实时推送由 Api 层 ChatHub 编排）
+            services.AddSingleton<IFriendService, FriendService>();
 
             // 代码命名转换（百度翻译 API 优先，MyMemory 回退，前端拼音兜底）
             services.AddSingleton<ICodeNamingService, CodeNamingService>();

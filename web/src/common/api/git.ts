@@ -235,9 +235,9 @@ export function getGitRepos(opts?: { silent?: boolean }) {
   return localPost<GitRepoStatus[]>('/api/local/git/Repos', {}, undefined, LOCAL_TIMEOUT_MS, opts)
 }
 
-/** 仓库健康检查（轻量：目录是否存在，供前端轮询检测失效） */
-export function getGitReposHealth() {
-  return localPost<Record<string, boolean>>('/api/local/git/ReposHealth', {}, undefined, LOCAL_TIMEOUT_MS)
+/** 仓库健康检查（轻量：目录是否存在，供前端轮询检测失效）。opts.silent：15s 轮询不弹遮罩 */
+export function getGitReposHealth(opts?: { silent?: boolean }) {
+  return localPost<Record<string, boolean>>('/api/local/git/ReposHealth', {}, undefined, LOCAL_TIMEOUT_MS, opts)
 }
 
 /** 添加仓库（自动解析仓库根目录，子目录自动归属） */
@@ -306,9 +306,9 @@ export function gitCancel(request: GitCancelRequest) {
   return localPost<GitCancelResult>('/api/local/git/Cancel', request)
 }
 
-/** 合并中间状态（合并进行中横幅 + 一键放弃） */
-export function getGitMergeState(request: GitPathRequest) {
-  return localPost<GitMergeState>('/api/local/git/MergeState', request)
+/** 合并中间状态（合并进行中横幅 + 一键放弃）。opts.silent：后台轮询不弹遮罩 */
+export function getGitMergeState(request: GitPathRequest, opts?: { silent?: boolean }) {
+  return localPost<GitMergeState>('/api/local/git/MergeState', request, undefined, undefined, opts)
 }
 
 /** 提交历史（新→旧，含父提交与 refs，画分支线用）；分页滚动加载 */

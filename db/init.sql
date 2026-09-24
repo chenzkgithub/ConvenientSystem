@@ -1,11 +1,15 @@
 ﻿/* =============================================================
-   ConvenientSystem 本地数据库初始化脚本（唯一维护入口）
+   ConvenientSystem 数据库初始化脚本（PC 端/两端共用对象唯一维护入口）
    ---------------------------------------------------------------
-   - 本文件维护本项目全部数据库对象与初始数据，幂等可重复执行；
-   - 后续所有表结构变更、初始数据调整都追加/修改在本文件中；
+   - 本文件维护 PC 端与两端共用的数据库对象与初始数据，幂等可重复执行；
+   - 手机端专属对象（SysUserAppPerm 权限白名单、好友体系等）维护在 db/init-app.sql，
+     执行顺序：本文件在前、init-app.sql 在后；
+   - 后续所有表结构变更、初始数据调整、老库升级补丁都追加/修改在上述两个文件中，
+     严禁按需求另建 migrate 迁移脚本（部署链路每次部署自动执行，老库自动补齐）；
    - 本机为 SQL Server LocalDB（无完整版实例），执行方式（Windows 认证）：
        sqllocaldb start MSSQLLocalDB
-       sqlcmd -S (localdb)\MSSQLLocalDB -E -i db\init.sql -f 65001
+       sqlcmd -S (localdb)\MSSQLLocalDB -E -i db\init.sql -f 65001 -I
+       sqlcmd -S (localdb)\MSSQLLocalDB -E -i db\init-app.sql -f 65001 -I
      若使用完整版 SQL Server，将 -S 改为 localhost 即可，
      并同步修改 appsettings.json 中 ConnectionStrings:ConvenientSystemDb 的 Server。
    ============================================================= */
@@ -15,6 +19,11 @@ IF DB_ID(N'ConvenientSystem') IS NULL
     CREATE DATABASE [ConvenientSystem];
 GO
 USE [ConvenientSystem];
+GO
+
+-- sqlcmd 默认 QUOTED_IDENTIFIER OFF，过滤唯一索引（如 UQ_ChatConversation_UserKey）会创建失败（Msg 1934），
+-- 会话级显式开启（SSMS 默认即 ON，是双引号语法与 Unicode 字面量的标准行为）
+SET QUOTED_IDENTIFIER ON;
 GO
 
 -- ========== 创建 root 账号（供 API 连接使用，非 SA） ==========
@@ -96,6 +105,7 @@ BEGIN
         Phone       NVARCHAR(20)       NULL,
         Email       NVARCHAR(100)      NULL,
         Remark      NVARCHAR(200)      NULL,
+        RegisterSource NVARCHAR(20)   NULL,
         Enabled     BIT                NOT NULL DEFAULT 1,
         IsDeleted   BIT                NOT NULL DEFAULT 0,
         CreateTime  DATETIME           NOT NULL DEFAULT GETDATE(),
@@ -113,6 +123,7 @@ EXEC dbo.usp_AddColumnComment N'SysUser', N'Avatar',      N'头像（data:image/
 EXEC dbo.usp_AddColumnComment N'SysUser', N'Phone',       N'手机号';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'Email',       N'邮箱';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'Remark',      N'备注/个人简介';
+EXEC dbo.usp_AddColumnComment N'SysUser', N'RegisterSource', N'注册来源（web=Web端/app=手机端，存量视为 web）';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'Enabled',     N'是否启用';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'CreateTime',  N'创建时间';
 GO
@@ -234,7 +245,8 @@ BEGIN
     (26, 24, N'开发工具集', N'/dev-tools', 1, 1, 0, 1, 1, N'dev-tools', N'/src/common/views/DevToolsView.vue', 2, 1),
     (27, 24, N'SQL查询', N'/sql-query', 1, 1, 0, 1, 1, N'sql-query', N'/src/common/views/SqlQueryView.vue', 3, 1),
     (28, 24, N'命名转换', N'/code-naming', 1, 1, 0, 1, 1, N'code-naming', N'/src/common/views/CodeNamingView.vue', 4, 1),
-    (62, 24, N'API文档生成', N'/api-spec', 0, 1, 0, 1, 1, N'api-spec', N'/src/common/views/ApiSpecView.vue', 5, 1),
+    (62, 24, N'API 文档生成', N'/api-spec', 0, 1, 0, 1, 1, N'api-spec', N'/src/common/views/ApiSpecView.vue', 5, 1),
+    (64, 24, N'接口调试', N'/api-debug', 0, 1, 0, 1, 1, N'api-debug', N'/src/common/views/ApiDebugView.vue', 6, 1),
     -- 构建发布（一级菜单）
     (61, NULL, N'构建发布', NULL, 0, 1, 0, 1, 1, NULL, NULL, 5, 0),
     (59, 61, N'系统版本管理', N'/web-package', 0, 1, 0, 0, 1, N'web-package', N'/src/common/views/WebPackageView.vue', 1, 1),
@@ -1562,6 +1574,36 @@ WHERE r.Code = N'admin' AND m.Name = N'api-spec'
   AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
 GO
 
+-- ========== 老库补齐：接口调试视图/菜单/权限点（行级幂等） ==========
+IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'api-debug')
+    INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
+    VALUES (N'api-debug', N'接口调试', N'/src/common/views/ApiDebugView.vue', N'/api-debug', 42);
+GO
+
+DECLARE @ApiDebugViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'api-debug');
+IF @ApiDebugViewId IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'api-debug')
+        INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+        VALUES (@ApiDebugViewId, N'api-debug', N'查看接口调试', 0);
+END
+GO
+
+-- 菜单：挂「开发工具」组下
+IF NOT EXISTS (SELECT 1 FROM dbo.SysMenu WHERE Name = N'api-debug')
+    INSERT INTO dbo.SysMenu (ParentId, Title, Page, IsFloat, Visible, IsExternal, Editable, Enabled, Name, Component, SortOrder, Type)
+    SELECT p.Id, N'接口调试', N'/api-debug', 0, 1, 0, 1, 1, N'api-debug', N'/src/common/views/ApiDebugView.vue', 6, 1
+    FROM (SELECT TOP 1 Id FROM dbo.SysMenu WHERE Title = N'开发工具' AND Page IS NULL AND Name IS NULL ORDER BY Id) p;
+GO
+
+-- admin 角色关联新菜单
+INSERT INTO dbo.SysRoleMenu (RoleId, MenuId)
+SELECT r.Id, m.Id
+FROM dbo.SysRole r CROSS JOIN dbo.SysMenu m
+WHERE r.Code = N'admin' AND m.Name = N'api-debug'
+  AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
+GO
+
 -- ========== 老库补齐：流水线视图/菜单/权限点（行级幂等） ==========
 IF NOT EXISTS (SELECT 1 FROM dbo.SysView WHERE Name = N'pipeline')
     INSERT INTO dbo.SysView (Name, Title, Component, RoutePath, SortOrder)
@@ -1934,27 +1976,40 @@ EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'Error', N'异常信息';
 EXEC dbo.usp_AddColumnComment N'JobExecutionLog', N'CreatedAt', N'创建时间';
 GO
 
--- ========== 即时聊天模块（企业通讯录模式单聊：会话 / 成员 / 消息 / 屏蔽） ==========
+-- ========== 即时聊天模块（好友制单聊 + 群聊：会话 / 成员 / 消息 / 屏蔽 / 合并转发；好友两表在 db/init-app.sql） ==========
 
 -- 1. 会话表（单聊会话；双向归一 UserKey 唯一：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话）
 IF OBJECT_ID(N'dbo.ChatConversation') IS NULL
 BEGIN
     CREATE TABLE dbo.ChatConversation (
-        Id              BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-        UserKey         NVARCHAR(100)       NOT NULL,                    -- 双向归一键（排序后两个 Guid 拼接）
-        LastMessageId   BIGINT              NOT NULL DEFAULT 0,          -- 最后一条消息 Id（0=尚无消息）
-        LastSenderId    UNIQUEIDENTIFIER    NULL,                        -- 最后一条消息发送者（判未读：非我发送且 Id>我的水位）
-        LastMessageTime DATETIME2           NULL,                        -- 最后一条消息时间
-        LastMessageText NVARCHAR(200)       NULL,                        -- 最后一条消息预览（超长截断）
-        CreateTime      DATETIME2           NOT NULL DEFAULT GETDATE(),
-        CONSTRAINT UQ_ChatConversation_UserKey UNIQUE (UserKey)
+        Id               BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        UserKey          NVARCHAR(100)       NOT NULL,                    -- 双向归一键（排序后两个 Guid 拼接；群聊为空串）
+        ConversationType INT                 NOT NULL DEFAULT 0,          -- 会话类型：0=单聊 1=群聊
+        GroupName        NVARCHAR(100)       NULL,                        -- 群聊名称（单聊为空）
+        CreatorId        UNIQUEIDENTIFIER    NULL,                        -- 群聊创建者 Id（单聊为空）
+        Avatar           NVARCHAR(MAX)       NULL,                        -- 群聊头像或单聊对方头像（data URL）
+        LastMessageId    BIGINT              NOT NULL DEFAULT 0,          -- 最后一条消息 Id（0=尚无消息）
+        LastSenderId     UNIQUEIDENTIFIER    NULL,                        -- 最后一条消息发送者（判未读：非我发送且 Id>我的水位）
+        LastMessageTime  DATETIME2           NULL,                        -- 最后一条消息时间
+        LastMessageText  NVARCHAR(200)       NULL,                        -- 最后一条消息预览（超长截断）
+        CreateTime       DATETIME2           NOT NULL DEFAULT GETDATE()
     );
 END
 GO
 
-EXEC dbo.usp_AddTableComment N'ChatConversation', N'聊天会话表（单聊，双向归一）';
-EXEC dbo.usp_AddColumnComment N'ChatConversation', N'Id',              N'主键';
-EXEC dbo.usp_AddColumnComment N'ChatConversation', N'UserKey',         N'双向归一键：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话';
+-- 1.1 单聊 UserKey 过滤唯一索引（独立成段幂等补建：老库建表段整体跳过时也能拿到索引；
+--     群聊空串不参与唯一性，允许多个群聊）
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.ChatConversation') AND name = N'UQ_ChatConversation_UserKey')
+    CREATE UNIQUE INDEX UQ_ChatConversation_UserKey ON dbo.ChatConversation(UserKey) WHERE UserKey <> N'';
+GO
+
+EXEC dbo.usp_AddTableComment N'ChatConversation', N'聊天会话表（单聊双向归一 + 群聊）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'Id',               N'主键';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'UserKey',          N'双向归一键：两个用户 Guid 排序后拼接，A→B 与 B→A 同一会话；群聊为空串';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'ConversationType', N'会话类型：0=单聊 1=群聊';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'GroupName',        N'群聊名称（单聊为空）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'CreatorId',        N'群聊创建者 Id（单聊为空）';
+EXEC dbo.usp_AddColumnComment N'ChatConversation', N'Avatar',           N'群聊头像或单聊对方头像（data URL）';
 EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastMessageId',   N'最后一条消息 Id（0=尚无消息）';
 EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastSenderId',    N'最后一条消息发送者 Id（未读判断：非我发送且 Id > 我的已读水位）';
 EXEC dbo.usp_AddColumnComment N'ChatConversation', N'LastMessageTime', N'最后一条消息时间';
@@ -1969,10 +2024,12 @@ BEGIN
         Id             BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
         ConversationId BIGINT              NOT NULL,                    -- 关联 ChatConversation.Id
         UserId         UNIQUEIDENTIFIER    NOT NULL,                    -- 关联 SysUser.Id
-        ReadMessageId  BIGINT              NOT NULL DEFAULT 0,          -- 已读水位：已读到的最后消息 Id
-        Muted          BIT                 NOT NULL DEFAULT 0,          -- 免打扰（仍计未读，不提醒）
-        Hidden         BIT                 NOT NULL DEFAULT 0,          -- 会话隐藏：删会话=隐藏，来新消息自动恢复
-        CreateTime     DATETIME2           NOT NULL DEFAULT GETDATE(),
+        ReadMessageId      BIGINT              NOT NULL DEFAULT 0,          -- 已读水位：已读到的最后消息 Id
+        Muted              BIT                 NOT NULL DEFAULT 0,          -- 免打扰（仍计未读，不提醒）
+        Hidden             BIT                 NOT NULL DEFAULT 0,          -- 会话隐藏：删会话=隐藏，来新消息自动恢复
+        ClearBeforeMessageId BIGINT           NOT NULL DEFAULT 0,          -- 单方面删除水位：仅我方视图不显示 Id<=该值的消息
+        Role               INT                 NOT NULL DEFAULT 0,          -- 成员角色：0=成员 1=群主
+        CreateTime         DATETIME2           NOT NULL DEFAULT GETDATE(),
         CONSTRAINT UQ_ChatMember UNIQUE (ConversationId, UserId)
     );
     CREATE INDEX IX_ChatMember_UserId ON dbo.ChatConversationMember(UserId);
@@ -1985,8 +2042,10 @@ EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'ConversationId', N'�
 EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'UserId',         N'成员用户 Id（GUID，关联 SysUser.Id）';
 EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'ReadMessageId',  N'已读水位：已读到的最后消息 Id（未读数=水位之后的消息数）';
 EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Muted',          N'免打扰（仍计未读，前端不提醒）';
-EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Hidden',         N'会话隐藏（删除会话即隐藏，收到新消息自动恢复显示）';
-EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'CreateTime',     N'成员创建时间';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Hidden',             N'会话隐藏（删除会话即隐藏，收到新消息自动恢复显示）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'ClearBeforeMessageId', N'单方面删除水位：仅我方视图不显示 Id<=该值的消息（对方不受影响）';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'Role',               N'成员角色：0=成员 1=群主';
+EXEC dbo.usp_AddColumnComment N'ChatConversationMember', N'CreateTime',         N'成员创建时间';
 GO
 
 -- 3. 消息表（按会话+Id 索引，倒序分页拉取历史）
@@ -1996,7 +2055,13 @@ BEGIN
         Id             BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
         ConversationId BIGINT              NOT NULL,                    -- 关联 ChatConversation.Id
         SenderId       UNIQUEIDENTIFIER    NOT NULL,                    -- 发送者（GUID，关联 SysUser.Id）
-        Content        NVARCHAR(4000)      NOT NULL,                    -- 消息正文（纯文本）
+        Content        NVARCHAR(4000)      NOT NULL,                    -- 消息正文：文本为纯文本；图片为相对路径；卡片为标题
+        MsgType        INT                 NOT NULL DEFAULT 0,          -- 0=文本 1=图片 2=合并转发记录卡片
+        QuoteId        BIGINT              NOT NULL DEFAULT 0,          -- 引用原消息 Id（0=无引用）
+        QuoteText      NVARCHAR(400)       NULL,                        -- 引用快照（发送时截取固化）
+        QuoteSenderId  UNIQUEIDENTIFIER    NULL,                        -- 被引用消息发送者 Id
+        RefRecordId    BIGINT              NULL,                        -- 合并转发卡片指向的记录 Id（MsgType=2）
+        Mentions       NVARCHAR(2000)      NULL,                        -- @提及用户 Id 列表（JSON 数组字符串）
         CreateTime     DATETIME2           NOT NULL DEFAULT GETDATE()
     );
     CREATE INDEX IX_ChatMessage_Conv ON dbo.ChatMessage(ConversationId, Id DESC);
@@ -2007,11 +2072,17 @@ EXEC dbo.usp_AddTableComment N'ChatMessage', N'聊天消息表';
 EXEC dbo.usp_AddColumnComment N'ChatMessage', N'Id',             N'主键（递增，兼作排序与已读水位）';
 EXEC dbo.usp_AddColumnComment N'ChatMessage', N'ConversationId', N'关联 ChatConversation.Id';
 EXEC dbo.usp_AddColumnComment N'ChatMessage', N'SenderId',       N'发送者用户 Id（GUID，关联 SysUser.Id）';
-EXEC dbo.usp_AddColumnComment N'ChatMessage', N'Content',        N'消息正文（纯文本，超长截断）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'Content',        N'消息正文：文本为纯文本；图片为相对路径（chat-images/yyyyMM/文件名）；合并转发卡片为标题';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'MsgType',        N'消息类型：0=文本 1=图片 2=合并转发记录卡片';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'QuoteId',        N'引用的原消息 Id（0=无引用）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'QuoteText',      N'引用内容快照（原消息被单方面删除后仍可显示）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'QuoteSenderId',  N'被引用消息的发送者 Id';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'RefRecordId',    N'合并转发卡片指向的记录 Id（MsgType=2 时有效）';
+EXEC dbo.usp_AddColumnComment N'ChatMessage', N'Mentions',       N'@提及用户 Id 列表（JSON 数组字符串，空表示无人被@）';
 EXEC dbo.usp_AddColumnComment N'ChatMessage', N'CreateTime',     N'发送时间';
 GO
 
--- 4. 屏蔽名单表（通讯录模式下以屏蔽代替好友关系控制；任一方屏蔽则双向拒收）
+-- 4. 屏蔽名单表（任一方屏蔽则双向拒收；屏蔽优先于好友关系）
 IF OBJECT_ID(N'dbo.ChatBlockList') IS NULL
 BEGIN
     CREATE TABLE dbo.ChatBlockList (
@@ -2025,11 +2096,62 @@ BEGIN
 END
 GO
 
-EXEC dbo.usp_AddTableComment N'ChatBlockList', N'聊天屏蔽名单（任一方屏蔽则双向拒收消息）';
+EXEC dbo.usp_AddTableComment N'ChatBlockList', N'聊天屏蔽名单（任一方屏蔽则双向拒收消息；屏蔽优先于好友关系）';
 EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'Id',            N'主键';
 EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'UserId',        N'屏蔽发起人 Id（GUID，关联 SysUser.Id）';
 EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'BlockedUserId', N'被屏蔽人 Id（GUID，关联 SysUser.Id）';
 EXEC dbo.usp_AddColumnComment N'ChatBlockList', N'CreateTime',    N'屏蔽时间';
+GO
+
+-- 5. 合并转发记录表（消息快照固化为 JSON，原消息日后被删除不影响已转发记录的查看）
+IF OBJECT_ID(N'dbo.ChatForwardRecord') IS NULL
+BEGIN
+    CREATE TABLE dbo.ChatForwardRecord (
+        Id          BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        CreatorId   UNIQUEIDENTIFIER    NOT NULL,                    -- 转发发起人（GUID，关联 SysUser.Id）
+        Title       NVARCHAR(200)       NOT NULL,                    -- 卡片标题（如“张三和李四的聊天记录”）
+        ContentJson NVARCHAR(MAX)       NOT NULL,                    -- 消息快照 JSON：[{senderName, msgType, content, time}]
+        CreateTime  DATETIME2           NOT NULL DEFAULT GETDATE()
+    );
+    CREATE INDEX IX_ChatForwardRecord_Creator ON dbo.ChatForwardRecord(CreatorId);
+END
+GO
+
+EXEC dbo.usp_AddTableComment N'ChatForwardRecord', N'合并转发记录表（消息快照固化，只读展示）';
+EXEC dbo.usp_AddColumnComment N'ChatForwardRecord', N'Id',          N'主键';
+EXEC dbo.usp_AddColumnComment N'ChatForwardRecord', N'CreatorId',   N'创建者（转发发起人）';
+EXEC dbo.usp_AddColumnComment N'ChatForwardRecord', N'Title',       N'卡片标题（如“张三和李四的聊天记录”）';
+EXEC dbo.usp_AddColumnComment N'ChatForwardRecord', N'ContentJson', N'消息快照 JSON：[{senderName, msgType, content, time}]';
+EXEC dbo.usp_AddColumnComment N'ChatForwardRecord', N'CreateTime', N'创建时间';
+GO
+
+-- 6. 老库补列：群聊/引用/转发相关列（新库上方 CREATE TABLE 已含；老库缺列时在此幂等补齐）
+IF COL_LENGTH(N'dbo.ChatConversation', N'ConversationType') IS NULL
+    ALTER TABLE dbo.ChatConversation ADD ConversationType INT NOT NULL DEFAULT 0;
+IF COL_LENGTH(N'dbo.ChatConversation', N'GroupName') IS NULL
+    ALTER TABLE dbo.ChatConversation ADD GroupName NVARCHAR(100) NULL;
+IF COL_LENGTH(N'dbo.ChatConversation', N'CreatorId') IS NULL
+    ALTER TABLE dbo.ChatConversation ADD CreatorId UNIQUEIDENTIFIER NULL;
+IF COL_LENGTH(N'dbo.ChatConversation', N'Avatar') IS NULL
+    ALTER TABLE dbo.ChatConversation ADD Avatar NVARCHAR(MAX) NULL;
+IF COL_LENGTH(N'dbo.ChatConversation', N'LastSenderId') IS NULL
+    ALTER TABLE dbo.ChatConversation ADD LastSenderId UNIQUEIDENTIFIER NULL;
+IF COL_LENGTH(N'dbo.ChatConversationMember', N'ClearBeforeMessageId') IS NULL
+    ALTER TABLE dbo.ChatConversationMember ADD ClearBeforeMessageId BIGINT NOT NULL DEFAULT 0;
+IF COL_LENGTH(N'dbo.ChatConversationMember', N'Role') IS NULL
+    ALTER TABLE dbo.ChatConversationMember ADD Role INT NOT NULL DEFAULT 0;
+IF COL_LENGTH(N'dbo.ChatMessage', N'MsgType') IS NULL
+    ALTER TABLE dbo.ChatMessage ADD MsgType INT NOT NULL DEFAULT 0;
+IF COL_LENGTH(N'dbo.ChatMessage', N'QuoteId') IS NULL
+    ALTER TABLE dbo.ChatMessage ADD QuoteId BIGINT NOT NULL DEFAULT 0;
+IF COL_LENGTH(N'dbo.ChatMessage', N'QuoteText') IS NULL
+    ALTER TABLE dbo.ChatMessage ADD QuoteText NVARCHAR(400) NULL;
+IF COL_LENGTH(N'dbo.ChatMessage', N'QuoteSenderId') IS NULL
+    ALTER TABLE dbo.ChatMessage ADD QuoteSenderId UNIQUEIDENTIFIER NULL;
+IF COL_LENGTH(N'dbo.ChatMessage', N'RefRecordId') IS NULL
+    ALTER TABLE dbo.ChatMessage ADD RefRecordId BIGINT NULL;
+IF COL_LENGTH(N'dbo.ChatMessage', N'Mentions') IS NULL
+    ALTER TABLE dbo.ChatMessage ADD Mentions NVARCHAR(2000) NULL;
 GO
 
 -- ========== 老库补齐：配置文件热编辑视图/菜单/权限点（行级幂等） ==========

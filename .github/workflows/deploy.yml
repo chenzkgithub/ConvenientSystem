@@ -98,6 +98,11 @@ jobs:
           # 打包前端产物
           tar -czf web.tar.gz -C web/wwwroot .
           
+          # 数据库脚本拼接：PC 端 db/init.sql + 手机端 db/init-app.sql → 单一 db/init.sql
+          # （服务器 compose 固定挂载 db/init.sql → 容器内 /init.sql，init-db.sh 逻辑不变；
+          #   echo 补空行防止两文件首尾黏连）
+          { cat db/init.sql; echo; cat db/init-app.sql; } > db/init.sql.tmp && mv db/init.sql.tmp db/init.sql
+          
           # 打包 Docker 配置文件（Dockerfile 等可能更新）
           tar -czf docker-config.tar.gz \
             Dockerfile \

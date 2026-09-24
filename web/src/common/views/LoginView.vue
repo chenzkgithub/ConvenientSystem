@@ -74,6 +74,8 @@ async function doLogin() {
     } else {
       if (result.reason === 'account_disabled') {
         ElMessage.error('账号已被停用，请联系管理员')
+      } else if (result.reason === 'no_pc_permission') {
+        ElMessage.error('该账号无 PC 端访问权限，请联系管理员开通')
       } else if (result.reason === 'wrong_password') {
         ElMessage.error('密码错误')
       } else {

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using FreeSql;
@@ -470,23 +471,26 @@ public sealed class PipelineService
             }
             AppendLog(run, $">> 执行 {fileName}（{batches.Count} 批次）...");
 
-            var fileAffected = await ExecuteBatchesAsync(run, fsql, batches, stage.UseTransaction, ct);
+            var (fileAffected, fileChanged, fileUnchanged) = await ExecuteBatchesAsync(run, fsql, batches, stage.UseTransaction, ct);
 
             totalBatches += batches.Count;
             totalAffected += fileAffected;
-            AppendLog(run, $">> ✔ {fileName} 完成，影响 {fileAffected} 行");
+            AppendLog(run, $">> ✔ {fileName} 完成：{batches.Count} 批全部成功（{fileChanged} 批有变更 / {fileUnchanged} 批无变更），影响共 {fileAffected} 行");
         }
         return (files.Count, totalBatches, totalAffected);
     }
 
     /// <summary>
-    /// 逐批执行 SQL：原生 DbCommand（SqlExecuteService 同模式），逐批输出影响行数/耗时/语句预览，
-    /// SQL Server 顺带收集 PRINT/RAISERROR 信息消息；返回总影响行数；
-    /// 事务模式下任一批失败回滚整个文件，异常上抛（阶段失败）。
+    /// 逐批执行 SQL：原生 DbCommand（SqlExecuteService 同模式），实时返回有意义的信息——
+    /// 有变更（影响 > 0）的批次逐行输出影响行数/耗时/语句预览，失败批次输出 ✘ 明细与数据库原话，
+    /// PRINT/RAISERROR 消息实时逐条输出（带批次号）；成功但无变更的批次静默计数不刷屏。
+    /// 返回（总影响行数，有变更批次数，无变更批次数）；事务模式下任一批失败回滚整个文件，异常上抛（阶段失败）。
     /// </summary>
-    private async Task<long> ExecuteBatchesAsync(RunningPipeline run, IFreeSql fsql, List<string> batches, bool useTransaction, CancellationToken ct)
+    private async Task<(long Affected, int Changed, int Unchanged)> ExecuteBatchesAsync(RunningPipeline run, IFreeSql fsql, List<string> batches, bool useTransaction, CancellationToken ct)
     {
         long affected = 0;
+        var changed = 0;
+        var unchanged = 0;
         // FreeSql 池化连接（取到即已打开，using 归还连接池）
         using var pooled = await fsql.Ado.MasterPool.GetAsync();
         var conn = pooled.Value;
@@ -507,9 +511,18 @@ public sealed class PipelineService
                 cmd.CommandTimeout = 0; // 脚本可能含大数据量操作，不设超时
                 try
                 {
-                    var rows = await cmd.ExecuteNonQueryAsync(ct);
+                    // -1 = 语句无行数统计（DDL / SET NOCOUNT 下的 DML 等），按 0 计，避免“影响 -1 行”误导与汇总负数
+                    var rows = Math.Max(await cmd.ExecuteNonQueryAsync(ct), 0);
                     affected += rows;
-                    AppendLog(run, $">>   [{i + 1}/{batches.Count}] 影响 {rows} 行（{batchSw.ElapsedMilliseconds} ms）｜{PreviewSql(batches[i])}");
+                    if (rows > 0)
+                    {
+                        changed++;
+                        AppendLog(run, $">>   [{i + 1}/{batches.Count}] 影响 {rows} 行（{batchSw.ElapsedMilliseconds} ms）｜{PreviewSql(batches[i])}");
+                    }
+                    else
+                    {
+                        unchanged++; // 成功但无变更（幂等跳过/DDL）：不逐行刷屏，文件结束汇总里统计
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -518,7 +531,7 @@ public sealed class PipelineService
                     AppendLog(run, $">>     错误：{ex.Message}");
                     throw;
                 }
-                FlushInfoMessages(run, infoMessages);
+                FlushInfoMessages(run, infoMessages, i + 1);
             }
             if (tx != null) await tx.CommitAsync(ct);
         }
@@ -535,7 +548,7 @@ public sealed class PipelineService
         {
             if (sqlConn != null) sqlConn.InfoMessage -= OnInfoMessage;
         }
-        return affected;
+        return (affected, changed, unchanged);
 
         void OnInfoMessage(object sender, SqlInfoMessageEventArgs e)
         {
@@ -556,21 +569,22 @@ public sealed class PipelineService
         return "(仅注释或空语句)";
     }
 
-    /// <summary>把执行期收集的 PRINT/信息消息逐条落日志（落完清空，避免跨批重复输出）。</summary>
-    private static void FlushInfoMessages(RunningPipeline run, List<string> messages)
+    /// <summary>把执行期收集的 PRINT/信息消息逐条实时落日志（带批次号便于溯源，落完清空避免跨批重复）。</summary>
+    private static void FlushInfoMessages(RunningPipeline run, List<string> messages, int batchNo)
     {
         if (messages.Count == 0) return;
         foreach (var message in messages)
         {
             var text = message.Trim();
-            if (text.Length > 0) AppendLog(run, $">>     消息：{text}");
+            if (text.Length > 0) AppendLog(run, $">>   [批 {batchNo}] {text}");
         }
         messages.Clear();
     }
 
     /// <summary>
     /// 测试数据库连接（流水线数据库阶段“测试连接”按钮）：临时 FreeSql 实例探活并取服务版本，
-    /// 不执行任何脚本、不落任何配置；12 秒限时；失败以结果对象返回（不抛异常，前端统一展示）。
+    /// 不执行任何脚本、不落任何配置；限时尊重连接串的 Connect Timeout（默认 15 秒，钳制 5~60）+ 3 秒缓冲；
+    /// 失败以结果对象返回（不抛异常，前端统一展示）。
     /// </summary>
     public async Task<PipelineConnectionTestDto> TestConnectionAsync(string dbType, string connectionString)
     {
@@ -585,21 +599,69 @@ public sealed class PipelineService
             using var fsql = new FreeSqlBuilder()
                 .UseConnectionString(dbTypeValue, connectionString.Trim())
                 .Build();
+            // 限时 = 连接串 Connect Timeout + 3 秒缓冲（覆盖连接打开以外的时间损耗），钳制 5~60 秒
+            var timeoutSec = TryGetConnectTimeoutSeconds(connectionString) ?? 15;
+            var limit = TimeSpan.FromSeconds(Math.Clamp(timeoutSec, 5, 60) + 3);
             var version = await Task.Run(() =>
             {
                 using var pooled = fsql.Ado.MasterPool.Get(); // 取到即已打开，Dispose 归还池
                 return pooled.Value.ServerVersion ?? string.Empty;
-            }).WaitAsync(TimeSpan.FromSeconds(12));
+            }).WaitAsync(limit);
             return new PipelineConnectionTestDto { Success = true, Message = "连接成功", ServerVersion = version, ElapsedMs = sw.ElapsedMilliseconds };
         }
         catch (TimeoutException)
         {
-            return new PipelineConnectionTestDto { Success = false, Message = "连接超时（12 秒），请检查地址、端口与网络连通性", ElapsedMs = sw.ElapsedMilliseconds };
+            var timeoutSec = TryGetConnectTimeoutSeconds(connectionString);
+            return new PipelineConnectionTestDto { Success = false, Message = $"连接超时（{timeoutSec ?? 15} 秒，取连接串 Connect Timeout），请检查地址、端口与网络连通性", ElapsedMs = sw.ElapsedMilliseconds };
         }
         catch (Exception ex)
         {
-            return new PipelineConnectionTestDto { Success = false, Message = ex.InnerException?.Message ?? ex.Message, ElapsedMs = sw.ElapsedMilliseconds };
+            var message = ex.InnerException?.Message ?? ex.Message;
+            // 主机名解析失败是典型误配（如 Docker/内网服务名在本机不可解析）：把底层网络错误升级为可操作指引
+            if (await IsDataSourceHostUnresolvableAsync(connectionString))
+            {
+                var host = TryGetDataSourceHost(connectionString);
+                message += $"（主机名“{host}”在本机无法解析：该名称可能只在服务器内网或容器网络内有效；请改用「服务器IP,端口」写法，如 Data Source=服务器IP,1433，或在本机 hosts 文件中把该名称映射到服务器 IP）";
+            }
+            return new PipelineConnectionTestDto { Success = false, Message = message, ElapsedMs = sw.ElapsedMilliseconds };
         }
+    }
+
+    /// <summary>从连接串解析 Data Source 主机名（支持 host,port 与 host\instance 写法；空返回 null）。</summary>
+    private static string? TryGetDataSourceHost(string connectionString)
+    {
+        try
+        {
+            var host = new SqlConnectionStringBuilder(connectionString).DataSource;
+            if (string.IsNullOrWhiteSpace(host)) return null;
+            var comma = host.IndexOf(',');
+            if (comma >= 0) host = host[..comma];
+            var slash = host.IndexOf('\\');
+            if (slash >= 0) host = host[..slash];
+            host = host.Trim();
+            return host.Length == 0 ? null : host;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>从连接串解析 Connect Timeout（秒）；解析失败返回 null。</summary>
+    private static int? TryGetConnectTimeoutSeconds(string connectionString)
+    {
+        try { return new SqlConnectionStringBuilder(connectionString).ConnectTimeout; }
+        catch { return null; }
+    }
+
+    /// <summary>Data Source 主机名在本机是否无法解析（3 秒限时；空/本机/解析异常一律视为可解析，避免误报）。</summary>
+    private static async Task<bool> IsDataSourceHostUnresolvableAsync(string connectionString)
+    {
+        var host = TryGetDataSourceHost(connectionString);
+        if (string.IsNullOrEmpty(host) || host == ".") return false;
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(host).WaitAsync(TimeSpan.FromSeconds(3));
+            return addresses.Length == 0;
+        }
+        catch { return true; }
     }
 
     /// <summary>

@@ -12,6 +12,8 @@ namespace ConvenientSystem.Api.Hubs
     /// - ReceiveMessage(ChatMessageDto)：新消息（发给会话双方）；
     /// - ReadAck(conversationId, readerId, messageId)：已读水位推进回执（发给会话对方）；
     /// - UserOnline / UserOffline(userId)：上下线状态广播（发给全部连接，前端维护在线集合）；
+    /// - FriendRequest(FriendRequestDto)：新好友申请（发给接收方，前端拉取申请列表/角标）；
+    /// - FriendRequestHandled(FriendRequestHandledDto)：好友申请处理结果（发给申请人，前端提示并刷新）；
     /// - NoticeCreated()：新系统通知广播（发给全部连接，无参数；前端收到后各自拉取列表/未读数，
     ///   定向通知的可见性过滤由拉取接口完成，不在推送侧复制）。通知与聊天共用本连接（单连接多事件）。
     /// </summary>

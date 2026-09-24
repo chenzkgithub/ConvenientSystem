@@ -32,11 +32,11 @@ export function listAuditLogs(params?: {
 }
 
 /** 审计操作按日趋势（对应后端 AuditLogController Trend） */
-export function getAuditTrend(days: number) {
-  return httpGet<SendTrend>('/api/Common/AuditLog/Trend', { days })
+export function getAuditTrend(days: number, opts?: { silent?: boolean }) {
+  return httpGet<SendTrend>('/api/Common/AuditLog/Trend', { days }, undefined, opts)
 }
 
 /** 登录活跃按日趋势（对应后端 AuditLogController LoginTrend） */
-export function getAuditLoginTrend(days: number) {
-  return httpGet<SendTrend>('/api/Common/AuditLog/LoginTrend', { days })
+export function getAuditLoginTrend(days: number, opts?: { silent?: boolean }) {
+  return httpGet<SendTrend>('/api/Common/AuditLog/LoginTrend', { days }, undefined, opts)
 }

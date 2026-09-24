@@ -5,10 +5,11 @@
  */
 import { ref, onActivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Lock } from '@element-plus/icons-vue'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
-import { getMyConfig, updateMyConfig, getLauncherItems, saveLauncherItems } from '@/common/api/userConfig'
-import { getApifoxAccessTokenStatus, saveApifoxAccessToken } from '@/common/api/apiSpec'
+import { getMyConfig, updateMyConfig, getLauncherItems, saveLauncherItems, revealMyConfigValue } from '@/common/api/userConfig'
+import { getApifoxAccessTokenStatus, saveApifoxAccessToken, revealApifoxAccessToken } from '@/common/api/apiSpec'
 import type { UserConfigGroup, LauncherEntry } from '@/common/api/userConfig'
 import { useLockStore } from '@/common/stores/lock'
 
@@ -28,6 +29,8 @@ const apifoxTokenConfigured = ref(false)
 const apifoxAccessToken = ref('')
 const apifoxTokenLoading = ref(false)
 const apifoxTokenSaving = ref(false)
+/** Apifox 令牌明文（验证登录密码通过后展示，仅存内存） */
+const apifoxRevealedToken = ref('')
 
 /** 编辑副本：configKey → 当前值 */
 const myEditMap = ref<Record<string, string>>({})
@@ -59,8 +62,60 @@ function isMyGroupDirty(category: string): boolean {
   return group.items.some(item => {
     const cur = myEditMap.value[item.configKey] ?? ''
     const orig = myOriginalMap.value[item.configKey] ?? ''
-    return cur !== orig
+    // 脱敏占位符不算修改（密码类项未验证明文时保持原样）
+    return cur !== orig && cur !== MASKED
   })
+}
+
+const MASKED = '••••••••'
+/** 已验证明文的密码类配置项 key 集合（刷新后重置） */
+const revealedKeys = ref<Set<string>>(new Set())
+
+/** 密码验证弹窗（mode：config=动态配置项 / apifox=Access Token） */
+const revealDialog = ref(false)
+const revealMode = ref<'config' | 'apifox'>('config')
+const revealKey = ref('')
+const revealPassword = ref('')
+const revealLoading = ref(false)
+
+/** 打开密码验证弹窗 */
+function openRevealDialog(mode: 'config' | 'apifox', key = '') {
+  revealMode.value = mode
+  revealKey.value = key
+  revealPassword.value = ''
+  revealDialog.value = true
+}
+
+/** 验证登录密码并回填明文 */
+async function doReveal() {
+  revealLoading.value = true
+  try {
+    if (revealMode.value === 'apifox') {
+      const res = await revealApifoxAccessToken(revealPassword.value)
+      if (res?.ok && res.value != null) {
+        apifoxRevealedToken.value = res.value
+        revealDialog.value = false
+        ElMessage.success('验证通过')
+      } else {
+        ElMessage.error('密码错误')
+      }
+    } else {
+      const res = await revealMyConfigValue(revealKey.value, revealPassword.value)
+      if (res?.ok && res.value != null) {
+        myEditMap.value[revealKey.value] = res.value
+        myOriginalMap.value[revealKey.value] = res.value
+        revealedKeys.value.add(revealKey.value)
+        revealDialog.value = false
+        ElMessage.success('验证通过')
+      } else {
+        ElMessage.error('密码错误')
+      }
+    }
+  } catch {
+    /* request.ts 已弹错误提示 */
+  } finally {
+    revealLoading.value = false
+  }
 }
 
 async function loadMyConfig() {
@@ -70,6 +125,7 @@ async function loadMyConfig() {
     myGroups.value = data || []
     myEditMap.value = {}
     myOriginalMap.value = {}
+    revealedKeys.value.clear()
     for (const g of myGroups.value) {
       for (const item of g.items) {
         myEditMap.value[item.configKey] = item.configValue || ''
@@ -106,6 +162,7 @@ async function saveApifoxToken() {
   try {
     await saveApifoxAccessToken({ accessToken, clearAccessToken: false })
     apifoxAccessToken.value = ''
+    apifoxRevealedToken.value = ''
     apifoxTokenConfigured.value = true
     ElMessage.success('Apifox Access Token 已保存')
   } catch {
@@ -126,6 +183,7 @@ async function clearApifoxToken() {
   try {
     await saveApifoxAccessToken({ clearAccessToken: true })
     apifoxAccessToken.value = ''
+    apifoxRevealedToken.value = ''
     apifoxTokenConfigured.value = false
     ElMessage.success('Apifox Access Token 已清除')
   } catch {
@@ -140,7 +198,8 @@ async function saveMyGroup(group: UserConfigGroup) {
     .filter(item => {
       const cur = myEditMap.value[item.configKey] ?? ''
       const orig = myOriginalMap.value[item.configKey] ?? ''
-      return cur !== orig
+      // 脱敏占位符不提交（password 类项未验证时保持库存原值）
+      return cur !== orig && cur !== MASKED
     })
     .map(item => ({
       configKey: item.configKey,
@@ -292,9 +351,35 @@ onActivated(loadLauncherItems)
               <span v-if="item.description" class="config-desc">{{ item.description }}</span>
             </div>
             <div class="config-control">
+              <!-- password（脱敏，需验证登录密码后查看明文） -->
+              <template v-if="item.inputType === 'password'">
+                <el-input
+                  v-if="revealedKeys.has(item.configKey)"
+                  v-model="myEditMap[item.configKey]"
+                  type="password"
+                  show-password
+                  :placeholder="`请输入${item.displayName}`"
+                  class="config-input"
+                />
+                <el-input
+                  v-else
+                  :model-value="MASKED"
+                  type="password"
+                  readonly
+                  class="config-input reveal-input"
+                  @click="openRevealDialog('config', item.configKey)"
+                >
+                  <template #suffix>
+                    <el-icon class="reveal-icon" @click.stop="openRevealDialog('config', item.configKey)">
+                      <Lock />
+                    </el-icon>
+                  </template>
+                </el-input>
+              </template>
+
               <!-- switch -->
               <el-switch
-                v-if="item.inputType === 'switch'"
+                v-else-if="item.inputType === 'switch'"
                 :model-value="getMySwitchVal(item.configKey)"
                 @update:model-value="(v: string | number | boolean) => setMySwitchVal(item.configKey, v === true)"
                 active-text="开启"
@@ -363,12 +448,42 @@ onActivated(loadLauncherItems)
           <div class="config-item">
             <div class="config-label">
               <span class="config-name">保存状态</span>
-              <span class="config-desc">令牌仅在服务端加密保存，页面不会返回或显示已保存的内容。</span>
+              <span class="config-desc">令牌在服务端加密保存，查看明文需验证登录密码。</span>
             </div>
             <div class="config-control">
               <el-tag :type="apifoxTokenConfigured ? 'success' : 'info'">
                 {{ apifoxTokenConfigured ? '已配置' : '未配置' }}
               </el-tag>
+            </div>
+          </div>
+          <div v-if="apifoxTokenConfigured" class="config-item">
+            <div class="config-label">
+              <span class="config-name">当前令牌</span>
+              <span class="config-desc">已保存的令牌内容，仅显示在本次页面会话中。</span>
+            </div>
+            <div class="config-control">
+              <el-input
+                v-if="apifoxRevealedToken"
+                :model-value="apifoxRevealedToken"
+                type="password"
+                show-password
+                readonly
+                class="config-input"
+              />
+              <el-input
+                v-else
+                :model-value="MASKED"
+                type="password"
+                readonly
+                class="config-input reveal-input"
+                @click="openRevealDialog('apifox')"
+              >
+                <template #suffix>
+                  <el-icon class="reveal-icon" @click.stop="openRevealDialog('apifox')">
+                    <Lock />
+                  </el-icon>
+                </template>
+              </el-input>
             </div>
           </div>
           <div class="config-item">
@@ -457,6 +572,30 @@ onActivated(loadLauncherItems)
     <template #footer>
       <el-button @click="launcherDialogVisible = false">取消</el-button>
       <el-button type="primary" @click="saveLauncherEntry">保存</el-button>
+    </template>
+  </CommonDialog>
+
+  <!-- 密码验证弹窗（查看敏感明文前校验登录密码） -->
+  <CommonDialog
+    v-model="revealDialog"
+    title="身份验证"
+    width="360px"
+    :close-on-click-modal="false"
+  >
+    <div class="reveal-dialog-body">
+      <el-icon class="reveal-icon"><Lock /></el-icon>
+      <p class="reveal-tip">请输入您的登录密码以查看敏感内容</p>
+      <el-input
+        v-model="revealPassword"
+        type="password"
+        show-password
+        placeholder="登录密码"
+        @keyup.enter="doReveal"
+      />
+    </div>
+    <template #footer>
+      <el-button @click="revealDialog = false">取消</el-button>
+      <el-button type="primary" :loading="revealLoading" @click="doReveal">确认</el-button>
     </template>
   </CommonDialog>
 </template>
@@ -561,8 +700,43 @@ onActivated(loadLauncherItems)
   width: 260px;
 }
 
+.reveal-input {
+  cursor: pointer;
+}
+.reveal-input :deep(.el-input__inner) {
+  cursor: pointer;
+}
+.reveal-icon {
+  cursor: pointer;
+  color: var(--el-color-warning);
+}
+.reveal-icon:hover {
+  color: var(--el-color-warning-light-3);
+}
+
 .config-number {
   width: 160px;
+}
+
+/* 密码验证弹窗 */
+.reveal-dialog-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.reveal-icon {
+  font-size: 36px;
+  color: #e6a23c;
+}
+
+.reveal-tip {
+  font-size: 13px;
+  color: #606266;
+  margin: 0;
+  text-align: center;
 }
 
 .token-actions {

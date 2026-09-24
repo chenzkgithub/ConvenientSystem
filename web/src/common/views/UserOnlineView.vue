@@ -44,7 +44,8 @@ function openAvatarPreview(avatar: string) {
 async function loadData() {
   loading.value = true
   try {
-    list.value = await listOnlineUsers()
+    // 页面自带表格 loading：请求静默，避免全局遮罩叠加（30s 自动刷新也会周期性弹）
+    list.value = await listOnlineUsers({ silent: true })
   } catch {
     /* 错误已由 request.ts 弹出提示 */
   } finally {

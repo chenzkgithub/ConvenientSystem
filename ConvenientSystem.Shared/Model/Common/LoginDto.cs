@@ -7,6 +7,8 @@ namespace ConvenientSystem.Shared.Model.Common
     {
         public string? account { get; set; }
         public string? password { get; set; }
+        /// <summary>客户端平台标识：app=手机端；缺省/其他值按 web 处理（跨端会话互不挤号）</summary>
+        public string? platform { get; set; }
     }
 
     /// <summary>
@@ -33,11 +35,11 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? Avatar { get; set; }
         /// <summary>登录成功签发的 JWT（失败为 null）</summary>
         public string? Token { get; set; }
-        /// <summary>可见菜单权限码（菜单 Name），前端可用于按鈕级控制</summary>
+        /// <summary>可见菜单权限码：Web/桌面端=PC 菜单码；手机端（platform=app）=SysUserAppPerm 白名单的 app-* 码，前端可用于入口显隐</summary>
         public List<string> MenuCodes { get; set; } = new();
         /// <summary>用户角色编码</summary>
         public List<string> Roles { get; set; } = new();
-        /// <summary>失败原因码：account_disabled / wrong_password / account_not_found。Ok=true 时为 null。</summary>
+        /// <summary>失败原因码：account_disabled / wrong_password / account_not_found / no_app_permission（无 app-login，拒绝登录手机端）/ no_pc_permission（无任意启用角色，拒绝登录 PC 端）。Ok=true 时为 null。</summary>
         public string? Reason { get; set; }
         /// <summary>会话超时时间（分钟）：0 表示不自动退出，由系统配置 Security.SessionTimeoutMinutes 决定。</summary>
         public int SessionTimeoutMinutes { get; set; }

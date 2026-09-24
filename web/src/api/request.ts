@@ -3,6 +3,7 @@
 // 独立浏览器部署时通过 VITE_API_BASE 指定远程接口基址。
 // 所有请求自动带全局 loading：引用计数，并发请求只显示一个遮罩；延迟展示避免快请求闪烁。
 // loading 就近遮罩：存在打开的弹窗/抽屉时始终遮罩最上层窗口，否则遮罩触发位置所在页面区域，不覆盖整个程序窗口。
+// 规范：定时器/推送事件驱动的后台请求（轮询、角标、心跳等）必须传 silent 或 noLoading，不得触发全局遮罩。
 import axios, { AxiosError, type AxiosInstance } from 'axios'
 import { ElLoading, ElMessage, useZIndex } from 'element-plus'
 import 'element-plus/es/components/loading/style/css'
@@ -332,10 +333,13 @@ function handleAxiosError(error: AxiosError): never {
 // ==================== 导出方法（签名与原 fetch 版完全一致） ====================
 
 /** GET 请求；timeoutMs 可选，长耗时接口（如磁盘扫描）可传入更大值；
- *  opts.silent 用于后台静默轮询：不弹 loading 遮罩、不弹错误提示、不跳转错误页，失败仅抛错由调用方自行处理 */
-export async function httpGet<T>(url: string, params?: Record<string, unknown>, timeoutMs?: number, opts?: { silent?: boolean }): Promise<T> {
+ *  opts.silent 用于后台静默轮询：不弹 loading 遮罩、不弹错误提示、不跳转错误页，失败仅抛错由调用方自行处理；
+ *  opts.noLoading 仅抑制遮罩，保留错误提示与 401 处理（心跳等需感知登录态的轮询用） */
+export async function httpGet<T>(url: string, params?: Record<string, unknown>, timeoutMs?: number, opts?: { silent?: boolean; noLoading?: boolean }): Promise<T> {
   const silent = opts?.silent === true
-  if (!silent) loadingStart()
+  // silent 必然不显示遮罩；noLoading 只关遮罩，保留错误提示与 401 处理
+  const hideLoading = silent || opts?.noLoading === true
+  if (!hideLoading) loadingStart()
   try {
     return await api.get<T>(url, {
       params,
@@ -343,7 +347,7 @@ export async function httpGet<T>(url: string, params?: Record<string, unknown>, 
       __silent: silent,
     } as Record<string, unknown>)
   } finally {
-    if (!silent) loadingEnd()
+    if (!hideLoading) loadingEnd()
   }
 }
 
@@ -412,11 +416,13 @@ function assertDesktopHost(): void {
   if (!IS_DESKTOP_HOST) throw new ApiError('此功能仅桌面端可用', {})
 }
 
-/** 本地 GET：请求桌面端 /api/local/*；签名与 httpGet 一致 */
-export async function localGet<T>(url: string, params?: Record<string, unknown>, timeoutMs?: number, opts?: { silent?: boolean }): Promise<T> {
+/** 本地 GET：请求桌面端 /api/local/*；签名与 httpGet 一致（opts 支持 silent / noLoading） */
+export async function localGet<T>(url: string, params?: Record<string, unknown>, timeoutMs?: number, opts?: { silent?: boolean; noLoading?: boolean }): Promise<T> {
   assertDesktopHost()
   const silent = opts?.silent === true
-  if (!silent) loadingStart()
+  // silent 必然不显示遮罩；noLoading 只关遮罩，保留错误提示与 401 处理
+  const hideLoading = silent || opts?.noLoading === true
+  if (!hideLoading) loadingStart()
   try {
     return await localApi.get<T>(url, {
       params,
@@ -424,7 +430,7 @@ export async function localGet<T>(url: string, params?: Record<string, unknown>,
       __silent: silent,
     } as Record<string, unknown>)
   } finally {
-    if (!silent) loadingEnd()
+    if (!hideLoading) loadingEnd()
   }
 }
 

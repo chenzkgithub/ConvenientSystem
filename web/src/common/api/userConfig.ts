@@ -40,6 +40,14 @@ export function updateMyConfig(items: UserConfigSaveItem[]) {
   return httpPut('/api/Common/UserConfig/UpdateBatch', items)
 }
 
+/** 查看密码类个人配置明文（需验证登录密码；仅限 password 类型的配置项） */
+export function revealMyConfigValue(configKey: string, password: string) {
+  return httpPost<{ ok: boolean; value: string | null }>('/api/Common/UserConfig/RevealValue', {
+    configKey,
+    password,
+  })
+}
+
 /** 获取当前用户 UI 偏好键值字典（含默认值） */
 export function getUIPrefs() {
   return httpGet<Record<string, string>>('/api/Common/UserConfig/GetUIPrefs')

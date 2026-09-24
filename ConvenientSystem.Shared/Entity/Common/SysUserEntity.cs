@@ -34,6 +34,9 @@ namespace ConvenientSystem.Shared.Entity.Common
         /// <summary>备注/个人简介</summary>
         public string? Remark { get; set; }
 
+        /// <summary>注册来源：web=Web 端 / app=手机端（存量数据视为 web，见 db/init.sql）</summary>
+        public string? RegisterSource { get; set; }
+
         /// <summary>是否启用</summary>
         public bool Enabled { get; set; } = true;
 

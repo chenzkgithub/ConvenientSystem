@@ -219,6 +219,19 @@ namespace ConvenientSystem.Shared.Model.Common
         public bool ClearAccessToken { get; set; }
     }
 
+    /// <summary>查看当前用户 Apifox Access Token 明文的请求（需验证登录密码）。</summary>
+    public class ApifoxAccessTokenRevealRequest
+    {
+        public string? Password { get; set; }
+    }
+
+    /// <summary>查看当前用户 Apifox Access Token 明文的结果。</summary>
+    public class ApifoxAccessTokenRevealResult
+    {
+        public bool Ok { get; set; }
+        public string? Value { get; set; }
+    }
+
     /// <summary>向 Apifox 导入 OpenAPI 数据的请求。内容由桌面端本地解析生成，导入选项仅本次使用。</summary>
     public class ApifoxImportRequest
     {

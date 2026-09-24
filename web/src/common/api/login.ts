@@ -25,13 +25,14 @@ export function getLoginDefault() {
 
 /** 校验登录 */
 export function verifyLogin(account: string, password: string) {
-  return httpPost<LoginVerifyResult>('/api/Common/Login/VerifyLogin', { account, password })
+  return httpPost<LoginVerifyResult>('/api/Common/Login/VerifyLogin', { account, password, platform: 'web' })
 }
 
-/** 心跳检查：前端轮询当前登录账号是否仍处于启用状态。lastActivity 为用户最后真实操作时间（ISO 8601） */
+/** 心跳检查：前端轮询当前登录账号是否仍处于启用状态。lastActivity 为用户最后真实操作时间（ISO 8601）
+ *  用 noLoading：心跳每 10 秒一次，弹遮罩会周期性闪烁；保留错误提示与 401 处理以感知挤号/停用 */
 export function checkAuthStatus(lastActivity?: string) {
   const query = lastActivity ? `?lastActivity=${encodeURIComponent(lastActivity)}` : ''
-  return httpGet<{ enabled: boolean }>(`/api/Common/Login/CheckStatus${query}`)
+  return httpGet<{ enabled: boolean }>(`/api/Common/Login/CheckStatus${query}`, undefined, undefined, { noLoading: true })
 }
 
 /** 退出登录：通知后端从在线追踪器中移除当前用户

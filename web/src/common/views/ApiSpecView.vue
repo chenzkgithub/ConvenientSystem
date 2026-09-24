@@ -385,8 +385,10 @@
       </template>
     </el-dialog>
 
-    <!-- 接口调试抽屉：自由调试（init 为 null）或从接口行带入方法+地址 -->
-    <ApiDebugDrawer v-model="debugVisible" :init="debugInit" />
+    <!-- 接口调试抽屉：自由调试（init 为 null）或从接口行带入方法+地址+参数 -->
+    <el-drawer v-model="debugVisible" title="接口调试" size="80%" :close-on-click-modal="true">
+      <ApiDebugView :init="debugInit" />
+    </el-drawer>
   </div>
 </template>
 
@@ -405,7 +407,7 @@ import {
 import { ApiError } from '@/api/request'
 import type { AsyncTaskDto } from '@/common/api/asyncTask'
 import { useAsyncTaskStore } from '@/common/stores/asyncTask'
-import ApiDebugDrawer from '@/common/components/ApiDebugDrawer.vue'
+import ApiDebugView from '@/common/views/ApiDebugView.vue'
 
 const SOLUTION_KEY = 'api-spec:solution'
 const BASE_URL_KEY = 'api-spec:baseUrl'
@@ -523,12 +525,45 @@ const specCountText = computed(() => {
   return task.total <= 0 ? `${phaseText}...` : `${phaseText} ${task.completed} / ${task.total} 个文件`
 })
 
-/** 接口调试抽屉：debugInit 非空表示从某个接口行带入（方法+完整地址） */
+/** 接口调试抽屉：debugInit 非空表示从某个接口行带入（方法+完整地址+参数） */
 const debugVisible = ref(false)
-const debugInit = ref<{ method: string; url: string } | null>(null)
+const debugInit = ref<{
+  method: string
+  url: string
+  headers?: Record<string, string>
+  body?: string
+  params?: any[]
+  types?: Record<string, any>
+} | null>(null)
 
 function openDebug(ep?: ApiSpecSolutionEndpointDto) {
-  debugInit.value = ep ? { method: ep.method, url: fullUrl(ep.path) } : null
+  if (!ep) {
+    debugInit.value = null
+    debugVisible.value = true
+    return
+  }
+  
+  const targetUrl = fullUrl(ep.path)
+  
+  // 从已解析文档中查找接口参数（生成任务完成后才有数据）
+  let params: any[] = []
+  let types: Record<string, any> = {}
+  if (parsedDoc.value) {
+    const matched = parsedDoc.value.endpoints.find(
+      e => e.path === ep.path && e.method.toUpperCase() === ep.method.toUpperCase()
+    )
+    if (matched) {
+      params = matched.params || []
+      types = parsedDoc.value.types || {}
+    }
+  }
+  
+  debugInit.value = {
+    method: ep.method,
+    url: targetUrl,
+    params,
+    types,
+  }
   debugVisible.value = true
 }
 

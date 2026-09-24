@@ -284,7 +284,7 @@ const HEALTH_POLL_INTERVAL = 15000
 async function checkReposHealth() {
   if (reposLoading.value || repos.value.length === 0) return
   try {
-    const health = await getGitReposHealth()
+    const health = await getGitReposHealth({ silent: true })
     let hasRecovered = false
     for (const repo of repos.value) {
       const ok = health[repo.path]
@@ -1323,7 +1323,8 @@ const mergeState = ref<GitMergeState>({ inProgress: false, sourceBranch: '', con
 async function loadMergeState() {
   if (!currentPath.value) return
   try {
-    mergeState.value = await getGitMergeState({ path: currentPath.value })
+    // 静默：被 8s 变更轮询与各类刷新后的状态同步调用，不弹全局遮罩
+    mergeState.value = await getGitMergeState({ path: currentPath.value }, { silent: true })
   } catch {
     // 静默：状态查询失败不打扰
   }

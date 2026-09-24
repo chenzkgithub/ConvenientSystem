@@ -85,48 +85,49 @@ function handleSearchEnter() {
 
 // ===== 在线用户 =====
 const onlineUsers = ref<OnlineUserDto[]>([])
-async function loadOnlineUsers() {
+/** silent：轮询/切页补刷时不弹全局遮罩（面板静默更新），首载仍保留遮罩反馈 */
+async function loadOnlineUsers(silent = false) {
   if (!canViewOnline.value) return
   try {
-    onlineUsers.value = await listOnlineUsers()
+    onlineUsers.value = await listOnlineUsers({ silent })
   } catch { /* 权限不足或后端不可达，静默 */ }
 }
 
 // ===== 短信统计 =====
 const smsStats = ref<SmsStatisticsDto | null>(null)
-async function loadSmsStats() {
+async function loadSmsStats(silent = false) {
   if (!canViewSms.value) return
   try {
-    smsStats.value = await getStatistics()
+    smsStats.value = await getStatistics({ silent })
   } catch { /* 静默 */ }
 }
 
 // ===== 短信最近日志 =====
 const smsLogs = ref<SmsLogDto[]>([])
-async function loadSmsLogs() {
+async function loadSmsLogs(silent = false) {
   if (!canViewSms.value) return
   try {
-    const res = await listLogs({ page: 1, size: 6 })
+    const res = await listLogs({ page: 1, size: 6 }, { silent })
     smsLogs.value = res.list
   } catch { /* 静默 */ }
 }
 
 // ===== 邮件最近日志 =====
 const emailLogs = ref<EmailLogDto[]>([])
-async function loadEmailLogs() {
+async function loadEmailLogs(silent = false) {
   if (!canViewEmail.value) return
   try {
-    const res = await listEmailLogs({ page: 1, size: 6 })
+    const res = await listEmailLogs({ page: 1, size: 6 }, { silent })
     emailLogs.value = res.list
   } catch { /* 静默 */ }
 }
 
 // ===== 彩票中奖结果 =====
 const lotteryResults = ref<LotteryHomeResult[]>([])
-async function loadLotteryResults() {
+async function loadLotteryResults(silent = false) {
   if (!canViewLottery.value) return
   try {
-    lotteryResults.value = await getLotteryHomeResults()
+    lotteryResults.value = await getLotteryHomeResults({ silent })
   } catch { /* 静默 */ }
 }
 function ballText(item: LotteryHomeResult, n: number): string {
@@ -169,26 +170,27 @@ const auditTrend = ref<SendTrend | null>(null)
 const trendLoading = ref(false)
 const hasTrend = computed(() => canViewSms.value || canViewEmail.value || canViewAudit.value)
 
-async function loadTrends() {
+async function loadTrends(silent = false) {
   if (!hasTrend.value) return
-  trendLoading.value = true
+  if (!silent) trendLoading.value = true
   try {
     const tasks: Promise<void>[] = []
     if (canViewSms.value) {
-      tasks.push(getSmsTrend(trendDays.value).then(t => { smsTrend.value = t }).catch(() => {}))
+      tasks.push(getSmsTrend(trendDays.value, { silent }).then(t => { smsTrend.value = t }).catch(() => {}))
     }
     if (canViewEmail.value) {
-      tasks.push(getEmailTrend(trendDays.value).then(t => { emailTrend.value = t }).catch(() => {}))
+      tasks.push(getEmailTrend(trendDays.value, { silent }).then(t => { emailTrend.value = t }).catch(() => {}))
     }
     if (canViewAudit.value) {
-      tasks.push(getAuditTrend(trendDays.value).then(t => { auditTrend.value = t }).catch(() => {}))
+      tasks.push(getAuditTrend(trendDays.value, { silent }).then(t => { auditTrend.value = t }).catch(() => {}))
     }
     await Promise.all(tasks)
   } finally {
-    trendLoading.value = false
+    if (!silent) trendLoading.value = false
   }
 }
-watch(trendDays, loadTrends)
+// 用户切换天数：保留遮罩/局部 loading 反馈（包装避免把天数数值误作 silent 传入）
+watch(trendDays, () => loadTrends())
 
 // 操作趋势折线图配置（按权限动态增减系列）
 const trendOption = computed<EChartsCoreOption>(() => {
@@ -280,9 +282,9 @@ interface MonitorHealth {
 const webHealth = ref<MonitorHealth | null>(null)
 const hasMonitor = computed(() => canViewWebMonitor.value)
 
-async function loadMonitorHealth() {
+async function loadMonitorHealth(silent = false) {
   if (canViewWebMonitor.value) {
-    try { webHealth.value = await httpGet<MonitorHealth>('/api/Common/WebMonitor/Health') } catch { /* 静默 */ }
+    try { webHealth.value = await httpGet<MonitorHealth>('/api/Common/WebMonitor/Health', undefined, undefined, { silent }) } catch { /* 静默 */ }
   }
 }
 
@@ -298,16 +300,17 @@ const loginDays = ref(7)
 const loginTrend = ref<SendTrend | null>(null)
 const loginLoading = ref(false)
 
-async function loadLoginTrend() {
+async function loadLoginTrend(silent = false) {
   if (!canViewAudit.value) return
-  loginLoading.value = true
+  if (!silent) loginLoading.value = true
   try {
-    loginTrend.value = await getAuditLoginTrend(loginDays.value)
+    loginTrend.value = await getAuditLoginTrend(loginDays.value, { silent })
   } catch { /* 静默 */ } finally {
-    loginLoading.value = false
+    if (!silent) loginLoading.value = false
   }
 }
-watch(loginDays, loadLoginTrend)
+// 用户切换天数：保留遮罩/局部 loading 反馈（包装避免把天数数值误作 silent 传入）
+watch(loginDays, () => loadLoginTrend())
 
 // 登录活跃堆叠柱状图（成功绿/失败红）
 const loginOption = computed<EChartsCoreOption>(() => {
@@ -409,19 +412,19 @@ function maskPhone(phone: string): string {
 // ===== 生命周期 =====
 let lastRealtimeAt = 0
 let lastSlowAt = 0
-/** 实时性要求高的面板（30s 轮询）：在线用户、短信统计与最近日志、邮件日志 */
-function loadRealtime() {
+/** 实时性要求高的面板（30s 轮询）：在线用户、短信统计与最近日志、邮件日志；silent 由轮询/切页入口传入 */
+function loadRealtime(silent = false) {
   lastRealtimeAt = Date.now()
-  loadOnlineUsers()
-  loadSmsStats()
-  loadSmsLogs()
-  loadEmailLogs()
+  loadOnlineUsers(silent)
+  loadSmsStats(silent)
+  loadSmsLogs(silent)
+  loadEmailLogs(silent)
 }
 /** 低频面板（5 分钟随趋势图刷新）：开奖结果一天仅数期、监控按分钟级探测，无需 30s 轮询 */
-function loadSlow() {
+function loadSlow(silent = false) {
   lastSlowAt = Date.now()
-  loadLotteryResults()
-  loadMonitorHealth()
+  loadLotteryResults(silent)
+  loadMonitorHealth(silent)
 }
 
 onMounted(() => {
@@ -434,20 +437,21 @@ onMounted(() => {
   timer = setInterval(() => {
     if (document.hidden) return // 后台标签页暂停轮询，切回时由 onActivated 按节流补刷
     now.value = new Date()
-    loadRealtime()
+    loadRealtime(true)
   }, 30_000)
   // 趋势图为按日聚合数据，每 5 分钟刷新一次即可（低频面板随之刷新）
   trendTimer = setInterval(() => {
     if (document.hidden) return
-    loadTrends()
-    loadLoginTrend()
-    loadSlow()
+    loadTrends(true)
+    loadLoginTrend(true)
+    loadSlow(true)
   }, 300_000)
 })
 // keep-alive 缓存切回首页时也刷新一次：距上次不足 15s/60s 则跳过，避免频繁切页打满接口
+// 补刷静默：页面已有旧数据，无需遮罩打断（切页本身是用户操作，但数据是后台刷新）
 onActivated(() => {
-  if (Date.now() - lastRealtimeAt > 15_000) loadRealtime()
-  if (Date.now() - lastSlowAt > 60_000) loadSlow()
+  if (Date.now() - lastRealtimeAt > 15_000) loadRealtime(true)
+  if (Date.now() - lastSlowAt > 60_000) loadSlow(true)
 })
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)

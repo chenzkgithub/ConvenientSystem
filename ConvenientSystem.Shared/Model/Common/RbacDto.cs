@@ -14,6 +14,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public bool Enabled { get; set; }
         public bool IsDeleted { get; set; }
         public DateTime CreateTime { get; set; }
+        /// <summary>注册来源：web=Web 端注册 / app=手机端注册（存量数据视为 web）</summary>
+        public string? RegisterSource { get; set; }
         public List<int> RoleIds { get; set; } = new();
         public List<string> RoleNames { get; set; } = new();
     }

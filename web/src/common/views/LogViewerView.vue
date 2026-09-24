@@ -30,7 +30,8 @@ async function load() {
     params.set('count', '200')
     if (keyword.value.trim()) params.set('keyword', keyword.value.trim())
     if (levelFilter.value) params.set('level', levelFilter.value)
-    logs.value = await httpGet<LogItem[]>(`/api/Common/LogViewer/GetLogs?${params}`)
+    // 5s 自动刷新 + 页面自带刷新按钮 loading：请求静默，不使用全局遮罩
+    logs.value = await httpGet<LogItem[]>(`/api/Common/LogViewer/GetLogs?${params}`, undefined, undefined, { silent: true })
     nextTick(scrollToBottom)
   } catch (e) {
     console.error('加载日志失败', e)

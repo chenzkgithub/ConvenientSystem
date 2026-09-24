@@ -62,6 +62,8 @@ namespace ConvenientSystem.Service.Common
         {
             var reqAccount = request?.account ?? "";
             var reqPassword = request?.password ?? "";
+            // 客户端平台标识（app=手机端，缺省 web）：会话按平台分桶，跨端登录互不挤号
+            var platform = ClientPlatform.Normalize(request?.platform);
             try
             {
                 // 先按账号查找（不过滤 Enabled），再分别判断停用/密码错误。
@@ -106,11 +108,43 @@ namespace ConvenientSystem.Service.Common
                 }
         
                 var (roleCodes, menuCodes, isAdmin, dataScope) = await LoadPermissionsAsync(user.Id);
+
+                // 平台准入与权限码签发（两端权限独立）：
+                // - 手机端（app）：只签发 SysUserAppPerm 白名单的 app-* 码（admin 恒全量，不含 PC 菜单码）；
+                //   未开通 app-login 则拒绝登录手机端（Web 登录不受影响）。
+                // - Web/桌面端（web）：签发 PC 菜单权限码（行为不变）；
+                //   无任意启用角色（内置 admin 除外）则拒绝登录 PC 端（手机端注册用户默认无角色）。
+                List<string> tokenMenuCodes;
+                if (platform == ClientPlatform.App)
+                {
+                    var appPerms = isAdmin
+                        ? AppPerm.All.ToList()
+                        : await _configDb.Select<SysUserAppPermEntity>()
+                            .Where(p => p.UserId == user.Id)
+                            .ToListAsync(p => p.PermCode);
+
+                    if (!isAdmin && !appPerms.Contains(AppPerm.Login))
+                    {
+                        _logger.LogInformation("登录校验，账号：{Account}，结果：无手机端访问权限（app-login 未开通）", reqAccount);
+                        return new LoginVerifyDto { Ok = false, Reason = "no_app_permission" };
+                    }
+                    tokenMenuCodes = appPerms.Distinct().ToList();
+                }
+                else
+                {
+                    if (!isAdmin && roleCodes.Count == 0)
+                    {
+                        _logger.LogInformation("登录校验，账号：{Account}，结果：无 PC 端访问权限（未分配任何启用角色）", reqAccount);
+                        return new LoginVerifyDto { Ok = false, Reason = "no_pc_permission" };
+                    }
+                    tokenMenuCodes = menuCodes;
+                }
+
                 var sessionTimeoutMinutes = ReadSessionTimeoutMinutes();
                 // 0 表示会话永不过期（兼容历史行为），否则按配置时长签发 JWT
                 TimeSpan? tokenLifetime = sessionTimeoutMinutes > 0 ? TimeSpan.FromMinutes(sessionTimeoutMinutes) : null;
-                var token = JwtHelper.GenerateToken(_jwtKey.Key, user.Id, user.Account, user.DisplayName, roleCodes, menuCodes, lifetime: tokenLifetime, isAdmin: isAdmin, dataScope: dataScope, avatar: user.Avatar);
-                _logger.LogInformation("登录校验，账号：{Account}，结果：{Result}，会话超时：{Timeout}分钟", reqAccount, true, sessionTimeoutMinutes);
+                var token = JwtHelper.GenerateToken(_jwtKey.Key, user.Id, user.Account, user.DisplayName, roleCodes, tokenMenuCodes, lifetime: tokenLifetime, isAdmin: isAdmin, dataScope: dataScope, avatar: user.Avatar, platform: platform);
+                _logger.LogInformation("登录校验，账号：{Account}，结果：{Result}，平台：{Platform}，会话超时：{Timeout}分钟", reqAccount, true, platform, sessionTimeoutMinutes);
                 return new LoginVerifyDto
                 {
                     Ok = true,
@@ -120,7 +154,7 @@ namespace ConvenientSystem.Service.Common
                     Avatar = user.Avatar,
                     Token = token,
                     Roles = roleCodes,
-                    MenuCodes = menuCodes,
+                    MenuCodes = tokenMenuCodes,
                     SessionTimeoutMinutes = sessionTimeoutMinutes,
                 };
             }

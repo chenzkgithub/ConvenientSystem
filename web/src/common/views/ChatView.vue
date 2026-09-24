@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Bell, ChatDotRound, ChatLineSquare, Close, Delete, DocumentCopy, DocumentDelete, Mute, Picture, Plus, Promotion, Search, Select } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/common/stores/auth'
 import { useChatStore } from '@/common/stores/chat'
 import { blockChatUser, chatImageUrl, clearChatMessages, forwardChatMessages, getChatForwardRecord, getChatGroupMembers, getChatMessageById, hideChatConversation, isChatImagePath, setChatMuted, unblockChatUser, uploadChatImage } from '@/common/api/chat'
 import type { ChatContactDto, ChatConversationDto, ChatForwardRecordDto, ChatGroupMemberDto, ChatMessageDto, ChatOpenDto } from '@/common/api/chat'
+import { getFriendRequests, handleFriendRequest, searchFriendUsers, sendFriendRequest } from '@/common/api/friend'
+import type { FriendRequestDto, FriendRequestHandledDto, FriendSearchResultDto } from '@/common/api/friend'
 import { confirmAndRun } from '@/common/utils/confirm'
 
 const authStore = useAuthStore()
@@ -13,7 +15,7 @@ const chatStore = useChatStore()
 
 // ==================== 本地状态 ====================
 
-const leftTab = ref<'conversations' | 'contacts'>('conversations')
+const leftTab = ref<'conversations' | 'contacts' | 'friends'>('conversations')
 const keyword = ref('')
 const contacts = ref<ChatContactDto[]>([])
 /** 当前打开会话的对方信息（Open 接口返回的本地副本，屏蔽操作后就地更新）；群聊时为 null */
@@ -27,6 +29,102 @@ const scrollBox = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 /** 向上翻页期间抑制"新消息滚到底部"监听，保持视口停在原位置 */
 let suppressScrollWatch = false
+
+// ==================== 朋友（新的朋友）：搜索添加好友 + 申请处理 ====================
+
+const friendKeyword = ref('')
+const friendSearching = ref(false)
+const friendSearched = ref(false)
+const friendResults = ref<FriendSearchResultDto[]>([])
+const friendRequests = ref<FriendRequestDto[]>([])
+const friendHandling = ref(false)
+
+/** 待处理申请（页签角标 + 列表分组） */
+const pendingRequests = computed(() => friendRequests.value.filter(r => r.status === 0))
+const handledRequests = computed(() => friendRequests.value.filter(r => r.status !== 0))
+
+async function switchToFriends() {
+  leftTab.value = 'friends'
+  await refreshFriendRequests()
+}
+
+/** 刷新我收到的申请（SignalR 事件/处理后调用；静默防打扰） */
+async function refreshFriendRequests() {
+  try {
+    friendRequests.value = await getFriendRequests({ silent: true })
+  } catch {
+    /* 静默 */
+  }
+}
+
+/** 搜索可添加的用户（服务端已按本平台过滤，排除自己/已有好友/双向屏蔽） */
+async function searchFriends() {
+  const kw = friendKeyword.value.trim()
+  if (!kw || friendSearching.value) return
+  friendSearching.value = true
+  try {
+    friendResults.value = await searchFriendUsers(kw, { silent: true })
+    friendSearched.value = true
+  } catch {
+    /* 错误已由 request.ts 弹出提示 */
+  } finally {
+    friendSearching.value = false
+  }
+}
+
+/** 发起好友申请（弹窗输入验证留言，可留空） */
+async function applyFriend(u: FriendSearchResultDto) {
+  try {
+    const { value } = await ElMessageBox.prompt(`填写验证留言，向「${u.displayName || u.account}」发送好友申请`, '添加好友', {
+      inputPlaceholder: '验证留言（可选，最长 100 字）',
+      confirmButtonText: '发送申请',
+      cancelButtonText: '取消',
+      inputValidator: (v: string) => (v ?? '').length <= 100 || '留言不能超过 100 字',
+    })
+    await sendFriendRequest(u.userId, (value ?? '').trim())
+    ElMessage.success('已发送申请，对方同意后你们即可聊天')
+  } catch {
+    /* 取消或错误已提示 */
+  }
+}
+
+/** 处理收到的申请：同意后双方互为好友并刷新通讯录；拒绝需确认防误触 */
+async function handleFriendItem(r: FriendRequestDto, accept: boolean) {
+  if (friendHandling.value) return
+  const name = r.fromDisplayName || r.fromAccount
+  if (!accept) {
+    try {
+      await ElMessageBox.confirm(`确定拒绝「${name}」的好友申请？`, '拒绝申请', {
+        type: 'warning', confirmButtonText: '拒绝', cancelButtonText: '取消',
+      })
+    } catch { return }
+  }
+  friendHandling.value = true
+  try {
+    await handleFriendRequest(r.id, accept)
+    r.status = accept ? 1 : 2
+    ElMessage.success(accept ? `已同意，你和「${name}」已成为好友` : '已拒绝该申请')
+    if (accept) await loadContacts()
+  } catch {
+    /* 错误已弹出提示 */
+  } finally {
+    friendHandling.value = false
+  }
+}
+
+/** SignalR 转发事件：新申请 → 刷新申请列表与页签角标 */
+function onFriendRequestEvent() {
+  void refreshFriendRequests()
+}
+
+/** SignalR 转发事件：我的申请被处理 → 提示（同意时刷新通讯录） */
+function onFriendHandledEvent(e: Event) {
+  const dto = (e as CustomEvent<FriendRequestHandledDto>).detail
+  if (dto?.accept) {
+    ElMessage.success(`「${dto.handlerName || '对方'}」同意了你的好友申请`)
+    void loadContacts()
+  }
+}
 
 // ==================== 群聊相关 ====================
 
@@ -150,6 +248,20 @@ function initials(name: string): string {
 function avatarText(c: ChatConversationDto): string {
   const name = convName(c)
   return c.conversationType === 1 ? (name || '群').slice(0, 2) : initials(name)
+}
+
+/** 群聊消息发送者头像：从已加载的群成员列表中查找 */
+function memberAvatar(senderId: string): string | null {
+  const member = groupMembers.value.find(m => m.userId === senderId)
+  return member?.avatar ?? null
+}
+
+/** 群聊群主头像：从已加载的群成员列表中查找 role===1 的成员 */
+function groupOwnerAvatar(c: ChatConversationDto): string | null {
+  const members = groupMembers.value
+  if (!members.length) return null
+  const owner = members.find(m => m.role === 1)
+  return owner?.avatar ?? null
 }
 
 function isMine(m: ChatMessageDto): boolean {
@@ -826,6 +938,10 @@ onMounted(() => {
   // 右键菜单：点任意处关闭；ESC 捕获阶段拦截（仅菜单可见时），避免连带关掉聊天弹窗
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('keydown', onMenuKeydown, true)
+  // 好友申请（SignalR 转发）：新申请刷新角标；我的申请被处理提示并刷新通讯录
+  window.addEventListener('friend:request', onFriendRequestEvent)
+  window.addEventListener('friend:handled', onFriendHandledEvent)
+  void refreshFriendRequests()
 })
 
 onUnmounted(() => {
@@ -833,6 +949,8 @@ onUnmounted(() => {
   activePeer.value = null
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('keydown', onMenuKeydown, true)
+  window.removeEventListener('friend:request', onFriendRequestEvent)
+  window.removeEventListener('friend:handled', onFriendHandledEvent)
 })
 </script>
 
@@ -846,9 +964,14 @@ onUnmounted(() => {
           <span v-if="chatStore.unreadTotal" class="tab-badge">{{ chatStore.unreadTotal > 99 ? '99+' : chatStore.unreadTotal }}</span>
         </div>
         <div class="tab" :class="{ active: leftTab === 'contacts' }" @click="switchToContacts">通讯录</div>
+        <div class="tab" :class="{ active: leftTab === 'friends' }" @click="switchToFriends">
+          朋友
+          <span v-if="pendingRequests.length" class="tab-badge">{{ pendingRequests.length > 99 ? '99+' : pendingRequests.length }}</span>
+        </div>
       </div>
 
-      <div class="sidebar-search">
+      <!-- 朋友页签使用自己的服务端搜索（friendKeyword），全局过滤框仅会话/通讯录用 -->
+      <div v-if="leftTab !== 'friends'" class="sidebar-search">
         <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索名称 / 账号" clearable />
       </div>
 
@@ -873,6 +996,7 @@ onUnmounted(() => {
           >
             <div class="avatar-wrap">
               <el-avatar v-if="c.peerAvatar" :size="40" :src="c.peerAvatar" :class="{ group: c.conversationType === 1 }" />
+              <el-avatar v-else-if="c.conversationType === 1 && groupOwnerAvatar(c)" :size="40" :src="groupOwnerAvatar(c)" class="group" />
               <el-avatar v-else :size="40" class="avatar fallback" :class="{ group: c.conversationType === 1 }">{{ avatarText(c) }}</el-avatar>
               <span v-if="c.conversationType === 0" class="online-dot" :class="{ on: chatStore.onlineIds.has(c.peerId) }"></span>
             </div>
@@ -898,8 +1022,8 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <!-- 通讯录 -->
-        <template v-else>
+        <!-- 通讯录（服务端 GetContacts 已改为仅返回好友，好友停用仍显示） -->
+        <template v-else-if="leftTab === 'contacts'">
           <div v-if="!filteredContacts.length" class="list-empty">
             {{ keyword ? '没有匹配的联系人' : '通讯录为空' }}
           </div>
@@ -926,6 +1050,98 @@ onUnmounted(() => {
             </div>
           </div>
         </template>
+
+        <!-- 朋友：搜索添加好友 + 好友申请处理 -->
+        <template v-else>
+          <div class="friend-search">
+            <el-input
+              v-model="friendKeyword"
+              :prefix-icon="Search"
+              placeholder="搜索账号 / 姓名，找人来聊天"
+              clearable
+              :disabled="friendSearching"
+              @keyup.enter="searchFriends"
+              @clear="friendResults = []; friendSearched = false"
+            />
+            <el-button :loading="friendSearching" @click="searchFriends">搜索</el-button>
+          </div>
+
+          <!-- 搜索结果（服务端已按本平台过滤，排除自己/已有好友/双向屏蔽） -->
+          <template v-if="friendResults.length">
+            <div class="friend-section-title">搜索结果</div>
+            <div v-for="u in friendResults" :key="u.userId" class="contact-item">
+              <div class="avatar-wrap">
+                <el-avatar v-if="u.avatar" :size="36" :src="u.avatar" />
+                <el-avatar v-else :size="36" class="avatar fallback">{{ initials(u.displayName || u.account) }}</el-avatar>
+              </div>
+              <div class="item-main">
+                <div class="item-row">
+                  <span class="name">{{ u.displayName || u.account }}</span>
+                </div>
+                <div class="item-row">
+                  <span class="account">{{ u.account }}</span>
+                </div>
+              </div>
+              <el-button size="small" type="primary" plain @click="applyFriend(u)">添加</el-button>
+            </div>
+          </template>
+          <div v-else-if="friendSearched" class="list-empty">没有找到可添加的用户</div>
+
+          <!-- 待处理申请 -->
+          <template v-if="pendingRequests.length">
+            <div class="friend-section-title">好友申请（{{ pendingRequests.length }}）</div>
+            <div v-for="r in pendingRequests" :key="r.id" class="contact-item">
+              <div class="avatar-wrap">
+                <el-avatar v-if="r.fromAvatar" :size="36" :src="r.fromAvatar" />
+                <el-avatar v-else :size="36" class="avatar fallback">{{ initials(r.fromDisplayName || r.fromAccount) }}</el-avatar>
+              </div>
+              <div class="item-main">
+                <div class="item-row">
+                  <span class="name">{{ r.fromDisplayName || r.fromAccount }}</span>
+                  <span class="time">{{ shortTime(r.createTime) }}</span>
+                </div>
+                <div class="item-row">
+                  <span class="friend-msg" :title="r.message">{{ r.message || '请求添加你为好友' }}</span>
+                </div>
+              </div>
+              <div class="friend-actions">
+                <el-button size="small" type="primary" :disabled="friendHandling" @click="handleFriendItem(r, true)">同意</el-button>
+                <el-button size="small" :disabled="friendHandling" @click="handleFriendItem(r, false)">拒绝</el-button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 已处理申请（已同意的条目点击直接开聊） -->
+          <template v-if="handledRequests.length">
+            <div class="friend-section-title">已处理</div>
+            <div
+              v-for="r in handledRequests"
+              :key="r.id"
+              class="contact-item"
+              @click="r.status === 1 && openByPeerId(r.fromUserId)"
+            >
+              <div class="avatar-wrap">
+                <el-avatar v-if="r.fromAvatar" :size="36" :src="r.fromAvatar" />
+                <el-avatar v-else :size="36" class="avatar fallback">{{ initials(r.fromDisplayName || r.fromAccount) }}</el-avatar>
+              </div>
+              <div class="item-main">
+                <div class="item-row">
+                  <span class="name">{{ r.fromDisplayName || r.fromAccount }}</span>
+                  <el-tag size="small" :type="r.status === 1 ? 'success' : 'info'">{{ r.status === 1 ? '已同意' : '已拒绝' }}</el-tag>
+                </div>
+                <div class="item-row">
+                  <span class="account">{{ r.fromAccount }}</span>
+                  <span class="time">{{ shortTime(r.createTime) }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 初始引导：无搜索结果且无任何申请时 -->
+          <div v-if="!friendSearched && !pendingRequests.length && !handledRequests.length" class="list-empty">
+            输入账号或姓名搜索，添加好友开始聊天
+          </div>
+        </template>
       </div>
     </aside>
 
@@ -937,6 +1153,7 @@ onUnmounted(() => {
           <div class="peer-info">
             <template v-if="isGroupActive">
               <el-avatar v-if="activeConv?.peerAvatar" :size="40" :src="activeConv.peerAvatar" />
+              <el-avatar v-else-if="groupOwnerAvatar(activeConv)" :size="40" :src="groupOwnerAvatar(activeConv)" />
               <el-avatar v-else :size="40" class="avatar fallback">{{ initials(activeTitle()) }}</el-avatar>
               <div class="peer-text">
                 <div class="name clickable" @click="openMembersDialog">{{ activeTitle() }}</div>
@@ -1004,6 +1221,7 @@ onUnmounted(() => {
           >
             <el-avatar v-if="isMine(m) && authStore.avatar" :size="34" :src="authStore.avatar" />
             <el-avatar v-else-if="!isMine(m) && !isGroupActive && activePeer?.peerAvatar" :size="34" :src="activePeer.peerAvatar" />
+            <el-avatar v-else-if="isGroupActive && !isMine(m) && memberAvatar(m.senderId)" :size="34" :src="memberAvatar(m.senderId)" />
             <el-avatar v-else :size="34" class="avatar fallback small">
               {{ initials(isMine(m) ? (authStore.displayName || authStore.currentAccount) : (m.senderDisplayName || m.senderAccount)) }}
             </el-avatar>
@@ -1378,6 +1596,42 @@ onUnmounted(() => {
 
 .sidebar-search {
   padding: 10px 12px;
+}
+
+/* ==================== 朋友面板（新的朋友） ==================== */
+.friend-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.friend-search .el-input {
+  flex: 1;
+}
+
+/* 分组标题：搜索结果 / 好友申请 / 已处理 */
+.friend-section-title {
+  padding: 12px 12px 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 申请留言：单行省略，悬浮看全文 */
+.friend-msg {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 申请条目右侧操作按钮组 */
+.friend-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
 }
 
 .sidebar-list {

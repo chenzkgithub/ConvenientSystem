@@ -1,5 +1,6 @@
 using ConvenientSystem.Api.Auth;
 using ConvenientSystem.Service.Common;
+using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Model.Common;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,9 +8,10 @@ namespace ConvenientSystem.Api.Controllers.Common
 {
     /// <summary>
     /// 彩票选号记录接口（多彩种：DLT/SSQ/PL5/FC3D）
+    /// Web 端校验菜单码 lottery；手机端（platform=app）改校验 app-lottery 权限点（两端权限独立）。
     /// </summary>
     [Area("Common")]
-    [PermissionAuthorize("lottery")]
+    [PermissionAuthorize("lottery", AppCode = AppPerm.Lottery)]
     public class LotteryController : BaseController
     {
         private readonly ILotteryService _lotteryService;

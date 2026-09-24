@@ -15,7 +15,7 @@ export interface OnlineUserDto {
   lastHeartbeat: string
 }
 
-/** 在线用户列表（已登录且未注销的用户） */
-export function listOnlineUsers() {
-  return httpGet<OnlineUserDto[]>('/api/Common/UserOnline/List')
+/** 在线用户列表（已登录且未注销的用户）。opts.silent：定时轮询不弹遮罩（页面自带表格 loading） */
+export function listOnlineUsers(opts?: { silent?: boolean }) {
+  return httpGet<OnlineUserDto[]>('/api/Common/UserOnline/List', undefined, undefined, opts)
 }

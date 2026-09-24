@@ -85,9 +85,9 @@ export function startUniversalBuild(request: UniversalBuildRequest, opts?: { sil
   return localPost<UniversalBuildJobDto>('/api/local/universal-build/Build', request, undefined, undefined, opts)
 }
 
-/** 获取任务进度 */
-export function getUniversalBuildProgress(request: ProgressRequest) {
-  return localPost<UniversalBuildJobDto | null>('/api/local/universal-build/Progress', request)
+/** 获取任务进度（轮询用：传 opts.silent 不弹全局遮罩） */
+export function getUniversalBuildProgress(request: ProgressRequest, opts?: { silent?: boolean }) {
+  return localPost<UniversalBuildJobDto | null>('/api/local/universal-build/Progress', request, undefined, undefined, opts)
 }
 
 /** 获取所有任务 */
@@ -194,9 +194,9 @@ export function startDeploy(request: DeployRequest) {
   return localPost<DeployJobDto>('/api/local/universal-build/Deploy', request)
 }
 
-/** 获取部署进度 */
-export function getDeployProgress(request: DeployProgressRequest) {
-  return localPost<DeployJobDto | null>('/api/local/universal-build/DeployProgress', request)
+/** 获取部署进度（轮询用：传 opts.silent 不弹全局遮罩） */
+export function getDeployProgress(request: DeployProgressRequest, opts?: { silent?: boolean }) {
+  return localPost<DeployJobDto | null>('/api/local/universal-build/DeployProgress', request, undefined, undefined, opts)
 }
 
 /** 获取所有部署任务 */

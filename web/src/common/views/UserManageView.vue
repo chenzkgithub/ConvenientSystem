@@ -48,6 +48,7 @@ const columns: DataTableColumn<UserManageDto>[] = [
   { prop: 'email', label: '邮箱', minWidth: 160, sortable: true },
   { prop: 'roleNames', label: '角色', minWidth: 160, custom: true, sortable: true },
   { prop: 'enabled', label: '状态', width: 90, custom: true, sortable: true },
+  { prop: 'registerSource', label: '注册来源', width: 100, custom: true, sortable: true },
   { prop: 'createTime', label: '创建时间', width: 170, type: 'date', sortable: true },
   { prop: 'remark', label: '备注', minWidth: 140, sortable: true },
 ]
@@ -247,6 +248,10 @@ onMounted(loadData)
       <template #cell-enabled="{ row }">
         <el-tag v-if="row.isDeleted" type="danger" size="small" effect="dark">已删除</el-tag>
         <el-tag v-else :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+      </template>
+      <template #cell-registerSource="{ row }">
+        <el-tag v-if="row.registerSource === 'app'" size="small">手机端</el-tag>
+        <el-tag v-else size="small" type="info">Web 端</el-tag>
       </template>
       <template #actions="{ row }">
         <template v-if="!row.isDeleted">

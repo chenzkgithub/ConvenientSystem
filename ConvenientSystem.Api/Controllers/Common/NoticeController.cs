@@ -1,5 +1,7 @@
+using ConvenientSystem.Api.Auth;
 using ConvenientSystem.Api.Hubs;
 using ConvenientSystem.Service.Common;
+using ConvenientSystem.Shared.Common.Security;
 using ConvenientSystem.Shared.Model.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,12 +11,14 @@ namespace ConvenientSystem.Api.Controllers.Common
 {
     /// <summary>
     /// 系统通知用户端接口：任何已登录用户查看通知列表/未读数并标记已读。
-    /// 仅要求已登录（[Authorize]），不挂菜单权限码——通知是所有用户的公共功能。
+    /// PC 端仅要求已登录（[Authorize]），不挂菜单权限码——通知是所有用户的公共功能；
+    /// 手机端（platform=app）要求 app-notice 权限点（两端权限独立，无码即 403）。
     /// 目标用户恒取自 JWT，不接受请求体传入，避免越权代他人标记已读。
 /// 新通知创建后通过 ChatHub 推 NoticeCreated 广播，前端秒级刷新铃铛/弹卡片。
     /// </summary>
     [Area("Common")]
     [Authorize]
+    [PermissionAuthorize(AppPerm.Notice, Platform = ClientPlatform.App)]
     public class NoticeController : BaseController
     {
         private readonly INoticeService _service;

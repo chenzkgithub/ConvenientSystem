@@ -116,7 +116,7 @@ async function checkUrgent() {
   if (checking) return
   checking = true
   try {
-    const list = await getMyNotices()
+    const list = await getMyNotices({ silent: true })
     const known = new Set<number>([...active.value, ...pending.value].map((n) => n.id))
     const urgent = list.filter((n) => !n.isRead && n.level >= 2 && !dismissed.has(n.id) && !known.has(n.id))
     if (urgent.length > 0) {

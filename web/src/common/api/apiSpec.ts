@@ -145,6 +145,16 @@ export interface ApiDebugRequest {
   headers?: Record<string, string>
   body?: string
   timeoutMs?: number
+  formData?: Record<string, string>
+  files?: ApiDebugFile[]
+}
+
+/** 调试请求中的文件信息。 */
+export interface ApiDebugFile {
+  fieldName: string
+  fileName: string
+  content: string  // Base64 编码
+  contentType: string
 }
 
 /** 调试响应：目标服务原始响应；网络层失败时 error 有值、statusCode 为 0。 */
@@ -221,6 +231,13 @@ export function getApifoxAccessTokenStatus() {
 /** 保存或清除当前用户的 Apifox Access Token。 */
 export function saveApifoxAccessToken(request: ApifoxAccessTokenSaveRequest) {
   return httpPut('/api/Common/ApifoxConfig/SaveMyAccessToken', request)
+}
+
+/** 查看当前用户已保存的 Apifox Access Token 明文（需验证登录密码）；未配置或密码错误时 ok=false。 */
+export function revealApifoxAccessToken(password: string) {
+  return httpPost<{ ok: boolean; value: string | null }>('/api/Common/ApifoxConfig/RevealMyAccessToken', {
+    password,
+  })
 }
 
 /** 启动 OpenAPI 导入任务：服务端按 tag（命名空间/Controller）拆批后台执行，返回任务初始快照。

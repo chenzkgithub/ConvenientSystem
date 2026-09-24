@@ -59,14 +59,14 @@ export function deleteNotice(id: number) {
 
 // ===== 用户端（NoticeController，任何已登录用户可用） =====
 
-/** 当前用户可见的通知列表（仅启用的，含已读状态） */
-export function getMyNotices() {
-  return httpGet<NoticeUserDto[]>('/api/Common/Notice/MyList')
+/** 当前用户可见的通知列表（仅启用的，含已读状态）。opts.silent：后台轮询不弹遮罩 */
+export function getMyNotices(opts?: { silent?: boolean }) {
+  return httpGet<NoticeUserDto[]>('/api/Common/Notice/MyList', undefined, undefined, opts)
 }
 
-/** 当前用户未读通知数（供顶栏铃铛角标轮询） */
-export function getNoticeUnreadCount() {
-  return httpGet<{ count: number }>('/api/Common/Notice/UnreadCount')
+/** 当前用户未读通知数（供顶栏铃铛角标轮询）。opts.silent：轮询/事件驱动的角标刷新不弹遮罩 */
+export function getNoticeUnreadCount(opts?: { silent?: boolean }) {
+  return httpGet<{ count: number }>('/api/Common/Notice/UnreadCount', undefined, undefined, opts)
 }
 
 /** 标记单条通知已读 */

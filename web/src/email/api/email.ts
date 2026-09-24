@@ -26,11 +26,11 @@ export function listEmailTasks() {
   return httpGet<EmailTaskDto[]>('/api/Email/EmailLog/Tasks')
 }
 
-export function listEmailLogs(params?: { taskId?: number; page?: number; size?: number }) {
-  return httpGet<{ total: number; list: EmailLogDto[] }>('/api/Email/EmailLog/Logs', params)
+export function listEmailLogs(params?: { taskId?: number; page?: number; size?: number }, opts?: { silent?: boolean }) {
+  return httpGet<{ total: number; list: EmailLogDto[] }>('/api/Email/EmailLog/Logs', params, undefined, opts)
 }
 
 /** 按日发送趋势（days：往前天数，含今天） */
-export function getEmailTrend(days: number) {
-  return httpGet<import('@/common/types').SendTrend>('/api/Email/EmailLog/Trend', { days })
+export function getEmailTrend(days: number, opts?: { silent?: boolean }) {
+  return httpGet<import('@/common/types').SendTrend>('/api/Email/EmailLog/Trend', { days }, undefined, opts)
 }

@@ -17,6 +17,7 @@ import {
   sendChatMessage,
 } from '@/common/api/chat'
 import type { ChatConversationDto, ChatGroupCreateRequest, ChatMessageDto, ChatOpenDto } from '@/common/api/chat'
+import type { FriendRequestHandledDto } from '@/common/api/friend'
 import type { AsyncTaskDto } from '@/common/api/asyncTask'
 
 /** SignalR 不可用时的轮询间隔（ms） */
@@ -146,6 +147,14 @@ export const useChatStore = defineStore('chat', () => {
     // 通知与聊天共用本条 SignalR 连接（单连接多事件）；可见性/去重由各组件拉取时自行处理。
     conn.on(CHAT_EVENTS.noticeCreated, () => {
       window.dispatchEvent(new CustomEvent('notice:created'))
+    })
+    // 新好友申请（定向推给接收方）：转发 window 事件，ChatView 朋友页签刷新申请列表与角标
+    conn.on(CHAT_EVENTS.friendRequest, () => {
+      window.dispatchEvent(new CustomEvent('friend:request'))
+    })
+    // 好友申请处理结果（定向推给申请人）：转发 window 事件，ChatView 提示并刷新通讯录（同意后多一位好友）
+    conn.on(CHAT_EVENTS.friendRequestHandled, (dto: FriendRequestHandledDto) => {
+      window.dispatchEvent(new CustomEvent('friend:handled', { detail: dto }))
     })
     // 统一异步任务进度推送（定向推给任务发起人）：转发 window 事件，asyncTask store 更新任务面板
     conn.on(CHAT_EVENTS.asyncTaskProgress, (task: AsyncTaskDto) => {

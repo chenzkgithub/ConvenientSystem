@@ -13,6 +13,8 @@ export interface UserManageDto {
   enabled: boolean
   isDeleted: boolean
   createTime: string
+  /** 注册来源：web=Web 端 / app=手机端（存量数据视为 web） */
+  registerSource?: string | null
   roleIds: number[]
   roleNames: string[]
 }

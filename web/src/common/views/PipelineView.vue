@@ -465,7 +465,7 @@ function startPolling() {
     const id = currentRun.value?.id
     if (!id) return stopPolling()
     try {
-      const run = await getPipelineRun(id)
+      const run = await getPipelineRun(id, { silent: true })
       if (run) currentRun.value = run
       if (run && run.status !== 'Running') {
         stopPolling()
@@ -486,7 +486,7 @@ function stopPolling() {
 /** 只刷新最近运行映射（运行结束回写列表状态用） */
 async function refreshRecentRuns() {
   try {
-    const runs = await getPipelineRuns(undefined, 100)
+    const runs = await getPipelineRuns(undefined, 100, { silent: true })
     const map: Record<string, PipelineRun> = {}
     for (const run of runs) {
       if (run.pipelineId && !(run.pipelineId in map)) map[run.pipelineId] = run
@@ -732,7 +732,7 @@ function startWatchTimer() {
   watchTimer = window.setInterval(async () => {
     if (watchedRuns.size === 0) return stopWatchTimer()
     try {
-      const runs = await getPipelineRuns(undefined, 100)
+      const runs = await getPipelineRuns(undefined, 100, { silent: true })
       // 刷新列表“最近运行”列（弹窗轮询停止后列表状态由这里兜底刷新）
       const map: Record<string, PipelineRun> = {}
       for (const run of runs) {
@@ -1146,8 +1146,13 @@ onUnmounted(() => {
             <el-form-item label="SQL 文件">
               <el-input v-model="activeStage.sqlSource" placeholder="SQL 文件或目录；留空 = 上一个构建阶段的产物目录">
                 <template #append>
-                  <el-button :icon="Document" @click="pickSqlFile(activeStage)">选择文件</el-button>
-                  <el-button :icon="FolderOpened" @click="pickSqlFolder(activeStage)">选择目录</el-button>
+                  <!-- 与其他行（项目目录等）统一：纯图标按钮，避免带文字按钮挤压重叠 -->
+                  <el-tooltip content="选择单个 SQL 文件" placement="top">
+                    <el-button :icon="Document" @click="pickSqlFile(activeStage)" />
+                  </el-tooltip>
+                  <el-tooltip content="选择目录（执行其中全部 .sql）" placement="top">
+                    <el-button :icon="FolderOpened" @click="pickSqlFolder(activeStage)" />
+                  </el-tooltip>
                 </template>
               </el-input>
             </el-form-item>

@@ -13,6 +13,8 @@ namespace ConvenientSystem.Service.Common
     /// </summary>
     public class UserConfigService : IUserConfigService
     {
+        private const string MaskedValue = "••••••••";
+
         private readonly IFreeSql _configDb;
         private readonly ICurrentUser _currentUser;
 
@@ -74,7 +76,8 @@ namespace ConvenientSystem.Service.Common
                 return new UserConfigItemDto
                 {
                     ConfigKey = m.Key,
-                    ConfigValue = value,
+                    // password 类型脱敏，防止接口直接泄露密钥；查看明文走 RevealValue（验证登录密码）
+                    ConfigValue = m.InputType == "password" ? MaskedValue : value,
                     DisplayName = m.DisplayName,
                     Description = m.Description,
                     InputType = m.InputType,
@@ -105,6 +108,8 @@ namespace ConvenientSystem.Service.Common
             {
                 if (string.IsNullOrWhiteSpace(item.ConfigKey)) continue;
                 if (!validKeys.Contains(item.ConfigKey)) continue;
+                // 脱敏占位符不写入（password 类项未验证/未修改时前端会回传占位符）
+                if (item.ConfigValue == MaskedValue) continue;
 
                 var existing = _configDb.Select<UserConfigEntity>()
                     .Where(e => e.UserId == userId.Value && e.ConfigKey == item.ConfigKey)
@@ -166,6 +171,42 @@ namespace ConvenientSystem.Service.Common
                 return _configDb.Select<UserConfigEntity>()
                     .Where(e => e.UserId == userId.Value && e.ConfigKey == key)
                     .First(e => e.ConfigValue);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>验证当前用户登录密码（SysUser 表 + PasswordHasher），供个人密钥类功能查看明文前校验。</summary>
+        public bool VerifyLoginPassword(string password)
+        {
+            var userId = _currentUser.UserId;
+            if (userId == null || string.IsNullOrEmpty(password)) return false;
+            try
+            {
+                var user = _configDb.Select<SysUserEntity>()
+                    .Where(u => u.Id == userId.Value)
+                    .First();
+                return user != null && user.Enabled && PasswordHasher.Verify(password, user.Password);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>查看密码类个人配置明文：验证登录密码后返回原值；
+        /// 仅允许元数据声明为 password 类型的 key，防止被用来读取任意原始配置。</summary>
+        public string? RevealValue(string key, string password)
+        {
+            var userId = _currentUser.UserId;
+            if (userId == null || string.IsNullOrWhiteSpace(key)) return null;
+            if (!VerifyLoginPassword(password)) return null;
+
+            var meta = ConfigMetadata.FirstOrDefault(m => m.Key == key);
+            if (meta.Key != key || meta.InputType != "password") return null;
+
+            try
+            {
+                var raw = _configDb.Select<UserConfigEntity>()
+                    .Where(e => e.UserId == userId.Value && e.ConfigKey == key)
+                    .First(e => e.ConfigValue);
+                return raw ?? meta.DefaultValue;
             }
             catch { return null; }
         }

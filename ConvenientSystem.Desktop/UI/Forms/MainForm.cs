@@ -794,7 +794,7 @@ public sealed class MainForm : Form
         BringToFront();
     }
 
-    /// <summary>重启应用：带 --restart 参数拉起新实例（其会等待本实例退出后再启动），随后关闭本实例。</summary>
+    /// <summary>重启应用：带 --restart 参数拉起新实例，随后强制终止本实例。</summary>
     private void RestartApp()
     {
         try
@@ -806,7 +806,9 @@ public sealed class MainForm : Form
         {
             return; // 启动新实例失败则保持当前实例运行
         }
-        ExitApp();
+        // 强制终止：避免 OnFormClosing 异步保存 Cookie 导致旧进程延迟退出、
+        // 端口/文件锁未释放，新进程无法接管。
+        Environment.Exit(0);
     }
 
     /// <summary>关闭应用（触发关闭流程，保存会话 Cookie 后退出）。</summary>

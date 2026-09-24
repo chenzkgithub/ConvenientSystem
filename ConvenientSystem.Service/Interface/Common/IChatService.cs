@@ -3,8 +3,9 @@ using ConvenientSystem.Shared.Model.Common;
 namespace ConvenientSystem.Service.Common
 {
     /// <summary>
-    /// 即时聊天业务服务：企业通讯录模式单聊（无好友关系，屏蔽名单控制可见性）。
+    /// 即时聊天业务服务：好友模式单聊 + 群聊（单聊须好友，屏蔽优先于好友；群聊不受限）。
     /// 会话由双向归一 UserKey 定位（A->B 与 B->A 同一会话）；未读数基于成员已读水位计算。
+    /// 好友关系生命周期由 IFriendService 管理（搜索/申请/处理/删除）。
     /// 实时推送（SignalR）由 Api 层 ChatController 结合 IHubContext 编排，本层只负责落库与查询。
     /// </summary>
     public interface IChatService
@@ -12,10 +13,10 @@ namespace ConvenientSystem.Service.Common
         /// <summary>我的会话列表（未隐藏的，按最后消息时间倒序；含对方信息/最后一条/未读数/屏蔽标记）。</summary>
         List<ChatConversationDto> GetConversations(Guid userId);
 
-        /// <summary>通讯录：全部启用用户（不含自己）+ 双向屏蔽标记（在线状态由 Api 层填充）。</summary>
+        /// <summary>通讯录（= 好友列表）：我的全部好友 + 双向屏蔽标记（在线状态由 Api 层填充）；好友停用仍显示。</summary>
         List<ChatContactDto> GetContacts(Guid userId);
 
-        /// <summary>打开（或创建）与指定用户的会话：清我方隐藏标记，返回会话 Id 与对方信息。屏蔽双方仍可查看历史。</summary>
+        /// <summary>打开（或创建）与指定用户的会话：清我方隐藏标记，返回会话 Id 与对方信息；单聊须好友（屏蔽双方仍可查看历史）。</summary>
         ChatOpenDto OpenConversation(Guid userId, Guid peerId);
 
         /// <summary>会话历史消息（正序返回）：校验成员身份；beforeId&gt;0 时取该 Id 之前的一页（向上翻页）。</summary>
@@ -24,7 +25,7 @@ namespace ConvenientSystem.Service.Common
         /// <summary>按 Id 查询单条消息：须属本会话且在我方清空水位之后；否则返回 null（用于引用定位，区分“未加载”与“已删除/不可见”）。</summary>
         ChatMessageDto? GetMessageById(Guid userId, long conversationId, long messageId);
 
-        /// <summary>发送消息：单聊走 peerId；群聊 peerId 为 Empty，由 conversationId 定位会话。双向屏蔽仅对单聊生效；quoteId&gt;0 时引用本会话已有消息（快照固化）。</summary>
+        /// <summary>发送消息：单聊走 peerId（须好友，屏蔽优先）；群聊 peerId 为 Empty，由 conversationId 定位会话（不受好友限制）。quoteId&gt;0 时引用本会话已有消息（快照固化）。</summary>
         ChatMessageDto SendMessage(Guid userId, Guid peerId, long conversationId, string content, long quoteId = 0, int msgType = 0, List<string>? mentions = null);
 
         /// <summary>创建群聊：创建者自动成为群主；返回会话列表项。</summary>

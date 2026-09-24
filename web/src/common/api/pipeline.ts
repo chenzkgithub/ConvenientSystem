@@ -119,14 +119,14 @@ export function startPipelineRun(pipelineId: string) {
 }
 
 /** 查询单次运行详情（含汇总日志） */
-export function getPipelineRun(id: string) {
-  return localPost<PipelineRun | null>(`/api/local/pipeline/Run?id=${encodeURIComponent(id)}`, {})
+export function getPipelineRun(id: string, opts?: { silent?: boolean }) {
+  return localPost<PipelineRun | null>(`/api/local/pipeline/Run?id=${encodeURIComponent(id)}`, {}, undefined, undefined, opts)
 }
 
 /** 查询运行历史（按开始时间倒序） */
-export function getPipelineRuns(pipelineId?: string, limit = 30) {
+export function getPipelineRuns(pipelineId?: string, limit = 30, opts?: { silent?: boolean }) {
   const q = pipelineId ? `?pipelineId=${encodeURIComponent(pipelineId)}&limit=${limit}` : `?limit=${limit}`
-  return localPost<PipelineRun[]>(`/api/local/pipeline/Runs${q}`, {})
+  return localPost<PipelineRun[]>(`/api/local/pipeline/Runs${q}`, {}, undefined, undefined, opts)
 }
 
 /** 取消运行中的流水线（部署阶段取消会自动还原部署前环境） */
@@ -145,7 +145,8 @@ export interface PipelineConnectionTestResult {
   elapsedMs: number
 }
 
-/** 测试数据库连接串（数据库阶段“测试连接”按钮，结果内联展示；不弹全局遮罩，超时放宽到 30 秒） */
+/** 测试数据库连接串（数据库阶段“测试连接”按钮，结果内联展示；不弹全局遮罩；
+ *  超时覆盖后端最坏情况：Connect Timeout 钳制 60 秒 + 3 秒缓冲） */
 export function testPipelineConnection(request: { dbType: string; connectionString: string }) {
-  return localPost<PipelineConnectionTestResult>('/api/local/pipeline/TestConnection', request, undefined, 30 * 1000, { noLoading: true })
+  return localPost<PipelineConnectionTestResult>('/api/local/pipeline/TestConnection', request, undefined, 70 * 1000, { noLoading: true })
 }

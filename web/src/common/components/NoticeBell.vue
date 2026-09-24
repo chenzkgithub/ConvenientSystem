@@ -28,18 +28,18 @@ const unreadCount = computed(() => unread.value)
 
 async function loadUnread() {
   try {
-    const res = await getNoticeUnreadCount()
+    const res = await getNoticeUnreadCount({ silent: true })
     unread.value = res.count
   } catch { /* 静默：轮询失败不打扰用户 */ }
 }
 
-async function loadList() {
-  loading.value = true
+async function loadList(silent = false) {
+  if (!silent) loading.value = true
   try {
-    notices.value = await getMyNotices()
+    notices.value = await getMyNotices({ silent })
     unread.value = notices.value.filter((n) => !n.isRead).length
   } catch { /* 错误已由 request.ts 弹出提示 */ } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -83,15 +83,16 @@ function formatTime(time: string): string {
 let timer: ReturnType<typeof setInterval> | null = null
 
 // 登录后提醒窗（NoticeAlert）确认阅读后会派发 notice:read 事件，立即同步未读数与列表
+// （事件驱动的后台同步：静默刷新，弹层开着时列表就地更新）
 function onNoticeRead() {
   void loadUnread()
-  if (notices.value.length > 0) void loadList()
+  if (notices.value.length > 0) void loadList(true)
 }
 
 // 新系统通知实时到达（SignalR NoticeCreated → chat store 派发）：秒级刷新角标；弹层开着时同步列表
 function onNoticeCreated() {
   void loadUnread()
-  if (popoverOpen.value) void loadList()
+  if (popoverOpen.value) void loadList(true)
 }
 
 onMounted(() => {

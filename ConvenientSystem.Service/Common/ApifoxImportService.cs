@@ -95,6 +95,15 @@ namespace ConvenientSystem.Service.Common
                 _userConfigService.SetRawValue(TokenKey, _tokenProtector.Protect(newToken));
         }
 
+        /// <summary>查看当前用户已保存的 Access Token 明文：验证登录密码后解密返回；未配置或密码错误返回 null。</summary>
+        public string? RevealMyAccessToken(string password)
+        {
+            if (!_userConfigService.VerifyLoginPassword(password ?? string.Empty)) return null;
+            var protectedToken = _userConfigService.GetRawValue(TokenKey);
+            if (string.IsNullOrWhiteSpace(protectedToken)) return null;
+            return UnprotectAccessToken(protectedToken);
+        }
+
         public AsyncTaskDto StartImport(ApifoxImportRequest request, Guid userId)
         {
             ValidateOpenApiContent(request?.Content);

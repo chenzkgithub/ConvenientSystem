@@ -51,6 +51,7 @@ namespace ConvenientSystem.Service.Common
                     Enabled = u.Enabled,
                     IsDeleted = u.IsDeleted,
                     CreateTime = u.CreateTime,
+                    RegisterSource = u.RegisterSource,
                     RoleIds = myRoleIds,
                     RoleNames = myRoleIds.Where(roleById.ContainsKey).Select(id => roleById[id]).ToList(),
                 };
@@ -106,8 +107,12 @@ namespace ConvenientSystem.Service.Common
                         Remark = remark,
                         Password = PasswordHasher.Hash(dto.Password!),
                         Enabled = dto.Enabled,
+                        // 管理端建号视为 Web 端来源（管理页仅 PC 端可操作）
+                        RegisterSource = ClientPlatform.Web,
                     }).ExecuteAffrows();
                     SaveUserRoles(newId, dto.RoleIds);
+                    // 预置手机端基础四项权限（登录/消息/好友/通知）：两端权限独立，管理员可后续在手机端权限管理页调整
+                    _configDb.Insert(AppPermService.BuildDefaultRows(newId, null)).ExecuteAffrows();
                 });
                 _logger.LogInformation("新增用户 {Account}", account);
                 return;

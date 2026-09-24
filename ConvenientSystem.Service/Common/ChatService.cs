@@ -9,10 +9,11 @@ using Microsoft.Extensions.DependencyInjection;
 namespace ConvenientSystem.Service.Common
 {
     /// <summary>
-    /// 即时聊天业务服务实现：企业通讯录模式单聊。
+    /// 即时聊天业务服务实现：好友模式单聊 + 群聊。
     /// 会话用双向归一 UserKey 定位（两个 Guid 的 N 格式排序后拼接，A→B 与 B→A 同一会话）；
     /// 未读数基于成员已读水位（ReadMessageId）计算：水位之后且非我发送的消息数。
-    /// 实时推送由 Api 层 ChatController 结合 IHubContext&lt;ChatHub&gt; 编排，本层只负责落库与查询。
+    /// 通讯规则：单聊须双方为好友（好友生命周期由 FriendService 管理；屏蔽优先于好友）；
+    /// 群聊不受好友限制。实时推送由 Api 层 ChatController 结合 IHubContext&lt;ChatHub&gt; 编排，本层只负责落库与查询。
     /// </summary>
     public class ChatService : IChatService
     {
@@ -165,7 +166,7 @@ namespace ConvenientSystem.Service.Common
                 .ToList();
         }
 
-        /// <summary>打开（或创建）与指定用户的会话：清我方隐藏标记。屏蔽双方仍可查看历史。</summary>
+        /// <summary>打开（或创建）与指定用户的会话：清我方隐藏标记；单聊须双方为好友（屏蔽双方仍可查看历史）。</summary>
         public ChatOpenDto OpenConversation(Guid userId, Guid peerId)
         {
             if (peerId == userId) throw new BadRequestException("不能与自己发起会话");
@@ -173,6 +174,10 @@ namespace ConvenientSystem.Service.Common
                 .Where(u => u.Id == peerId && u.Enabled && !u.IsDeleted)
                 .First();
             if (peer == null) throw new NotFoundException("对方用户不存在或已停用");
+
+            // 通讯规则：好友才能发起单聊（群聊不受限）
+            if (!IsFriend(userId, peerId))
+                throw new BadRequestException("你们还不是好友，请先在「新的朋友」中添加好友");
 
             var convId = GetOrCreateConversation(userId, peerId);
 
@@ -249,11 +254,22 @@ namespace ConvenientSystem.Service.Common
 
         // ===== 通讯录与屏蔽 =====
 
-        /// <summary>通讯录：全部启用用户（不含自己）+ 双向屏蔽标记（在线状态由 Api 层填充）。</summary>
+        /// <summary>是否好友（双行模式两行成对存在，查我方持有行即可；供单聊通讯规则校验）。</summary>
+        private bool IsFriend(Guid userId, Guid peerId)
+            => _fsql.Select<ChatFriendshipEntity>()
+                .Where(f => f.UserId == userId && f.FriendId == peerId)
+                .Any();
+
+        /// <summary>通讯录（= 好友列表）：我的全部好友 + 双向屏蔽标记（在线状态由 Api 层填充）；好友停用仍显示，已删除用户不再返回。</summary>
         public List<ChatContactDto> GetContacts(Guid userId)
         {
+            var friendIds = _fsql.Select<ChatFriendshipEntity>()
+                .Where(f => f.UserId == userId)
+                .ToList(f => f.FriendId);
+            if (friendIds.Count == 0) return new List<ChatContactDto>();
+
             var users = _fsql.Select<SysUserEntity>()
-                .Where(u => u.Enabled && !u.IsDeleted && u.Id != userId)
+                .Where(u => friendIds.Contains(u.Id) && !u.IsDeleted)
                 .OrderBy(u => u.Account)
                 .ToList(u => new UserInfo(u.Id, u.Account, u.DisplayName, u.Avatar));
             if (users.Count == 0) return new List<ChatContactDto>();
@@ -406,7 +422,7 @@ namespace ConvenientSystem.Service.Common
             };
         }
 
-        /// <summary>发送消息：单聊走 peerId；群聊 peerId 为 Empty，由 conversationId 定位会话。双向屏蔽仅对单聊生效；quoteId&gt;0 时引用本会话已有消息（快照固化）。</summary>
+        /// <summary>发送消息：单聊走 peerId（须好友，屏蔽优先）；群聊 peerId 为 Empty，由 conversationId 定位会话（不受好友限制）。quoteId&gt;0 时引用本会话已有消息（快照固化）。</summary>
         public ChatMessageDto SendMessage(Guid userId, Guid peerId, long conversationId, string content, long quoteId = 0, int msgType = 0, List<string>? mentions = null)
         {
             var text = (content ?? string.Empty).Trim();
@@ -431,12 +447,16 @@ namespace ConvenientSystem.Service.Common
                     .Any();
                 if (!peerExists) throw new NotFoundException("对方用户不存在或已停用");
 
-                // 双向屏蔽即拒收：透明提示而非静默投递
+                // 双向屏蔽即拒收：透明提示而非静默投递（屏蔽优先于好友）
                 var (blockedByMe, blockedMe) = GetBlockFlags(userId, new List<Guid> { peerId });
                 if (blockedByMe.Contains(peerId))
                     throw new BadRequestException("你已屏蔽对方，请先取消屏蔽后再发送消息");
                 if (blockedMe.Contains(peerId))
                     throw new BadRequestException("对方暂无法接收你的消息");
+
+                // 通讯规则：好友才能单聊（群聊不受限）
+                if (!IsFriend(userId, peerId))
+                    throw new BadRequestException("你们还不是好友，无法发送消息，请先添加好友");
 
                 convId = GetOrCreateConversation(userId, peerId);
                 conv = _fsql.Select<ChatConversationEntity>().Where(c => c.Id == convId).First()
@@ -879,7 +899,7 @@ namespace ConvenientSystem.Service.Common
             return (sourceConvId, msgs.OrderBy(m => m.Id).ToList());
         }
 
-        /// <summary>转发目标校验：不能是自己/不存在/停用，双向屏蔽拒收（与 SendMessage 一致）；返回目标会话 Id。</summary>
+        /// <summary>转发目标校验：不能是自己/不存在/停用，双向屏蔽拒收，单聊须好友（与 SendMessage 一致）；返回目标会话 Id。</summary>
         private long EnsureForwardTarget(Guid userId, Guid targetPeerId)
         {
             if (targetPeerId == userId) throw new BadRequestException("不能转发给自己");
@@ -893,6 +913,10 @@ namespace ConvenientSystem.Service.Common
                 throw new BadRequestException("你已屏蔽对方，请先取消屏蔽后再转发");
             if (blockedMe.Contains(targetPeerId))
                 throw new BadRequestException("对方暂无法接收你的消息");
+
+            // 通讯规则：好友才能单聊转发
+            if (!IsFriend(userId, targetPeerId))
+                throw new BadRequestException("你们还不是好友，无法转发消息，请先添加好友");
 
             return GetOrCreateConversation(userId, targetPeerId);
         }

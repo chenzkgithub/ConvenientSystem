@@ -35,4 +35,18 @@ namespace ConvenientSystem.Shared.Model.Common
         public string ConfigKey { get; set; } = string.Empty;
         public string ConfigValue { get; set; } = string.Empty;
     }
+
+    /// <summary>查看密码类个人配置明文的请求（需验证登录密码）</summary>
+    public class UserConfigRevealDto
+    {
+        public string ConfigKey { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+
+    /// <summary>查看密码类个人配置明文的结果</summary>
+    public class UserConfigRevealResult
+    {
+        public bool Ok { get; set; }
+        public string? Value { get; set; }
+    }
 }
