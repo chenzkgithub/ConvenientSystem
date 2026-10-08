@@ -17,6 +17,8 @@ AppPublisher=ConvenientSystem
 DefaultDirName={autopf}\ConvenientSystem
 DefaultGroupName=ConvenientSystem
 UninstallDisplayIcon={app}\ConvenientSystem.exe
+; 安装程序 setup.exe 自身图标（与主程序一致，源文件与 iss 同目录）
+SetupIconFile=appicon.ico
 UninstallDisplayName=ConvenientSystem 桌面客户端
 OutputDir=..\installer-output
 OutputBaseFilename=ConvenientSystem-Setup
@@ -42,6 +44,11 @@ Source: "..\exe\ConvenientSystem.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\exe\appsettings.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 ; 运行时所需的原生依赖（如有则复制）
 Source: "..\exe\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; ERP 验证码本地识别依赖：训练数据和 x64 Tesseract 原生库必须保持目录结构。
+Source: "..\exe\tessdata\*"; DestDir: "{app}\tessdata"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\exe\x64\*"; DestDir: "{app}\x64"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Chrome/Edge 自动登录扩展（用户首次在浏览器扩展页加载此目录）
+Source: "..\exe\BrowserExtension\*"; DestDir: "{app}\BrowserExtension"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 前端初始版本（首次安装时提供离线可用，后续通过服务器更新）
 Source: "..\exe\wwwroot\*"; DestDir: "{app}\wwwroot"; Flags: ignoreversion recursesubdirs createallsubdirs
 

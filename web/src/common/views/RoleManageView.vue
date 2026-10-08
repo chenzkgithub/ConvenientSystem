@@ -12,8 +12,11 @@ import {
   type MenuFlatDto,
 } from '@/common/api/roleManage'
 import { confirmDelete } from '@/common/utils/confirm'
+import { useMenuStore } from '@/common/stores/menu'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
 import CommonDialog from '@/common/components/CommonDialog.vue'
+
+const menuStore = useMenuStore()
 
 const loading = ref(false)
 const list = ref<RoleDto[]>([])
@@ -136,6 +139,8 @@ async function submitForm() {
     ElMessage.success('保存成功')
     dialogVisible.value = false
     await loadData()
+    // 菜单授权可能变化：重新拉取菜单树，侧栏与动态路由立即生效（MainLayout 监听 menus 变化自动重注册路由）
+    void menuStore.load()
   } catch { /* 错误已由 request.ts 弹出提示 */ }
 }
 

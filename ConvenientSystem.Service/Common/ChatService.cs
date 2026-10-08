@@ -104,6 +104,15 @@ namespace ConvenientSystem.Service.Common
             var peerMap = GetUserInfoMap(peerIds);
             var (blockedByMe, blockedMe) = GetBlockFlags(userId, peerIds);
 
+            // 单聊备注：我方持有行的 Remark（展示优先于昵称）
+            var remarkMap = peerIds.Count == 0
+                ? new Dictionary<Guid, string>()
+                : _fsql.Select<ChatFriendshipEntity>()
+                    .Where(f => f.UserId == userId && peerIds.Contains(f.FriendId))
+                    .ToList(f => new { f.FriendId, f.Remark })
+                    .Where(f => !string.IsNullOrEmpty(f.Remark))
+                    .ToDictionary(f => f.FriendId, f => f.Remark!);
+
             // 群聊：统计每个会话的成员数
             var groupConvIds = visible.Where(m => convs[m.ConversationId].ConversationType == 1).Select(m => m.ConversationId).ToList();
             var memberCountMap = groupConvIds.Count == 0
@@ -158,6 +167,7 @@ namespace ConvenientSystem.Service.Common
                     Muted = m.Muted,
                     BlockedByMe = !isGroup && blockedByMe.Contains(peerId),
                     BlockedMe = !isGroup && blockedMe.Contains(peerId),
+                    PeerRemark = isGroup ? null : remarkMap.GetValueOrDefault(peerId),
                 });
             }
 
@@ -263,9 +273,10 @@ namespace ConvenientSystem.Service.Common
         /// <summary>通讯录（= 好友列表）：我的全部好友 + 双向屏蔽标记（在线状态由 Api 层填充）；好友停用仍显示，已删除用户不再返回。</summary>
         public List<ChatContactDto> GetContacts(Guid userId)
         {
-            var friendIds = _fsql.Select<ChatFriendshipEntity>()
+            var friendshipRows = _fsql.Select<ChatFriendshipEntity>()
                 .Where(f => f.UserId == userId)
-                .ToList(f => f.FriendId);
+                .ToList(f => new { f.FriendId, f.Remark });
+            var friendIds = friendshipRows.Select(f => f.FriendId).ToList();
             if (friendIds.Count == 0) return new List<ChatContactDto>();
 
             var users = _fsql.Select<SysUserEntity>()
@@ -275,6 +286,9 @@ namespace ConvenientSystem.Service.Common
             if (users.Count == 0) return new List<ChatContactDto>();
 
             var (blockedByMe, blockedMe) = GetBlockFlags(userId, users.Select(u => u.Id).ToList());
+            var remarkMap = friendshipRows
+                .Where(f => !string.IsNullOrEmpty(f.Remark))
+                .ToDictionary(f => f.FriendId, f => f.Remark!);
 
             return users.Select(u => new ChatContactDto
             {
@@ -282,6 +296,7 @@ namespace ConvenientSystem.Service.Common
                 Account = u.Account,
                 DisplayName = u.DisplayName,
                 Avatar = u.Avatar,
+                PeerRemark = remarkMap.GetValueOrDefault(u.Id),
                 Online = false,
                 BlockedByMe = blockedByMe.Contains(u.Id),
                 BlockedMe = blockedMe.Contains(u.Id),

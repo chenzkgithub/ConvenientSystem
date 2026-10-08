@@ -6,6 +6,14 @@ const DEFAULT_LOCK_TIMEOUT_MS = 2 * 60 * 1000 // 缺省 2 分钟
 const IDLE_EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'mousedown', 'wheel']
 const LOCK_STORAGE_KEY = 'app_locked' // 锁屏状态持久化：刷新页面后恢复
 
+/** 向桌面壳发送消息（普通浏览器环境下无桌面壳，静默忽略）；extra 附加业务字段（如 bg:save 的图片数据） */
+export function postToHost(type: string, extra?: Record<string, unknown>) {
+  const wv = (
+    window as unknown as { chrome?: { webview?: { postMessage?: (m: unknown) => void } } }
+  ).chrome?.webview
+  if (typeof wv?.postMessage === 'function') wv.postMessage({ type, ...extra })
+}
+
 /** 锁屏与空闲计时 */
 export const useLockStore = defineStore('lock', () => {
   const isLocked = ref(localStorage.getItem(LOCK_STORAGE_KEY) === 'true')
@@ -71,14 +79,6 @@ export const useLockStore = defineStore('lock', () => {
    */
   function syncHost() {
     if (featureEnabled.value && isLocked.value) postToHost('host:lock')
-  }
-
-  /** 向桌面壳发送消息（普通浏览器环境下无桌面壳，静默忽略） */
-  function postToHost(type: string) {
-    const wv = (
-      window as unknown as { chrome?: { webview?: { postMessage?: (m: unknown) => void } } }
-    ).chrome?.webview
-    if (typeof wv?.postMessage === 'function') wv.postMessage({ type })
   }
 
   function lock() {

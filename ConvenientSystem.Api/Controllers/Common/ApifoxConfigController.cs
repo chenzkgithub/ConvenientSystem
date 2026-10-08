@@ -33,15 +33,10 @@ namespace ConvenientSystem.Api.Controllers.Common
             return Ok(new { message = "Apifox Access Token 已保存" });
         }
 
-        /// <summary>查看当前用户已保存的 Access Token 明文（需验证登录密码）；未配置或密码错误时 ok=false。</summary>
+        /// <summary>查看当前用户已保存的 Access Token 明文（需验证登录密码）；未配置、密码错误或密文失效时 ok=false（密文失效另带 stale=true）。</summary>
         [HttpPost]
         public ActionResult<ApifoxAccessTokenRevealResult> RevealMyAccessToken([FromBody] ApifoxAccessTokenRevealRequest request)
-        {
-            var value = _service.RevealMyAccessToken(request?.Password ?? string.Empty);
-            return Ok(value == null
-                ? new ApifoxAccessTokenRevealResult { Ok = false }
-                : new ApifoxAccessTokenRevealResult { Ok = true, Value = value });
-        }
+            => Ok(_service.RevealMyAccessToken(request?.Password ?? string.Empty));
 
         /// <summary>启动 OpenAPI 3 JSON 分批导入任务（按 tag 拆批后台执行），返回任务初始快照（含 TaskId）供轮询进度。</summary>
         [HttpPost]

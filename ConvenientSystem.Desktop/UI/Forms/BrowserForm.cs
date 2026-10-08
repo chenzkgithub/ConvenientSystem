@@ -17,6 +17,8 @@ namespace ConvenientSystem;
 public sealed class BrowserForm : Form, ILockable
 {
     private readonly WebView2 _webView;
+    private readonly HashSet<CoreWebView2Frame> _frames = [];
+    private bool _autoLoginInProgress;
 
     // 锁屏遮罩：使用原生 LockOverlayControl 代替 WebView2，
     // 避免锁屏页加载 Vue 应用触发 API 调用（共享 localStorage 导致 401 清除全局登录态）。
@@ -59,14 +61,19 @@ public sealed class BrowserForm : Form, ILockable
     public CoreWebView2 Core => _webView.CoreWebView2;
 
     /// <summary>
-    /// 按当前屏幕工作区的 80% 居中摆放窗口（默认打开尺寸，不最大化）。
-    /// 随分辨率自适应：大屏更大、小屏更小，且始终不超出工作区。
+    /// 居中摆放独立窗口，默认固定尺寸 950×680（用户手动调整后的常用大小）。
+    /// 工作区放不下（小屏/远程桌面分辨率过低）时回退为工作区的 80%，保证窗口始终完整可见。
     /// </summary>
     public void SizeToWorkingArea()
     {
         var wa = Screen.FromHandle(Handle).WorkingArea;
-        int w = (int)(wa.Width * 0.8);
-        int h = (int)(wa.Height * 0.8);
+        // 默认固定 950×680；仅当工作区小于该尺寸时才退化为 80% 自适应
+        int w = 950, h = 680;
+        if (w > wa.Width || h > wa.Height)
+        {
+            w = (int)(wa.Width * 0.8);
+            h = (int)(wa.Height * 0.8);
+        }
         StartPosition = FormStartPosition.Manual;
         Bounds = new Rectangle(
             wa.X + (wa.Width - w) / 2,
@@ -98,6 +105,27 @@ public sealed class BrowserForm : Form, ILockable
 #else
         core.Settings.AreDevToolsEnabled = false;
 #endif
+
+        core.FrameCreated += (_, e) => TrackFrame(e.Frame);
+
+        core.ContextMenuRequested += (_, e) =>
+        {
+            if (e.MenuItems.Count > 0)
+            {
+                e.MenuItems.Add(core.Environment.CreateContextMenuItem(
+                    string.Empty,
+                    null,
+                    CoreWebView2ContextMenuItemKind.Separator));
+            }
+
+            var autoLoginItem = core.Environment.CreateContextMenuItem(
+                "便捷系统自动登录",
+                null,
+                CoreWebView2ContextMenuItemKind.Command);
+            autoLoginItem.IsEnabled = !_autoLoginInProgress;
+            autoLoginItem.CustomItemSelected += async (_, _) => await AutoLoginCurrentPageAsync(core);
+            e.MenuItems.Add(autoLoginItem);
+        };
 
         // 窗口标题跟随网页标题（若已设置固定标题则保持不变）
         core.DocumentTitleChanged += (_, _) =>
@@ -134,6 +162,137 @@ public sealed class BrowserForm : Form, ILockable
         // 注册到锁屏协调器；若此刻已处于锁屏，会立即对本窗口上锁。
         LockCoordinator.Register(this);
     }
+
+    private async Task AutoLoginCurrentPageAsync(CoreWebView2 core)
+    {
+        if (_autoLoginInProgress) return;
+
+        _autoLoginInProgress = true;
+        try
+        {
+            var coordinator = _services.GetRequiredService<BrowserAutoLoginCoordinator>();
+            var result = await coordinator.LoginAsync(core.Source, CancellationToken.None);
+            if (!result.Success)
+            {
+                MessageBox.Show(this, result.Message, "自动登录", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (result.PageAction is not null)
+            {
+                if (!await FillPageAsync(core, result.PageAction))
+                {
+                    MessageBox.Show(this,
+                        "未找到支持的账号密码登录表单，请切换到账号登录后重试。",
+                        "自动登录",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(result.Token) || string.IsNullOrWhiteSpace(result.CookieUrl))
+            {
+                MessageBox.Show(this, result.Message, "自动登录", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var cookieUri = new Uri(result.CookieUrl);
+            var cookie = core.CookieManager.CreateCookie(
+                result.CookieName,
+                result.Token,
+                cookieUri.Host,
+                "/");
+            cookie.IsSecure = cookieUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+            cookie.SameSite = CoreWebView2CookieSameSiteKind.Lax;
+            core.CookieManager.AddOrUpdateCookie(cookie);
+            core.Reload();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"自动登录失败：{ex.Message}", "自动登录", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _autoLoginInProgress = false;
+        }
+    }
+
+    private void TrackFrame(CoreWebView2Frame frame)
+    {
+        _frames.Add(frame);
+        frame.FrameCreated += (_, e) => TrackFrame(e.Frame);
+        frame.Destroyed += (_, _) => _frames.Remove(frame);
+    }
+
+    private async Task<bool> FillPageAsync(CoreWebView2 core, BrowserAutoLoginPageAction action)
+    {
+        if (!action.AdapterType.Equals(
+                BrowserAutoLoginCredentialStore.AliyunAdapterType,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        const string detectScript = """
+            (() => location.hostname === 'passport.aliyun.com' &&
+                Boolean(document.querySelector('#fm-login-id')) &&
+                Boolean(document.querySelector('#fm-login-password')) &&
+                Boolean(document.querySelector('.fm-button.fm-submit.password-login')))()
+            """;
+        var userName = System.Text.Json.JsonSerializer.Serialize(action.UserName);
+        var password = System.Text.Json.JsonSerializer.Serialize(action.Password);
+        var fillScript = $$"""
+            (async () => {
+              const userNameInput = document.querySelector('#fm-login-id');
+              const passwordInput = document.querySelector('#fm-login-password');
+              const submitButton = document.querySelector('.fm-button.fm-submit.password-login');
+              if (!userNameInput || !passwordInput || !submitButton) return false;
+
+              const setValue = (input, value) => {
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+                if (setter) setter.call(input, value);
+                else input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              };
+
+              setValue(userNameInput, {{userName}});
+              setValue(passwordInput, {{password}});
+              await new Promise(resolve => setTimeout(resolve, 100));
+              submitButton.click();
+              return true;
+            })()
+            """;
+
+        try
+        {
+            if (IsTrueScriptResult(await core.ExecuteScriptAsync(detectScript)))
+                return IsTrueScriptResult(await core.ExecuteScriptAsync(fillScript));
+        }
+        catch
+        {
+            // 顶层页面导航过程中可能暂时无法执行脚本，继续检查登录 iframe。
+        }
+
+        foreach (var frame in _frames.ToArray())
+        {
+            try
+            {
+                if (!IsTrueScriptResult(await frame.ExecuteScriptAsync(detectScript))) continue;
+                return IsTrueScriptResult(await frame.ExecuteScriptAsync(fillScript));
+            }
+            catch
+            {
+                // iframe 在页面切换时可能已销毁，忽略并继续检查其余 frame。
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTrueScriptResult(string result)
+        => result.Equals("true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 从 WebView2 的 localStorage 读取 JWT，供锁屏密码校验接口携带认证信息。
@@ -225,6 +384,17 @@ public sealed class BrowserForm : Form, ILockable
             {
                 try { Process.Start(new ProcessStartInfo(schemeUrl) { UseShellExecute = true }); }
                 catch { /* 启动失败时静默忽略 */ }
+                return;
+            }
+
+            // standalone 内部页面里点退出登录：只有独立窗口能收到消息（主窗口可能已不在），
+            // 这里关闭所有独立浏览器窗口（含本窗口），与主窗口侧退出登录行为保持一致。
+            if (root.TryGetProperty("type", out var logoutType) && logoutType.GetString() == "host:logout")
+            {
+                foreach (var form in Application.OpenForms.OfType<BrowserForm>().ToArray())
+                {
+                    form.Close();
+                }
                 return;
             }
 

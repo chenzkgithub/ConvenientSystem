@@ -18,21 +18,24 @@ internal sealed class WebHostService : IHostedService, IDisposable
 {
     private readonly ILogger<WebHostService> _logger;
     private readonly IWritableOptions<AppSettings> _appSettings;
+    private readonly BrowserAutoLoginCoordinator _browserAutoLoginCoordinator;
     private WebApplication? _app;
 
     public string BaseUrl { get; private set; } = string.Empty;
 
     public WebHostService(
         ILogger<WebHostService> logger,
-        IWritableOptions<AppSettings> appSettings)
+        IWritableOptions<AppSettings> appSettings,
+        BrowserAutoLoginCoordinator browserAutoLoginCoordinator)
     {
         _logger = logger;
         _appSettings = appSettings;
+        _browserAutoLoginCoordinator = browserAutoLoginCoordinator;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var app = BuildWebApp(_appSettings);
+        var app = BuildWebApp(_appSettings, _browserAutoLoginCoordinator);
         var preferredPort = 51942;
         var port = IsPortAvailable(preferredPort) ? preferredPort : 0;
 
@@ -46,7 +49,7 @@ internal sealed class WebHostService : IHostedService, IDisposable
         catch
         {
             (app as IDisposable)?.Dispose();
-            app = BuildWebApp(_appSettings);
+            app = BuildWebApp(_appSettings, _browserAutoLoginCoordinator);
             app.Urls.Clear();
             app.Urls.Add("http://127.0.0.1:0");
             await app.StartAsync(cancellationToken);
@@ -71,13 +74,15 @@ internal sealed class WebHostService : IHostedService, IDisposable
         (_app as IDisposable)?.Dispose();
     }
 
-    private static WebApplication BuildWebApp(IWritableOptions<AppSettings> appSettings)
+    private static WebApplication BuildWebApp(
+        IWritableOptions<AppSettings> appSettings,
+        BrowserAutoLoginCoordinator browserAutoLoginCoordinator)
     {
         var builder = WebApplication.CreateBuilder();
 
-        // 把外部 Host 已注册的 IWritableOptions 透传给 Kestrel 子容器，
-        // 使 ReverseProxyMiddleware / WebUpdateController 等内部中间件和控制器能解析同一配置实例。
+        // 把外部 Host 的单例透传给 Kestrel 子容器，确保浏览器接口与 WinForms 共用同一凭据和交互流程。
         builder.Services.AddSingleton(appSettings);
+        builder.Services.AddSingleton(browserAutoLoginCoordinator);
 
         builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 600 * 1024 * 1024);
         builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 600_000_000);
@@ -140,6 +145,31 @@ internal sealed class WebHostService : IHostedService, IDisposable
         }
 
         var app = builder.Build();
+
+        // 仅允许 Chrome/Edge 扩展跨域调用本机自动登录接口，普通网页不能读取登录结果。
+        app.Use(async (context, next) =>
+        {
+            var origin = context.Request.Headers.Origin.ToString();
+            var isBrowserExtension = origin.StartsWith("chrome-extension://", StringComparison.OrdinalIgnoreCase);
+            if (isBrowserExtension)
+            {
+                context.Response.Headers.AccessControlAllowOrigin = origin;
+                context.Response.Headers.AccessControlAllowMethods = "GET, POST, OPTIONS";
+                context.Response.Headers.AccessControlAllowHeaders = "Content-Type";
+                context.Response.Headers["Access-Control-Allow-Private-Network"] = "true";
+                context.Response.Headers.Vary = "Origin";
+            }
+
+            if (HttpMethods.IsOptions(context.Request.Method))
+            {
+                context.Response.StatusCode = isBrowserExtension
+                    ? StatusCodes.Status204NoContent
+                    : StatusCodes.Status403Forbidden;
+                return;
+            }
+
+            await next();
+        });
 
         // 宿主标识注入：必须在 UseDefaultFiles 之前注册，为 index.html 注入 cs-host meta
         app.UseMiddleware<HostKindInjectionMiddleware>();

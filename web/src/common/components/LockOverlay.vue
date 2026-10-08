@@ -2,7 +2,7 @@
 import { nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { verifyUnlock } from '@/common/api/lock'
 import { useLockStore } from '@/common/stores/lock'
-import lockBg from '@/assets/lock-bg.jpg'
+import { loadLocalImage } from '@/common/utils/localImage'
 
 const lock = useLockStore()
 const emit = defineEmits<{ (e: 'unlocked'): void }>()
@@ -25,6 +25,34 @@ watch(
   },
   { immediate: true },
 )
+
+// 本机自定义锁屏背景（IndexedDB；空串用内置默认图）
+const customBg = ref('')
+let customBgUrl = '' // 已创建的 object URL，卸载时释放
+
+onMounted(async () => {
+  try {
+    const blob = await loadLocalImage('lockBg')
+    if (blob) {
+      customBgUrl = URL.createObjectURL(blob)
+      customBg.value = customBgUrl
+    }
+  } catch { /* 读取失败时使用内置默认背景 */
+  }
+  document.addEventListener('keydown', onKeydown, true)
+  document.addEventListener('contextmenu', onContextmenu, true)
+  document.addEventListener('focusin', onFocusIn, true)
+  window.addEventListener('focus', focusInput)
+  focusInput()
+})
+
+onBeforeUnmount(() => {
+  if (customBgUrl) URL.revokeObjectURL(customBgUrl)
+  document.removeEventListener('keydown', onKeydown, true)
+  document.removeEventListener('contextmenu', onContextmenu, true)
+  document.removeEventListener('focusin', onFocusIn, true)
+  window.removeEventListener('focus', focusInput)
+})
 
 /** 拦截刷新与开发者工具快捷键，防止锁屏期间绕过解锁 */
 function onKeydown(e: KeyboardEvent) {
@@ -61,21 +89,6 @@ function onFocusIn(e: FocusEvent) {
   e.preventDefault?.()
   focusInput()
 }
-
-onMounted(() => {
-  document.addEventListener('keydown', onKeydown, true)
-  document.addEventListener('contextmenu', onContextmenu, true)
-  document.addEventListener('focusin', onFocusIn, true)
-  window.addEventListener('focus', focusInput)
-  focusInput()
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onKeydown, true)
-  document.removeEventListener('contextmenu', onContextmenu, true)
-  document.removeEventListener('focusin', onFocusIn, true)
-  window.removeEventListener('focus', focusInput)
-})
 
 /** 粒子随机位置（固定种子避免每次渲染变化） */
 function particleStyle(i: number) {
@@ -116,9 +129,9 @@ async function doUnlock() {
 
 <template>
   <div class="lock-wrap">
-    <!-- 动漫背景图 -->
-    <div class="lock-bg-img" :style="{ backgroundImage: `url(${lockBg})` }"></div>
-    <!-- 深色遮罩（保证白色文字可读性） -->
+    <!-- 背景图（用户自定义优先，未设置时用主色渐变） -->
+    <div class="lock-bg-img" :style="customBg ? { backgroundImage: `url(${customBg})` } : undefined"></div>
+    <!-- 白雾遮罩（白底无感；自定义图时把图提亮，保证深色文字可读） -->
     <div class="lock-overlay"></div>
     <!-- 浮动光点装饰 -->
     <div class="lock-particles">
@@ -163,10 +176,11 @@ async function doUnlock() {
   background: transparent;
 }
 
-/* ── 动漫背景图 ── */
+/* ── 锁屏背景（默认白色，有自定义图时被行内样式覆盖） ── */
 .lock-bg-img {
   position: absolute;
   inset: 0;
+  background-color: #fff;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -180,11 +194,11 @@ async function doUnlock() {
   to { transform: scale(1.1) translate(-10px, -8px); }
 }
 
-/* ── 深色渐变遮罩（最轻量，让背景图最大程度透出来） ── */
+/* ── 白雾遮罩（白色背景时无感，自定义图时提亮画面） ── */
 .lock-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(20, 15, 10, 0.18) 0%, rgba(30, 20, 10, 0.12) 50%, rgba(15, 10, 5, 0.2) 100%);
+  background: rgba(255, 255, 255, 0.45);
   backdrop-filter: blur(0px);
   -webkit-backdrop-filter: blur(0px);
 }
@@ -211,19 +225,19 @@ async function doUnlock() {
   100% { opacity: 0; transform: translateY(-40px); }
 }
 
-/* ── 锁定卡片：最透明，仅保留轻微边框与淡淡阴影，让背景图完全透出来 ── */
+/* ── 锁定卡片：白色毛玻璃 + 淡灰边框，深色文字在白色背景上可读 ── */
 .lock-card {
   position: relative;
   z-index: 1;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 24px;
   padding: 44px 40px 36px;
   min-width: 380px;
   text-align: center;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.6);
   animation: cardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -252,7 +266,7 @@ async function doUnlock() {
 }
 
 .lock-card h2 {
-  color: #fff;
+  color: #1e293b;
   font-size: 22px;
   margin-bottom: 6px;
   font-weight: 700;
@@ -260,36 +274,36 @@ async function doUnlock() {
 }
 
 .lock-sub {
-  color: rgba(255, 255, 255, 0.5);
+  color: #64748b;
   font-size: 13px;
   margin-bottom: 24px;
 }
 
-/* ── 输入框样式覆盖 ── */
+/* ── 输入框样式覆盖（白色实底 + 深色文字） ── */
 .lock-card :deep(.el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
   box-shadow: none;
   border-radius: 12px;
   transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 .lock-card :deep(.el-input__wrapper:hover) {
   border-color: rgba(139, 92, 246, 0.5);
-  background: rgba(255, 255, 255, 0.12);
+  background: #fff;
 }
 .lock-card :deep(.el-input__wrapper.is-focus) {
   border-color: #8b5cf6;
-  background: rgba(255, 255, 255, 0.14);
+  background: #fff;
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
 }
 .lock-card :deep(.el-input__inner) {
-  color: #fff;
+  color: #1e293b;
 }
 .lock-card :deep(.el-input__inner::placeholder) {
-  color: rgba(255, 255, 255, 0.4);
+  color: #94a3b8;
 }
 .lock-card :deep(.el-input .el-icon) {
-  color: rgba(255, 255, 255, 0.5);
+  color: #94a3b8;
 }
 
 /* ── 解锁按钮 ── */
@@ -316,11 +330,11 @@ async function doUnlock() {
   height: 22px;
   font-size: 14px;
   margin: 12px 0 16px;
-  color: rgba(255, 255, 255, 0.55);
+  color: #64748b;
   transition: color 0.2s;
 }
 
 .lock-tip.error {
-  color: #ff8787;
+  color: #ef4444;
 }
 </style>

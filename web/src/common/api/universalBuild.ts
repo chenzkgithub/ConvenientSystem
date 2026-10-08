@@ -3,8 +3,8 @@ import { localPost } from '@/api/request'
 /** 接口归属：local=全部走桌面端本地通道（审计脚本依据，勿删） */
 export const API_SIDE = 'local' as const
 
-/** 通用构建类型 */
-export type UniversalBuildType = 'Web' | 'Node' | 'DotNet' | 'JavaMaven' | 'JavaGradle' | 'Installer'
+/** 通用构建类型（MobileH5 = uni-app H5 移动端，部署到独立 81 端口容器） */
+export type UniversalBuildType = 'Web' | 'Node' | 'DotNet' | 'JavaMaven' | 'JavaGradle' | 'Installer' | 'MobileH5'
 
 /** 通用构建状态（Waiting = 并发已满，排队等待构建槽位） */
 export type UniversalBuildStatus = 'Pending' | 'Waiting' | 'Running' | 'Success' | 'Failed' | 'Cancelled'

@@ -35,9 +35,14 @@ export interface UserSaveDto {
   roleIds: number[]
 }
 
-/** 用户列表（对应后端 UserManageController） */
+/** 用户列表（对应后端 UserManageController；列表不返回头像，响应体瘦身） */
 export function listUsers() {
   return httpGet<UserManageDto[]>('/api/Common/UserManage/List')
+}
+
+/** 单用户详情（含头像，供编辑弹窗使用） */
+export function getUser(id: string) {
+  return httpGet<UserManageDto>(`/api/Common/UserManage/Get?id=${id}`)
 }
 
 /** 新增或更新用户 */
@@ -58,4 +63,9 @@ export function resetUserPassword(id: string, password: string) {
 /** 删除用户（软删除） */
 export function deleteUser(id: string) {
   return httpPost<void>(`/api/Common/UserManage/Delete?id=${id}`)
+}
+
+/** 恢复已删除用户（软删除还原，恢复后默认启用） */
+export function restoreUser(id: string) {
+  return httpPost<void>(`/api/Common/UserManage/Restore?id=${id}`)
 }

@@ -47,6 +47,11 @@ public sealed class FloatingButton : Form
     [Browsable(false)]
     public Action? EntryEditorAction { get; set; }
 
+    /// <summary>打开浏览器自动登录配置回调。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action? AutoLoginSettingsAction { get; set; }
+
     /// <summary>刷新文件索引回调。</summary>
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     [Browsable(false)]
@@ -230,6 +235,21 @@ public sealed class FloatingButton : Form
         _panelCooldownTimer = new System.Windows.Forms.Timer { Interval = 300 };
         _panelCooldownTimer.Tick += (_, _) => { _panelCooldownTimer.Stop(); _inPanelCooldown = false; };
 
+        // 右键菜单显示期间暂停悬停面板，关闭后重新进入短暂冷却期。
+        _selfMenu.Opening += (_, _) =>
+        {
+            _hoverTimer.Stop();
+            _inPanelCooldown = true;
+        };
+        _selfMenu.Closed += (_, _) =>
+        {
+            _dragging = false;
+            _moved = false;
+            _panelCooldownTimer.Stop();
+            _panelCooldownTimer.Start();
+            ForceTopMost();
+        };
+
         // 右键菜单
         _selfMenu.Renderer = SharedRenderer;
         var launcherItem = new ToolStripMenuItem("快捷启动器  Ctrl+Alt+Space");
@@ -239,6 +259,10 @@ public sealed class FloatingButton : Form
         var entryItem = new ToolStripMenuItem("管理启动器条目");
         entryItem.Click += (_, _) => EntryEditorAction?.Invoke();
         _selfMenu.Items.Add(entryItem);
+
+        var autoLoginItem = new ToolStripMenuItem("自动登录配置");
+        autoLoginItem.Click += (_, _) => AutoLoginSettingsAction?.Invoke();
+        _selfMenu.Items.Add(autoLoginItem);
 
         var refreshItem = new ToolStripMenuItem("刷新文件索引");
         refreshItem.Click += (_, _) => RefreshIndexAction?.Invoke();
@@ -448,6 +472,16 @@ public sealed class FloatingButton : Form
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Right)
+        {
+            // 拖动结束后 _moved 可能仍为 true，右键必须使用独立状态，避免后续菜单被永久拦截。
+            _dragging = false;
+            _moved = false;
+            _waitingForDblClick = false;
+            _clickTimer.Stop();
+            return;
+        }
+
         if (e.Button == MouseButtons.Left)
         {
             _dragging = true;
@@ -517,7 +551,7 @@ public sealed class FloatingButton : Form
                 _clickTimer.Start();
             }
         }
-        else if (e.Button == MouseButtons.Right && !_moved)
+        else if (e.Button == MouseButtons.Right)
         {
             // 右键菜单出现时关闭已展开的悬浮面板，避免菜单被面板遮挡或互相干扰
             if (_panelVisible)
@@ -526,7 +560,7 @@ public sealed class FloatingButton : Form
                 _currentPanel = null;
                 _panelVisible = false;
             }
-            _selfMenu.Show(PointToScreen(new Point(0, Height + 4)));
+            _selfMenu.Show(this, new Point(0, Height + 4));
         }
     }
 

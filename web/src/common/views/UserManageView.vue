@@ -3,8 +3,10 @@ import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listUsers,
+  getUser,
   saveUser,
   deleteUser,
+  restoreUser,
   setUserEnabled,
   resetUserPassword,
   type UserManageDto,
@@ -56,13 +58,13 @@ const columns: DataTableColumn<UserManageDto>[] = [
 async function loadData() {
   loading.value = true
   try {
-    list.value = await listUsers()
-    // 角色列表仅用于分配下拉；若当前账号无“角色管理”权限会 403，不影响用户列表展示。
-    try {
-      roles.value = await listRoles()
-    } catch {
-      roles.value = []
-    }
+    // 用户与角色并行拉取（原串行多消耗一个 RTT）；角色无权限时静默回空，不阻塞用户列表
+    const [users, roleList] = await Promise.all([
+      listUsers(),
+      listRoles().catch(() => [] as RoleDto[]),
+    ])
+    list.value = users
+    roles.value = roleList
   } catch {
     /* 错误已由 request.ts 弹出提示 */
   } finally {
@@ -99,8 +101,12 @@ function emptyForm(): UserSaveDto {
   return { id: EMPTY_GUID, account: '', displayName: '', password: '', avatar: '', phone: '', email: '', remark: '', enabled: true, roleIds: [] }
 }
 
+/** 编辑弹窗头像回填中的请求：保存前须等它完成，否则空 avatar 会误清用户头像 */
+let avatarLoadPending: Promise<void> | null = null
+
 function openCreate() {
   isEdit.value = false
+  avatarLoadPending = null
   Object.assign(form, emptyForm())
   dialogVisible.value = true
 }
@@ -108,12 +114,13 @@ function openCreate() {
 function openEdit(row: any) {
   const u = row as UserManageDto
   isEdit.value = true
+  // 列表不返回头像（响应体瘦身）：先立即弹窗，头像经 Get 单查异步回填
   Object.assign(form, {
     id: u.id,
     account: u.account,
     displayName: u.displayName,
     password: '',
-    avatar: u.avatar || '',
+    avatar: '',
     phone: u.phone || '',
     email: u.email || '',
     remark: u.remark || '',
@@ -121,6 +128,13 @@ function openEdit(row: any) {
     roleIds: [...u.roleIds],
   })
   dialogVisible.value = true
+  avatarLoadPending = getUser(u.id)
+    .then(detail => {
+      if (form.id !== u.id) return // 弹窗已切换（点了其他行/新增），丢弃过期回填
+      form.avatar = detail.avatar || ''
+    })
+    .catch(() => { /* 错误已由 request.ts 弹出提示，头像区保留首字母回退 */ })
+    .finally(() => { avatarLoadPending = null })
 }
 
 /** 头像：本地压缩为 data URL，随表单一起提交 */
@@ -145,6 +159,8 @@ async function onAvatarChange(e: Event) {
 }
 
 async function submitForm() {
+  // 头像回填未完成时先等它：避免把尚未回填的空 avatar 提交导致误清头像
+  if (avatarLoadPending) await avatarLoadPending
   if (!form.account.trim()) return ElMessage.warning('请填写账号')
   if (!isEdit.value && form.roleIds.length === 0) return ElMessage.warning('新增用户必须分配至少一个角色')
   const phone = (form.phone || '').trim()
@@ -205,6 +221,26 @@ async function onDelete(row: any) {
   if (ok) await loadData()
 }
 
+async function onRestore(row: any) {
+  const u = row as UserManageDto
+  try {
+    await ElMessageBox.confirm(`确定恢复用户「${u.account}」吗？恢复后账号默认启用。`, '恢复用户', {
+      type: 'warning',
+      confirmButtonText: '恢复',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await restoreUser(u.id)
+    ElMessage.success('已恢复并启用')
+    await loadData()
+  } catch {
+    /* 错误已由 request.ts 弹出提示 */
+  }
+}
+
 onMounted(loadData)
 </script>
 
@@ -262,6 +298,7 @@ onMounted(loadData)
           </el-button>
           <el-button v-if="$has('user-manage:delete')" link type="danger" size="small" :disabled="isBuiltInAdmin(row)" @click="onDelete(row)">删除</el-button>
         </template>
+        <el-button v-else-if="$has('user-manage:restore')" link type="success" size="small" @click="onRestore(row)">恢复</el-button>
         <span v-else class="muted">已删除，不可操作</span>
       </template>
     </CommonDataTable>

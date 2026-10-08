@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Text.Json;
 
 namespace ConvenientSystem;
@@ -94,6 +95,7 @@ internal sealed class QuickLauncher : Form
 
     private readonly TextBox _search;
     private readonly ListBox _list;
+    private readonly ContextMenuStrip _itemMenu;
     private readonly ProgressBar _indexBar;
     private readonly Label _indexLabel;
     private readonly Font _titleFont;
@@ -182,8 +184,15 @@ internal sealed class QuickLauncher : Form
                 _list.Invalidate(_list.GetItemRectangle(_hoverIndex));
             _hoverIndex = -1;
         };
+        _list.MouseDown += OnListMouseDown;
         Controls.Add(_list);
 
+        _itemMenu = new ContextMenuStrip();
+        _itemMenu.Items.Add("打开所在文件夹", null, (_, _) =>
+        {
+            if (_list.SelectedIndex >= 0 && _list.SelectedIndex < _filtered.Count)
+                OpenItemLocation(_filtered[_list.SelectedIndex]);
+        });
         _indexBar = new ProgressBar
         {
             Style = ProgressBarStyle.Marquee,
@@ -213,6 +222,8 @@ internal sealed class QuickLauncher : Form
         _deactivateTimer = new System.Windows.Forms.Timer { Interval = 500 };
         _deactivateTimer.Tick += (_, _) =>
         {
+            // 右键菜单打开期间不自动隐藏（菜单持有前台焦点）
+            if (_itemMenu.Visible) return;
             var hwnd = GetForegroundWindow();
             if (hwnd == Handle) { _deactivateTimer.Stop(); return; }
             if (IsImeWindow(hwnd)) return;
@@ -221,6 +232,9 @@ internal sealed class QuickLauncher : Form
             _deactivateTimer.Stop();
             Hide();
         };
+        // 菜单关闭后重启失焦隐藏检查：菜单持有前台焦点期间 deactivate 检查被 Visible 守卫跳过，
+        // 关闭后续上计时器，否则启动器会一直挂在前台
+        _itemMenu.Closed += (_, _) => { _deactivateTimer.Stop(); _deactivateTimer.Start(); };
 
         RebuildItems();
     }
@@ -528,6 +542,77 @@ internal sealed class QuickLauncher : Form
         catch { /* 启动失败忽略 */ }
     }
 
+    /// <summary>右键命中列表项：选中该项，本地路径类条目弹出"打开所在文件夹"菜单。</summary>
+    private void OnListMouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right) return;
+        int idx = _list.IndexFromPoint(e.Location);
+        if (idx < 0 || idx >= _filtered.Count) return;
+        _list.SelectedIndex = idx;
+        if (!CanOpenLocation(_filtered[idx])) return;
+        _deactivateTimer.Stop();
+        _itemMenu.Show(_list, e.Location);
+    }
+
+    /// <summary>判断条目是否有本地文件系统位置可打开：系统页面与 url 类条目返回 false。</summary>
+    private static bool CanOpenLocation(LauncherItem item)
+    {
+        if (item.Type == LauncherItemType.Page) return false;
+        if (item.Type == LauncherItemType.Custom && item.Kind == "url") return false;
+        var path = ResolveTargetPath(item.Target);
+        if (string.IsNullOrEmpty(path)) return false;
+        try
+        {
+            if (File.Exists(path) || Directory.Exists(path)) return true;
+            var dir = Path.GetDirectoryName(Path.GetFullPath(path));
+            return dir is not null && Directory.Exists(dir);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>解析启动目标的真实文件系统路径：.lnk 快捷方式经 WScript.Shell 后期绑定取 TargetPath，免 COM 引用。</summary>
+    private static string ResolveTargetPath(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) return "";
+        if (!target.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)) return target;
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null) return target;
+            var shell = Activator.CreateInstance(shellType);
+            var shortcut = shellType.InvokeMember("CreateShortcut",
+                System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { target });
+            var targetPath = shortcut!.GetType().InvokeMember("TargetPath",
+                System.Reflection.BindingFlags.GetProperty, null, shortcut, null) as string;
+            return string.IsNullOrEmpty(targetPath) ? target : targetPath;
+        }
+        catch { return target; }
+    }
+
+    /// <summary>打开条目所在位置：目录直接打开，文件用 explorer /select 高亮选中，其余退到父目录。</summary>
+    private static void OpenItemLocation(LauncherItem item)
+    {
+        try
+        {
+            var path = ResolveTargetPath(item.Target);
+            if (string.IsNullOrEmpty(path)) return;
+            if (Directory.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                return;
+            }
+            if (File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{Path.GetFullPath(path)}\"") { UseShellExecute = false });
+                return;
+            }
+            var dir = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (dir is not null && Directory.Exists(dir))
+                Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true });
+        }
+        catch { /* 路径失效或 explorer 启动失败时静默 */ }
+    }
+
     private void OnDrawItem(object? sender, DrawItemEventArgs e)
     {
         if (e.Index < 0 || e.Index >= _filtered.Count) return;
@@ -614,6 +699,7 @@ internal sealed class QuickLauncher : Form
             _fileSearchTimer?.Dispose();
             _deactivateTimer?.Dispose();
             _indexTimer?.Dispose();
+            _itemMenu?.Dispose();
         }
         base.Dispose(disposing);
     }

@@ -30,12 +30,21 @@ namespace ConvenientSystem.Api.Controllers.Common
             _hubContext = hubContext;
         }
 
-        /// <summary>当前用户可见的通知列表（仅启用的，含已读状态）。</summary>
+        /// <summary>当前用户可见的通知列表（仅启用的，含已读状态）。summary=true 时不带正文（列表页瘦身），详情走 MyDetail。</summary>
         [HttpGet]
-        public ActionResult<List<NoticeUserDto>> MyList()
+        public ActionResult<List<NoticeUserDto>> MyList(bool summary = false)
         {
             if (!TryGetDbUserId(out var userId, out var error)) return error!;
-            return Ok(_service.GetMyList(userId));
+            return Ok(_service.GetMyList(userId, summary));
+        }
+
+        /// <summary>单条通知详情（含正文；不可见/停用/过期返回 404）。</summary>
+        [HttpGet]
+        public ActionResult<NoticeUserDto> MyDetail(int id)
+        {
+            if (!TryGetDbUserId(out var userId, out var error)) return error!;
+            var detail = _service.GetMyDetail(userId, id);
+            return detail == null ? NotFound() : Ok(detail);
         }
 
         /// <summary>当前用户未读通知数（供顶栏铃铛角标轮询）。</summary>

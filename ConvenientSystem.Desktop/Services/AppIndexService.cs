@@ -76,20 +76,23 @@ internal sealed class AppIndexService
 
     private static IEnumerable<string> EnumerateLnk(string dir)
     {
-        try
+        // IgnoreInaccessible + ToArray 物化：无权限目录在枚举层被跳过。
+        // 修复原延迟枚举的异常在消费端才抛出、逃逸出本方法 try/catch，
+        // 导致整轮扫描中断、_loaded 永远置不上位、每次启动都抛未观察任务异常的问题。
+        var options = new EnumerationOptions
         {
-            return Directory.EnumerateFiles(dir, "*.lnk", SearchOption.AllDirectories);
-        }
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = true,
+        };
+        try { return Directory.EnumerateFiles(dir, "*.lnk", options).ToArray(); }
         catch { return Array.Empty<string>(); }
     }
 
-    /// <summary>开始菜单目录（当前用户 + 所有用户）+ 桌面快捷方式。</summary>
+    /// <summary>开始菜单目录（当前用户 + 所有用户，各自的 Programs 子目录已由递归枚举覆盖，避免重复扫描）+ 桌面快捷方式。</summary>
     private static IEnumerable<string> GetStartMenuDirs()
     {
         yield return Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
         yield return Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu);
-        yield return Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-        yield return Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms);
         yield return Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     }
 }

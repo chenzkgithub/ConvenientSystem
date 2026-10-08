@@ -45,6 +45,7 @@ import { notifyBuildComplete } from '@/common/api/notice'
 const buildTypeOptions: { label: string; value: UniversalBuildType }[] = [
   { label: 'Web 前端', value: 'Web' },
   { label: 'Node 项目', value: 'Node' },
+  { label: 'H5 移动端', value: 'MobileH5' },
   { label: 'C# (.NET)', value: 'DotNet' },
   { label: 'Java Maven', value: 'JavaMaven' },
   { label: 'Java Gradle', value: 'JavaGradle' },

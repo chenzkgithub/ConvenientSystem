@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 import {
   getMyNotices,
+  getNoticeDetail,
   markNoticeRead,
   markAllNoticeRead,
   NOTICE_LEVELS,
@@ -13,23 +14,35 @@ import {
 
 // 首页公告横幅：展示当前用户可见的未读公告（全级别），轮播滚动，
 // 点击条目打开详情弹窗并自动标记已读（派发 notice:read 事件同步顶栏铃铛）。
+// 列表走 summary 模式（不拉正文，减轻首页负载），详情打开时按需拉全文。
 // 顶栏铃铛/重要通知弹窗标记已读后也会通过 notice:read 事件刷新本横幅。
 const notices = ref<NoticeUserDto[]>([])
 const unread = computed(() => notices.value.filter((n) => !n.isRead))
 
 async function load() {
   try {
-    notices.value = await getMyNotices()
+    notices.value = await getMyNotices({ silent: true, summary: true })
   } catch { /* 静默：公告加载失败不阻断首页 */ }
 }
 
-// ===== 详情弹窗（打开即标记已读） =====
+// ===== 详情弹窗（打开即标记已读；summary 列表无正文，按需异步拉全文） =====
 const detailVisible = ref(false)
 const detail = ref<NoticeUserDto | null>(null)
+const detailLoading = ref(false)
 
 async function openDetail(item: NoticeUserDto) {
   detail.value = item
   detailVisible.value = true
+  if (!item.content) {
+    detailLoading.value = true
+    try {
+      const full = await getNoticeDetail(item.id)
+      // 异步返回时用户可能已切换条目，仅回填当前弹窗的那条
+      if (full && detail.value?.id === item.id) detail.value = full
+    } catch { /* 静默：详情拉取失败保留空内容 */ } finally {
+      detailLoading.value = false
+    }
+  }
   if (!item.isRead) {
     try {
       await markNoticeRead(item.id)
@@ -88,7 +101,7 @@ onBeforeUnmount(() => {
             {{ NOTICE_LEVELS[item.level]?.label || '普通' }}
           </el-tag>
           <span class="notice-banner-title">{{ item.title }}</span>
-          <span class="notice-banner-content">{{ item.content }}</span>
+          <span v-if="item.content" class="notice-banner-content">{{ item.content }}</span>
           <span class="notice-banner-time">{{ formatTime(item.createTime) }}</span>
         </div>
       </el-carousel-item>
@@ -108,7 +121,7 @@ onBeforeUnmount(() => {
         </el-tag>
         <span>发布时间：{{ formatTime(detail?.createTime ?? '') }}</span>
       </div>
-      <div class="notice-detail-content">{{ detail?.content }}</div>
+      <div class="notice-detail-content">{{ detailLoading ? '加载中…' : (detail?.content || '（无内容）') }}</div>
       <template #footer>
         <el-button type="primary" @click="detailVisible = false">我知道了</el-button>
       </template>

@@ -35,7 +35,29 @@ namespace ConvenientSystem.Service.Common
             var allowed = ResolveVisibleMenuIds(entities, userId.Value);
             entities = entities.Where(m => allowed.Contains(m.Id)).ToList();
 
-            // 先按行转成 (Id, ParentId, 节点)，再按 ParentId 挂到父节点下组装成树
+            return BuildMenuTree(entities);
+        }
+
+        /// <summary>
+        /// 全量菜单树（菜单管理页专用）：不做角色授权过滤，
+        /// 新增的顶级菜单/子菜单尚未授权给任何角色时也可见，否则保存后列表里"看不到刚加的菜单"。
+        /// 仅由菜单管理接口（menu-manage:save 权限）调用。
+        /// </summary>
+        public List<MenuNode> GetAllMenus()
+        {
+            var entities = _configDb.Select<SysMenuEntity>()
+                .OrderBy(m => m.SortOrder)
+                .OrderBy(m => m.Id)
+                .ToList();
+            return BuildMenuTree(entities);
+        }
+
+        /// <summary>
+        /// 把菜单实体行组装成树：先按行转成 (Id, ParentId, 节点)，再按 ParentId 挂到父节点下。
+        /// GetMenus（过滤后）与 GetAllMenus（全量）共用同一份组装逻辑。
+        /// </summary>
+        private static List<MenuNode> BuildMenuTree(List<SysMenuEntity> entities)
+        {
             var rows = entities.Select(m => (m.Id, m.ParentId, Node: new MenuNode
             {
                 id = m.Id,

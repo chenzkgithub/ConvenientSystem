@@ -228,8 +228,12 @@ namespace ConvenientSystem.Shared.Model.Common
     /// <summary>查看当前用户 Apifox Access Token 明文的结果。</summary>
     public class ApifoxAccessTokenRevealResult
     {
+        /// <summary>密码验证通过且令牌解密成功。</summary>
         public bool Ok { get; set; }
+        /// <summary>令牌明文（仅 Ok=true 时返回）。</summary>
         public string? Value { get; set; }
+        /// <summary>已保存的令牌因服务端密钥环轮换/丢失无法解密，需清除后重新保存；前端据此引导用户而非报错。</summary>
+        public bool Stale { get; set; }
     }
 
     /// <summary>向 Apifox 导入 OpenAPI 数据的请求。内容由桌面端本地解析生成，导入选项仅本次使用。</summary>

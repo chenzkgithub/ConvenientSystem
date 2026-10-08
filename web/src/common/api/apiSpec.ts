@@ -1,4 +1,4 @@
-import { httpGet, httpPost, localGet, localPost } from '@/api/request'
+import { httpGet, httpPost, httpPut, localGet, localPost } from '@/api/request'
 import type { AsyncTaskDto } from './asyncTask'
 
 /** 接口归属：mixed=ApiSpec 扫描/生成/调试走桌面端本地通道，Apifox 导入删除走服务器（审计脚本依据，勿删） */
@@ -233,9 +233,9 @@ export function saveApifoxAccessToken(request: ApifoxAccessTokenSaveRequest) {
   return httpPut('/api/Common/ApifoxConfig/SaveMyAccessToken', request)
 }
 
-/** 查看当前用户已保存的 Apifox Access Token 明文（需验证登录密码）；未配置或密码错误时 ok=false。 */
+/** 查看当前用户已保存的 Apifox Access Token 明文（需验证登录密码）；未配置/密码错误 ok=false；密文因密钥轮换失效时 stale=true。 */
 export function revealApifoxAccessToken(password: string) {
-  return httpPost<{ ok: boolean; value: string | null }>('/api/Common/ApifoxConfig/RevealMyAccessToken', {
+  return httpPost<{ ok: boolean; value: string | null; stale?: boolean }>('/api/Common/ApifoxConfig/RevealMyAccessToken', {
     password,
   })
 }

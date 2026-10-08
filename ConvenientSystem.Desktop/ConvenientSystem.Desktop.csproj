@@ -30,14 +30,17 @@
     <ProjectReference Include="..\ConvenientSystem.Service\ConvenientSystem.Service.csproj" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
     <PackageReference Include="SSH.NET" Version="2024.2.0" />
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <PackageReference Include="Tesseract.Data.English" Version="4.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- 同时将图标嵌入程序集，供窗口/任务栏图标直接加载 -->
     <EmbeddedResource Include="appicon.ico" LogicalName="appicon.ico" />
+    <!-- 浏览器扩展随桌面程序输出和发布，便于 Chrome/Edge 以“加载已解压扩展”安装。 -->
+    <None Update="BrowserExtension\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- 锁屏背景图：直接引用前端那份原文件而不是复制一份，
          保证原生锁屏与 Vue 锁屏永远用同一张图，换图时不会只改一边。 -->
-    <EmbeddedResource Include="..\web\src\assets\lock-bg.jpg" LogicalName="lock-bg.jpg" />
     <!-- appsettings.json 由 Web SDK 自动包含并复制到输出目录 -->
   </ItemGroup>
 

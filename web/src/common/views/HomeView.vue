@@ -85,7 +85,7 @@ function handleSearchEnter() {
 
 // ===== 在线用户 =====
 const onlineUsers = ref<OnlineUserDto[]>([])
-/** silent：轮询/切页补刷时不弹全局遮罩（面板静默更新），首载仍保留遮罩反馈 */
+/** silent：不弹全局遮罩（面板静默更新）。首载与轮询均静默，避免最慢接口拖住整页遮罩 */
 async function loadOnlineUsers(silent = false) {
   if (!canViewOnline.value) return
   try {
@@ -412,6 +412,8 @@ function maskPhone(phone: string): string {
 // ===== 生命周期 =====
 let lastRealtimeAt = 0
 let lastSlowAt = 0
+/** 首屏首批请求是否已全部返回：false 期间各面板不显示"暂无数据"空态文案，避免闪烁 */
+const initialLoading = ref(true)
 /** 实时性要求高的面板（30s 轮询）：在线用户、短信统计与最近日志、邮件日志；silent 由轮询/切页入口传入 */
 function loadRealtime(silent = false) {
   lastRealtimeAt = Date.now()
@@ -429,11 +431,18 @@ function loadSlow(silent = false) {
 
 onMounted(() => {
   if (!menuStore.loaded) menuStore.load()
-  // 并行加载所有面板数据
-  loadRealtime()
-  loadSlow()
-  loadTrends()
-  loadLoginTrend()
+  // 首屏全部静默加载：不挂全局遮罩（遮罩要等最慢请求，任一慢接口都会拖住整页），
+  // 面板骨架立即渲染、数据陆续填充；空态文案由 initialLoading 统一门控
+  void Promise.all([
+    loadOnlineUsers(true),
+    loadSmsStats(true),
+    loadSmsLogs(true),
+    loadEmailLogs(true),
+    loadLotteryResults(true),
+    loadMonitorHealth(true),
+    loadTrends(true),
+    loadLoginTrend(true),
+  ]).finally(() => { initialLoading.value = false })
   timer = setInterval(() => {
     if (document.hidden) return // 后台标签页暂停轮询，切回时由 onActivated 按节流补刷
     now.value = new Date()
@@ -608,7 +617,7 @@ function getGroupIcon(title: string): unknown {
           <span class="panel-count">{{ onlineUsers.length }} 人</span>
         </div>
         <div class="panel-body">
-          <div v-if="onlineUsers.length === 0" class="panel-empty">暂无在线用户</div>
+          <div v-if="!initialLoading && onlineUsers.length === 0" class="panel-empty">暂无在线用户</div>
           <div v-for="u in onlineUsers.slice(0, 8)" :key="u.userId" class="online-item">
             <el-avatar
               v-if="u.avatar"
@@ -640,7 +649,7 @@ function getGroupIcon(title: string): unknown {
         </div>
         <div v-loading="loginLoading" class="panel-body">
           <BaseChart v-if="loginTrend?.points.length" :option="loginOption" height="260px" />
-          <div v-else-if="!loginLoading" class="panel-empty">所选范围暂无登录数据</div>
+          <div v-else-if="!loginLoading && !initialLoading" class="panel-empty">所选范围暂无登录数据</div>
         </div>
       </div>
     </div>
@@ -652,7 +661,7 @@ function getGroupIcon(title: string): unknown {
           <span class="panel-title">监控健康度</span>
         </div>
         <div class="panel-body">
-          <div v-if="monitorGroups.length === 0" class="panel-empty">暂无监控数据</div>
+          <div v-if="!initialLoading && monitorGroups.length === 0" class="panel-empty">暂无监控数据</div>
           <div v-for="g in monitorGroups" :key="g.label" class="health-group">
             <div class="health-group-title">{{ g.label }}</div>
             <div class="health-stats">
@@ -685,7 +694,7 @@ function getGroupIcon(title: string): unknown {
         <div class="panel-body">
           <!-- 邮件记录 -->
           <template v-if="activityTab === 'email'">
-            <div v-if="emailLogs.length === 0" class="panel-empty">暂无邮件记录</div>
+            <div v-if="!initialLoading && emailLogs.length === 0" class="panel-empty">暂无邮件记录</div>
             <div v-for="log in emailLogs" :key="log.id" class="log-item">
               <div class="log-main">
                 <el-tag :type="emailStatusType(log.status)" size="small" effect="light">{{ emailStatusText(log.status) }}</el-tag>
@@ -696,7 +705,7 @@ function getGroupIcon(title: string): unknown {
           </template>
           <!-- 短信记录 -->
           <template v-if="activityTab === 'sms'">
-            <div v-if="smsLogs.length === 0" class="panel-empty">暂无短信记录</div>
+            <div v-if="!initialLoading && smsLogs.length === 0" class="panel-empty">暂无短信记录</div>
             <div v-for="log in smsLogs" :key="log.id" class="log-item">
               <div class="log-main">
                 <el-tag :type="smsStatusType(log.status)" size="small" effect="light">{{ smsStatusText(log.status) }}</el-tag>
@@ -773,7 +782,7 @@ function getGroupIcon(title: string): unknown {
         </div>
         <div v-loading="trendLoading" class="panel-body">
           <BaseChart v-if="hasTrendPoints" :option="trendOption" height="280px" />
-          <div v-else-if="!trendLoading" class="panel-empty">所选范围暂无操作数据</div>
+          <div v-else-if="!trendLoading && !initialLoading" class="panel-empty">所选范围暂无操作数据</div>
         </div>
       </div>
       <div class="panel chart-panel chart-status">
@@ -782,7 +791,7 @@ function getGroupIcon(title: string): unknown {
         </div>
         <div v-loading="trendLoading" class="panel-body">
           <BaseChart v-if="hasStatusData" :option="statusOption" height="280px" />
-          <div v-else-if="!trendLoading" class="panel-empty">暂无状态数据</div>
+          <div v-else-if="!trendLoading && !initialLoading" class="panel-empty">暂无状态数据</div>
         </div>
       </div>
     </div>

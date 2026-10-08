@@ -34,7 +34,7 @@ namespace ConvenientSystem.Api.Controllers.Common
 
         /// <summary>验证指定选号记录：对应开奖期的奖级判定 + 官网通告中奖明细（全国注数/单注奖金）</summary>
         [HttpGet]
-        [PermissionAuthorize("lottery-records:verify")]
+        [PermissionAuthorize("lottery-records:verify", AppCode = AppPerm.Lottery)]
         public ActionResult<LotteryVerifyDto> Verify([FromQuery] int id)
             => Ok(_lotteryService.VerifyBet(id));
 
@@ -43,7 +43,7 @@ namespace ConvenientSystem.Api.Controllers.Common
         /// 开奖号码与官网通告只返回一份，逐注结果在 Bets 内
         /// </summary>
         [HttpGet]
-        [PermissionAuthorize("lottery-records:verify-issue")]
+        [PermissionAuthorize("lottery-records:verify-issue", AppCode = AppPerm.Lottery)]
         public ActionResult<LotteryIssueVerifyDto> VerifyIssue(
             [FromQuery] string type = LotteryTypes.DLT,
             [FromQuery] string? date = null)

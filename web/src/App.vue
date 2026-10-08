@@ -147,7 +147,8 @@ onMounted(async () => {
   // 公开上下文：只注册公开页面路由，菜单、锁屏、登录态全不参与
   if (IS_PUBLIC_CONTEXT) {
     try {
-      const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
+      // 静默：启动期失败不弹遮罩/横幅，下方已降级注册空公开路由集
+      const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled', undefined, undefined, { silent: true })
       if (pages) registerPublicRoutes(pages)
     } catch {
       // 后端不可用时降级：注册空公开路由集让首帧守卫立即放行（渲染占位页），不空等 12s 超时
@@ -170,7 +171,8 @@ onMounted(async () => {
 
   // 主窗口：注册公开页面路由（保证深链可直达），菜单由 MainLayout 负责加载。
   try {
-    const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled')
+    // 静默：启动期失败不弹遮罩/横幅，下方已降级注册空公开路由集
+    const pages = await httpGet<PublicPageItem[]>('/api/Common/SysPublicPage/ListEnabled', undefined, undefined, { silent: true })
     if (pages) registerPublicRoutes(pages)
   } catch {
     // 后端不可用时降级：注册空公开路由集让首帧守卫立即放行，不影响正常登录流程

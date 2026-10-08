@@ -152,13 +152,15 @@ export function getChatContacts(opts?: { silent?: boolean }) {
   return httpGet<ChatContactDto[]>('/api/Common/Chat/Contacts', undefined, undefined, opts)
 }
 
-/** 打开（或创建）与指定用户的会话：清我方隐藏标记，返回会话 Id 与对方信息；silent 供轮询校准已读水位 */
-export function openChatConversation(peerId: string, opts?: { silent?: boolean }) {
+/** 打开（或创建）与指定用户的会话：清我方隐藏标记，返回会话 Id 与对方信息；
+ *  silent 供轮询校准已读水位；noLoading 供点击打开链路用：不弹全局遮罩但保留错误提示 */
+export function openChatConversation(peerId: string, opts?: { silent?: boolean; noLoading?: boolean }) {
   return httpPost<ChatOpenDto>(`/api/Common/Chat/Open?peerId=${encodeURIComponent(peerId)}`, {}, undefined, undefined, opts)
 }
 
-/** 会话历史消息（正序返回）：beforeId>0 时取该 Id 之前一页（向上翻页） */
-export function getChatMessages(conversationId: number, beforeId = 0, limit = 50, opts?: { silent?: boolean }) {
+/** 会话历史消息（正序返回）：beforeId>0 时取该 Id 之前一页（向上翻页）；
+ *  silent 供翻页/轮询用；noLoading 供点击打开链路用 */
+export function getChatMessages(conversationId: number, beforeId = 0, limit = 50, opts?: { silent?: boolean; noLoading?: boolean }) {
   return httpGet<ChatMessageDto[]>('/api/Common/Chat/Messages', { conversationId, beforeId, limit }, undefined, opts)
 }
 

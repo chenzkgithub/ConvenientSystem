@@ -30,11 +30,11 @@ export interface NoticeDto {
   targetRoleCount?: number
 }
 
-/** 用户端通知（含当前用户已读状态） */
+/** 用户端通知（含当前用户已读状态）；summary 模式下 content 为 null，需详情时另拉 getNoticeDetail */
 export interface NoticeUserDto {
   id: number
   title: string
-  content: string
+  content: string | null
   level: number
   createTime: string
   isRead: boolean
@@ -59,9 +59,15 @@ export function deleteNotice(id: number) {
 
 // ===== 用户端（NoticeController，任何已登录用户可用） =====
 
-/** 当前用户可见的通知列表（仅启用的，含已读状态）。opts.silent：后台轮询不弹遮罩 */
-export function getMyNotices(opts?: { silent?: boolean }) {
-  return httpGet<NoticeUserDto[]>('/api/Common/Notice/MyList', undefined, undefined, opts)
+/** 当前用户可见的通知列表（仅启用的，含已读状态）。summary=true 时不返回正文（横幅/角标等轻量场景）；
+ *  opts.silent：后台轮询不弹遮罩 */
+export function getMyNotices(opts?: { silent?: boolean; summary?: boolean }) {
+  return httpGet<NoticeUserDto[]>('/api/Common/Notice/MyList', opts?.summary ? { summary: true } : undefined, undefined, opts)
+}
+
+/** 单条通知详情（正文按需拉取；不可见/已删除返回 null，调用方自行兜底） */
+export function getNoticeDetail(id: number) {
+  return httpGet<NoticeUserDto | null>(`/api/Common/Notice/MyDetail?id=${id}`, undefined, undefined, { silent: true })
 }
 
 /** 当前用户未读通知数（供顶栏铃铛角标轮询）。opts.silent：轮询/事件驱动的角标刷新不弹遮罩 */

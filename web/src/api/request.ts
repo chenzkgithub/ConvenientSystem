@@ -20,6 +20,11 @@ export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.t
 // 延迟多久才显示 loading（ms）：快于此值完成的请求不弹遮罩，避免闪烁
 const LOADING_DELAY = 200
 
+// 遮罩关闭宽限期（ms）：页面串行发多个请求（A 完 → B → C）时，若上个请求一结束立刻关遮罩、
+// 下个请求再延迟 LOADING_DELAY 重开，遮罩会关-开-关-开地闪。归 0 后延迟本时长再真正关闭，
+// 宽限期内有新请求则取消关闭，遮罩连续不闪
+const CLOSE_GRACE = 200
+
 // 请求超时（ms）：后端未启动时默认 TCP 超时可能长达 30s，
 // axios 内置 timeout 主动中断，快速展示错误提示。
 const REQUEST_TIMEOUT = 10_000
@@ -94,6 +99,8 @@ function handleUnauthorized(message: string) {
 let pendingCount = 0
 let loadingInstance: ReturnType<typeof ElLoading.service> | null = null
 let showTimer: number | null = null
+// 遮罩关闭宽限期定时器：归 0 时先挂起关闭，宽限期内有新请求则取消
+let closeTimer: number | null = null
 // loading 遮罩当前使用的 z-index 序号（小于 0 表示未分配）
 let loadingZ = -1
 // 全局 loading 遮罩元素引用（创建时缓存，用于后续提升层级）
@@ -170,6 +177,11 @@ function bumpLoadingZIndex() {
 
 function loadingStart() {
   pendingCount++
+  // 宽限期内来了新请求：取消挂起的关闭，遮罩无缝衔接不闪烁
+  if (closeTimer !== null) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
   if (loadingInstance) {
     // 遮罩已展示中：新请求可能在弹窗打开后发起，提升遮罩层级确保盖住弹窗
     bumpLoadingZIndex()
@@ -199,14 +211,19 @@ function loadingEnd() {
       clearTimeout(showTimer)
       showTimer = null
     }
-    try {
-      loadingInstance?.close()
-    } catch {
-      /* 遮罩宿主（如弹窗）可能已随 destroy-on-close 销毁，关闭失败直接忽略 */
-    }
-    loadingInstance = null
-    loadingMaskEl = null
-    loadingZ = -1
+    // 延迟 CLOSE_GRACE 再真正关闭：遮罩未展示（请求都在 200ms 内完成）时实例为 null，关闭为空操作
+    if (closeTimer !== null) clearTimeout(closeTimer)
+    closeTimer = window.setTimeout(() => {
+      closeTimer = null
+      try {
+        loadingInstance?.close()
+      } catch {
+        /* 遮罩宿主（如弹窗）可能已随 destroy-on-close 销毁，关闭失败直接忽略 */
+      }
+      loadingInstance = null
+      loadingMaskEl = null
+      loadingZ = -1
+    }, CLOSE_GRACE)
   }
 }
 

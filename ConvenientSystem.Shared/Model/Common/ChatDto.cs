@@ -43,9 +43,12 @@ namespace ConvenientSystem.Shared.Model.Common
     
         /// <summary>单聊：我是否屏蔽了对方（列表与聊天区提示用）。</summary>
         public bool BlockedByMe { get; set; }
-    
+
         /// <summary>单聊：对方是否屏蔽了我（双向拒收提示用）。</summary>
         public bool BlockedMe { get; set; }
+
+        /// <summary>单聊：我给对方设置的备注名（无备注为空；展示优先于昵称）。</summary>
+        public string? PeerRemark { get; set; }
     }
 
     /// <summary>通讯录联系人（含屏蔽标记；在线状态由 Api 层结合 OnlineUserTracker 填充）。</summary>
@@ -58,6 +61,9 @@ namespace ConvenientSystem.Shared.Model.Common
         public string? DisplayName { get; set; }
 
         public string? Avatar { get; set; }
+
+        /// <summary>我给对方设置的备注名（无备注为空；展示优先于昵称）。</summary>
+        public string? PeerRemark { get; set; }
 
         /// <summary>是否在线（Api 层填充）。</summary>
         public bool Online { get; set; }

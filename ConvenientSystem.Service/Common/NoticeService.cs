@@ -224,8 +224,8 @@ namespace ConvenientSystem.Service.Common
             ).ToHashSet();
         }
 
-        /// <summary>用户端：当前用户可见的启用且未过期通知列表（含已读状态，按发布时间倒序；发布人自己也可见）。</summary>
-        public List<NoticeUserDto> GetMyList(Guid userId)
+        /// <summary>用户端：当前用户可见的启用且未过期通知列表（含已读状态，按发布时间倒序；发布人自己也可见）。summary=true 时不带正文，列表页瘦身。</summary>
+        public List<NoticeUserDto> GetMyList(Guid userId, bool summary = false)
         {
             var now = TimeHelper.Now;
             var notices = _fsql.Select<SysNoticeEntity>()
@@ -251,11 +251,41 @@ namespace ConvenientSystem.Service.Common
             {
                 Id = n.Id,
                 Title = n.Title,
-                Content = n.Content,
+                // 列表不返回正文（内容可能含长文本/链接，200 条叠加后响应体过大），详情点开时走 GetMyDetail
+                Content = summary ? null : n.Content,
                 Level = n.Level,
                 CreateTime = n.CreateTime,
                 IsRead = readIds.Contains(n.Id)
             }).ToList();
+        }
+
+        /// <summary>用户端：单条通知详情（启用/未过期/定向可见才返回，否则 null；点开详情弹层按需拉正文）。</summary>
+        public NoticeUserDto? GetMyDetail(Guid userId, int noticeId)
+        {
+            var now = TimeHelper.Now;
+            var notice = _fsql.Select<SysNoticeEntity>()
+                .Where(n => n.Id == noticeId && n.Enabled)
+                .Where(n => n.ExpireTime == null || n.ExpireTime > now)
+                .First();
+            if (notice == null) return null;
+
+            // 定向范围校验：不可见时与不存在同等处理，避免探测定向通知内容
+            var visible = FilterVisibleNoticeIds(userId, new List<int> { noticeId });
+            if (!visible.Contains(noticeId)) return null;
+
+            var isRead = _fsql.Select<SysNoticeReadEntity>()
+                .Where(r => r.UserId == userId && r.NoticeId == noticeId)
+                .Any();
+
+            return new NoticeUserDto
+            {
+                Id = notice.Id,
+                Title = notice.Title,
+                Content = notice.Content,
+                Level = notice.Level,
+                CreateTime = notice.CreateTime,
+                IsRead = isRead
+            };
         }
 
         /// <summary>用户端：当前用户未读通知数（仅统计对他可见且未过期的通知；发布人自己的通知同样计入未读）。</summary>

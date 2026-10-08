@@ -30,6 +30,8 @@ const treeProps = { label: 'name', children: 'children' }
 // ========== 汇总表 ==========
 const detailList = ref<AttendanceRow[]>([]) // 当前部门原始明细
 const sumList = ref<AttendanceRow[]>([]) // 按人分组汇总
+// 主表局部加载态：本地库查询常低于全局遮罩 200ms 延迟线，靠全局遮罩用户感知不到加载，改为主表就地转圈
+const tableLoading = ref(false)
 
 // ========== 明细弹层 ==========
 const detailVisible = ref(false)
@@ -201,12 +203,16 @@ function buildParams(fullCode: string): RequestDto | null {
 async function fetchAllData(params: RequestDto) {
   detailList.value = []
   sumList.value = []
+  tableLoading.value = true
   try {
-    const list = await getAttendance(params)
+    // noLoading：全局遮罩交给主表局部 v-loading 呈现，避免双重提示；错误提示仍由 request.ts 弹出
+    const list = await getAttendance(params, { noLoading: true })
     detailList.value = list || []
     sumList.value = groupSum(detailList.value)
   } catch {
     /* 错误已由 request.ts 弹出提示 */
+  } finally {
+    tableLoading.value = false
   }
 }
 
@@ -404,6 +410,7 @@ onMounted(() => {
       <div class="right-table">
         <div class="table-summary">当前共 <strong>{{ sumList.length }}</strong> 条人员数据（双击行查看每日明细）</div>
         <el-table
+          v-loading="tableLoading"
           :data="sumList"
           height="100%"
           border

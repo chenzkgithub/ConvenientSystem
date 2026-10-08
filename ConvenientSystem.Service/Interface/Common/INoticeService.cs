@@ -21,8 +21,11 @@ namespace ConvenientSystem.Service.Common
         /// <summary>管理端：删除通知及其已读记录。</summary>
         void Delete(int id);
 
-        /// <summary>用户端：启用的通知列表（含当前用户已读状态，按发布时间倒序）。</summary>
-        List<NoticeUserDto> GetMyList(Guid userId);
+        /// <summary>用户端：启用的通知列表（含当前用户已读状态，按发布时间倒序；summary=true 时不带正文，列表页瘦身，详情走 GetMyDetail）。</summary>
+        List<NoticeUserDto> GetMyList(Guid userId, bool summary = false);
+
+        /// <summary>用户端：单条通知详情（启用/未过期/定向可见才返回，否则 null；点开详情弹层时按需拉正文）。</summary>
+        NoticeUserDto? GetMyDetail(Guid userId, int noticeId);
 
         /// <summary>用户端：当前用户未读通知数。</summary>
         int GetUnreadCount(Guid userId);

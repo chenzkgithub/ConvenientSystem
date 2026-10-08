@@ -61,6 +61,15 @@ internal sealed class StartupBootstrapper
             {
                 services.ConfigureWritable<AppSettings>(context.Configuration, "AppSettings");
 
+                services.AddHttpClient("BrowserAutoLogin", client =>
+                {
+                    client.Timeout = TimeSpan.FromMinutes(3);
+                });
+                services.AddSingleton<BrowserAutoLoginCredentialStore>();
+                services.AddSingleton<BrowserAutoLoginOcrService>();
+                services.AddSingleton<IBrowserAutoLoginAdapter, ErpBrowserAutoLoginAdapter>();
+                services.AddSingleton<IBrowserAutoLoginAdapter, AliyunBrowserAutoLoginAdapter>();
+                services.AddSingleton<BrowserAutoLoginCoordinator>();
                 services.AddSingleton<DesktopUpdateChecker>();
                 services.AddSingleton<WebHostService>();
                 services.AddHostedService(sp => sp.GetRequiredService<WebHostService>());
@@ -83,6 +92,8 @@ internal sealed class StartupBootstrapper
                     sp.GetRequiredService<LauncherStoreFactory>(),
                     sp.GetRequiredService<QuickLauncherFactory>(),
                     sp.GetRequiredService<SystemHelpDialog>(),
+                    sp.GetRequiredService<BrowserAutoLoginCredentialStore>(),
+                    sp.GetRequiredService<BrowserAutoLoginCoordinator>(),
                     sp));
                 services.AddSingleton(sp => new SystemHelpDialog(
                     sp.GetRequiredService<IWritableOptions<AppSettings>>()));

@@ -38,7 +38,7 @@ internal sealed class FileIndexService
             Application.StartupPath, "file-index-v2.txt");
     }
 
-    /// <summary>启动索引：优先从文件加载（即时可用），文件不存在或过期时后台重建。</summary>
+    /// <summary>启动索引：优先从文件加载（即时可用）；无文件或文件过期时，延迟 2 分钟再后台全盘重建，避开启动高峰。</summary>
     public void StartIndexAsync(Action? onCompleted = null)
     {
         if (_loaded) { onCompleted?.Invoke(); StartPeriodicRebuild(); return; }
@@ -49,32 +49,40 @@ internal sealed class FileIndexService
             onCompleted?.Invoke();
             StartPeriodicRebuild();
             if (IsStale())
-                Task.Run(() => RebuildAndSave(null));
+                ScheduleDelayedRebuild(null);
             return;
         }
 
-        Task.Run(() => RebuildAndSave(() =>
-        {
-            StartPeriodicRebuild();
-            onCompleted?.Invoke();
-        }));
+        // 首次使用（无索引文件）：同样延迟重建，期间启动器只显示菜单与自定义条目
+        StartPeriodicRebuild();
+        ScheduleDelayedRebuild(onCompleted);
     }
 
-    /// <summary>启动 10 分钟周期全量重建定时器。</summary>
+    /// <summary>启动 10 分钟周期增量刷新定时器（替代原全量重建，只扫有变化的目录）。</summary>
     private void StartPeriodicRebuild()
     {
         _rebuildTimer?.Dispose();
         _rebuildTimer = new System.Threading.Timer(
-            _ => PeriodicRebuild(), null,
+            _ => PeriodicRefresh(), null,
             TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
     }
 
-    /// <summary>周期性全量重建索引；若正在扫描则跳过本轮。</summary>
-    private void PeriodicRebuild()
+    /// <summary>周期性增量刷新索引；若正在扫描则跳过本轮。</summary>
+    private void PeriodicRefresh()
     {
         if (_scanning || !_loaded) return;
-        _indexedDirs = null;
-        RebuildAndSave(null);
+        QuickRefresh();
+    }
+
+    /// <summary>延迟 2 分钟后执行一次全盘重建，避免程序刚启动就全盘扫描拖慢系统。</summary>
+    private void ScheduleDelayedRebuild(Action? onCompleted)
+    {
+        Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromMinutes(2));
+            if (_scanning) return;
+            RebuildAndSave(onCompleted);
+        });
     }
 
     /// <summary>按文件名包含匹配搜索，返回最多 maxResults 条。</summary>
@@ -190,6 +198,7 @@ internal sealed class FileIndexService
         }
 
         _scanning = false;
+        _indexedDirs = null; // 全量重建后目录增量缓存失效，下次 QuickRefresh 重新收集
 
         try { File.WriteAllLines(_indexFile, found, System.Text.Encoding.UTF8); } catch { }
         EnsureIndexFileInIndex();
@@ -204,12 +213,14 @@ internal sealed class FileIndexService
         var name = Path.GetFileName(dir).ToLowerInvariant();
         if (SkipDirs.Contains(name)) return;
 
+        // IgnoreInaccessible：无权限目录在枚举层被跳过，异常不会延迟到 foreach 消费时才抛出
         IEnumerable<string> files;
         IEnumerable<string> dirs;
         try
         {
-            files = Directory.EnumerateFiles(dir);
-            dirs = Directory.EnumerateDirectories(dir);
+            var options = new EnumerationOptions { IgnoreInaccessible = true };
+            files = Directory.EnumerateFiles(dir, "*", options);
+            dirs = Directory.EnumerateDirectories(dir, "*", options);
         }
         catch { return; } // 访问被拒绝等
 
@@ -266,8 +277,10 @@ internal sealed class FileIndexService
                     // 跳过自索引构建以来未修改的目录
                     if (Directory.GetLastWriteTime(dir) < _indexTime) continue;
 
-                    // 重新扫描该目录（含子目录），找出新文件
-                    foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    // 重新扫描该目录（含子目录，复用 ScanDirectory 继承 SkipDirs 剪枝，避免扫进 node_modules 等大目录）
+                    var rescan = new List<string>();
+                    ScanDirectory(dir, rescan);
+                    foreach (var file in rescan)
                     {
                         if (!existing.Contains(file))
                         {

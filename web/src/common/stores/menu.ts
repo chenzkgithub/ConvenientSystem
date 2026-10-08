@@ -10,15 +10,27 @@ const CACHE_KEY = 'menu_tree_cache_v1'
 export const useMenuStore = defineStore('menu', () => {
   const menus = ref<MenuNode[]>([])
   const loaded = ref(false)
+  /** 进行中的加载 Promise：启动期 MainLayout 与 HomeView 都会触发 load()，复用去重避免重复请求 */
+  let loadingPromise: Promise<void> | null = null
+  /** 失败重试只补一次：后端长期不可用时不做无限静默重试 */
+  let retried = false
 
-  async function load() {
+  function load() {
+    if (loadingPromise) return loadingPromise
+    loadingPromise = doLoad().finally(() => { loadingPromise = null })
+    return loadingPromise
+  }
+
+  async function doLoad() {
     try {
-      const data = await getMenus()
+      // 启动期静默：失败不弹全局遮罩与超时横幅（后端冷启动会超 10s），由缓存兜底
+      const data = await getMenus({ silent: true })
       menus.value = Array.isArray(data) ? data : []
       // API 成功时写入缓存，供独立窗口（standalone）API 失败时兜底
       if (menus.value.length > 0) {
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(menus.value)) } catch { /* 配额不足忽略 */ }
       }
+      return
     } catch (e) {
       console.error('菜单加载失败', e)
       // API 失败时尝试从缓存恢复（独立窗口场景：与主窗口同源 localStorage 共享，
@@ -33,8 +45,14 @@ export const useMenuStore = defineStore('menu', () => {
           }
         }
       } catch { /* 缓存读取失败保持空 */ }
+      // 首次安装无缓存时菜单为空：5 秒后静默重试一次，扛过后端冷启动
+      if (menus.value.length === 0 && !retried) {
+        retried = true
+        window.setTimeout(() => { void doLoad() }, 5000)
+      }
+    } finally {
+      loaded.value = true
     }
-    loaded.value = true
   }
 
   /** 收集所有末级菜单（含 page），跳过 visible=false 和 enabled=false，以及当前宿主不可用的桌面专属视图 */
@@ -78,6 +96,7 @@ export const useMenuStore = defineStore('menu', () => {
   function reset() {
     menus.value = []
     loaded.value = false
+    retried = false
   }
 
   return { menus, loaded, load, collectLeaves, collectGrouped, reset }

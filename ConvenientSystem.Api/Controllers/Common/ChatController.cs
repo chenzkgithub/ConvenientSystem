@@ -186,6 +186,8 @@ namespace ConvenientSystem.Api.Controllers.Common
             if (!TryResolveImageFile(f, out var filePath, out var contentType) || !System.IO.File.Exists(filePath))
                 return NotFound(new { message = "图片不存在" });
 
+            // 图片内容不可变（路径含 GUID）：放行一年强缓存，H5/WebView 二次访问零请求
+            Response.Headers.CacheControl = "public, max-age=31536000, immutable";
             return File(new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read), contentType);
         }
 

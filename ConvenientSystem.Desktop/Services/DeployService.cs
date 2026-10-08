@@ -231,9 +231,12 @@ public sealed class DeployService
             await ExecuteSshAsync(ssh,
                 $"docker ps --filter name={siteName}-{serviceName} --format \"table {{{{.Names}}}}\\t{{{{.Status}}}}\" 2>&1", job, token);
 
-            var healthUrl = serviceName == "api"
-                ? "http://localhost:51943/api/health"
-                : "http://localhost:80";
+            var healthUrl = serviceName switch
+            {
+                "api" => "http://localhost:51943/api/health",
+                "h5" => "http://localhost:81",
+                _ => "http://localhost:80",
+            };
             var httpCode = await ProbeHttpLinuxAsync(ssh, healthUrl, job, token);
             job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
             if (httpCode == "404")
@@ -578,6 +581,14 @@ public sealed class DeployService
             job.Progress = 72;
             job.Log.AppendLine($"      ✓ 解压完成（{newDir}，正式目录未受影响）");
 
+            // ③+ H5 移动端专属：初始化服务器容器环境（Dockerfile.h5 / nginx 配置 / compose 服务定义，幂等）。
+            // 放在切换正式目录之前：初始化失败时正式目录未动，无需回滚
+            if (job.BuildType == UniversalBuildType.MobileH5)
+            {
+                await EnsureH5ContainerEnvAsync(connectionInfo, ssh, job, deployBase, siteName, token);
+                job.Log.AppendLine("      ✓ [H5] 容器环境就绪");
+            }
+
             // ④ 原子切换（拆两步，保证回滚判定准确）：
             //    第一步备份旧版，成功即置 FilesSwapped（此后任何失败/取消都会精确还原）；
             //    首次部署时正式目录不存在，mv 失败用 || true 允许跳过。
@@ -638,9 +649,12 @@ public sealed class DeployService
 
                 // 健康检查：解析 HTTP 状态码，非 2xx 视为新版本不可用 → 抛异常触发自动回滚
                 // 冷启动重试：DotNet 容器初始化可能超过 30 秒，未就绪期间 5 秒一次探测
-                var healthUrl = serviceName == "api"
-                    ? "http://localhost:51943/api/health"
-                    : "http://localhost:80";
+                var healthUrl = serviceName switch
+                {
+                    "api" => "http://localhost:51943/api/health",
+                    "h5" => "http://localhost:81",
+                    _ => "http://localhost:80",
+                };
                 var httpCode = await ProbeHttpLinuxAsync(ssh, healthUrl, job, token);
                 job.Log.AppendLine($"      健康检查 {healthUrl} → HTTP {httpCode}");
                 if (!httpCode.StartsWith("2") && httpCode != "404")
@@ -1038,6 +1052,146 @@ public sealed class DeployService
         job.ServiceName = serviceName;
     }
 
+    // ============================ H5 移动端容器（独立 81 端口） ============================
+
+    /// <summary>H5 容器 nginx 配置：与 web 容器同构的代理规则（/api/ 与 /hubs/ 反代到 api 容器）+ SPA 路由回退。</summary>
+    private const string H5NginxConf = """
+        server {
+            listen 80;
+            server_name _;
+
+            root /usr/share/nginx/html;
+            index index.html;
+
+            client_max_body_size 500M;
+
+            # SignalR WebSocket（聊天实时推送）
+            location /hubs/ {
+                proxy_pass http://api:51943;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+            }
+
+            # API 反向代理（手机端 H5 请求同域相对路径 /api）
+            location /api/ {
+                proxy_pass http://api:51943;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_connect_timeout 300s;
+                proxy_send_timeout 300s;
+                proxy_read_timeout 300s;
+            }
+
+            # SPA 路由：非文件请求回退 index.html
+            location / {
+                try_files $uri $uri/ /index.html;
+            }
+        }
+        """;
+
+    /// <summary>H5 容器镜像定义（与服务器上 Dockerfile.web 同构：跳过 entrypoint 脚本防首启卡死）。</summary>
+    private const string H5Dockerfile = """
+        # H5 mobile site: pre-built uni-app static files served by nginx (host port 81)
+        FROM nginx:alpine
+
+        COPY h5 /usr/share/nginx/html
+        COPY nginx/h5.conf /etc/nginx/conf.d/default.conf
+
+        EXPOSE 80
+
+        # Skip /docker-entrypoint.d scripts: same first-start hang issue as Dockerfile.web
+        ENTRYPOINT []
+        CMD ["nginx", "-g", "daemon off;"]
+        """;
+
+    /// <summary>compose override：为现有 compose 项目追加 h5 服务（81 端口、依赖 api；不改动主文件）。</summary>
+    private const string H5ComposeOverride = """
+        # Managed by ConvenientSystem MobileH5 deploy: nginx container for mobile H5 site (host port 81)
+        services:
+          h5:
+            build:
+              context: .
+              dockerfile: Dockerfile.h5
+            ports:
+              - "81:80"
+            depends_on:
+              - api
+            restart: unless-stopped
+        """;
+
+    /// <summary>
+    /// H5 移动端容器环境初始化（幂等，每次部署执行）：
+    /// ① SFTP 上传 Dockerfile.h5 与 nginx/h5.conf 到部署根目录（覆盖式，本工具是唯一事实源）；
+    /// ② compose 项目已含 h5 服务则跳过；否则创建 docker-compose.override.yml 追加服务定义
+    ///    （docker compose 自动与主文件合并，不动服务器主 compose 文件；
+    ///    override 已存在但未定义 h5 时中止，避免破坏用户自定义内容）。
+    /// </summary>
+    private async Task EnsureH5ContainerEnvAsync(Renci.SshNet.ConnectionInfo connectionInfo, SshClient ssh, DeployJob job, string deployBase, string siteName, CancellationToken token)
+    {
+        var localDir = Path.Combine(Path.GetTempPath(), $"convenient-h5-env-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localDir);
+        try
+        {
+            var dockerFile = Path.Combine(localDir, "Dockerfile.h5");
+            var confFile = Path.Combine(localDir, "h5.conf");
+            await File.WriteAllTextAsync(dockerFile, H5Dockerfile, token);
+            await File.WriteAllTextAsync(confFile, H5NginxConf, token);
+
+            using (var sftp = new SftpClient(connectionInfo))
+            {
+                sftp.Connect();
+                EnsureRemoteDirectory(sftp, $"{deployBase}/nginx");
+                using (var fs = File.OpenRead(dockerFile)) sftp.UploadFile(fs, $"{deployBase}/Dockerfile.h5", true);
+                using (var fs = File.OpenRead(confFile)) sftp.UploadFile(fs, $"{deployBase}/nginx/h5.conf", true);
+                sftp.Disconnect();
+            }
+            job.Log.AppendLine($"      ✓ [H5] 已上传 Dockerfile.h5 与 nginx/h5.conf → {deployBase}");
+        }
+        finally
+        {
+            try { Directory.Delete(localDir, true); } catch { /* ignore */ }
+        }
+
+        // compose 服务定义：项目（主文件+override 合并视图）已含 h5 则跳过
+        var services = ExecuteSshCommand(ssh, $"cd {deployBase} && docker compose -p {siteName} config --services 2>/dev/null");
+        if (services.Split('\n').Select(l => l.Trim()).Any(l => l == "h5"))
+        {
+            job.Log.AppendLine("      ✓ [H5] compose 已含 h5 服务，跳过服务定义");
+            return;
+        }
+
+        var overridePath = $"{deployBase}/docker-compose.override.yml";
+        var overrideExists = ExecuteSshCommand(ssh, $"test -f {overridePath} && echo yes || echo no").Trim() == "yes";
+        if (overrideExists)
+            throw new InvalidOperationException($"compose 项目未含 h5 服务且 {overridePath} 已存在，为避免破坏自定义内容请手动在其中追加 h5 服务定义后重试");
+
+        var overrideLocal = Path.Combine(Path.GetTempPath(), $"convenient-h5-override-{Guid.NewGuid():N}.yml");
+        try
+        {
+            await File.WriteAllTextAsync(overrideLocal, H5ComposeOverride, token);
+            using (var sftp = new SftpClient(connectionInfo))
+            {
+                sftp.Connect();
+                using (var fs = File.OpenRead(overrideLocal)) sftp.UploadFile(fs, overridePath, true);
+                sftp.Disconnect();
+            }
+            job.Log.AppendLine($"      ✓ [H5] 已创建 {overridePath}（h5 服务：81 端口，依赖 api）");
+        }
+        finally
+        {
+            try { File.Delete(overrideLocal); } catch { /* ignore */ }
+        }
+    }
+
     // ============================ 辅助方法 ============================
 
     /// <summary>根据构建类型来确定 Linux 部署目标路径和 Docker 服务名。</summary>
@@ -1046,6 +1200,7 @@ public sealed class DeployService
         return buildType switch
         {
             UniversalBuildType.Web or UniversalBuildType.Node => ("web", $"{deployBase}/web"),
+            UniversalBuildType.MobileH5 => ("h5", $"{deployBase}/h5"),
             UniversalBuildType.DotNet => ("api", $"{deployBase}/api"),
             UniversalBuildType.Installer => ("", "/data/desktop-packages"),
             _ => ("", $"{deployBase}/{buildType.ToString().ToLowerInvariant()}"),
@@ -1058,6 +1213,7 @@ public sealed class DeployService
         return buildType switch
         {
             UniversalBuildType.Web or UniversalBuildType.Node => ("", $@"{deployBase}\web"),
+            UniversalBuildType.MobileH5 => ("", $@"{deployBase}\h5"),
             UniversalBuildType.DotNet => ("ConvenientSystem.Api", $@"{deployBase}\api"),
             UniversalBuildType.Installer => ("", @"D:\data\desktop-packages"),
             _ => ("", $@"{deployBase}\{buildType}"),
@@ -1070,7 +1226,8 @@ public sealed class DeployService
         host = host.Trim();
         if (targetOS == DeployTargetOS.Windows)
             return serviceName == "ConvenientSystem.Api" ? $"http://{host}:51943" : $"http://{host}:8080";
-        return $"http://{host}";
+        // H5 移动端容器独立监听 81 端口，其余 Linux 服务统一 80 入口
+        return serviceName == "h5" ? $"http://{host}:81" : $"http://{host}";
     }
 
     private static void CreateTarGz(string sourceDir, string archivePath, CancellationToken token)

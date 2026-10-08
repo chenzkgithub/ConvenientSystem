@@ -5,6 +5,7 @@ import { resetUnauthorizedHandled } from '@/api/request'
 import { getUIPrefs } from '@/common/api/userConfig'
 import { useTabsStore } from '@/common/stores/tabs'
 import { useMenuStore } from '@/common/stores/menu'
+import { postToHost } from '@/common/stores/lock'
 import router from '@/router'
 
 /** 登录状态与账号信息 */
@@ -152,6 +153,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout(reason?: 'account_disabled' | 'api_401') {
+    // 通知桌面壳关闭所有独立浏览器窗口（外部链接/standalone 页面），避免登出后残留已打开的窗口
+    postToHost('host:logout')
     // 通知后端从在线追踪器中移除（不阻塞退出流程，失败静默）
     if (token.value) {
       try { await logoutApi() } catch { /* 忽略网络错误 */ }

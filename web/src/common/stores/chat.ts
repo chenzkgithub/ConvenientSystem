@@ -242,13 +242,16 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 打开（或创建）单聊会话并加载最新一页消息 */
   async function openConversation(peerId: string): Promise<ChatOpenDto> {
-    const dto = await openChatConversation(peerId)
+    // noLoading：点击切会话属高频本地操作，不弹全局遮罩（错误提示仍弹），避免每次点击都闪遮罩
+    const dto = await openChatConversation(peerId, { noLoading: true })
     activeConversationId.value = dto.conversationId
     activeConversationType.value = 0
     activeGroup.value = null
     activePeerId = peerId
     peerReadMessageId.value = dto.peerReadMessageId
-    messages.value = await getChatMessages(dto.conversationId)
+    // 先清空旧会话消息，避免慢网络下短暂看到上一个会话的内容
+    messages.value = []
+    messages.value = await getChatMessages(dto.conversationId, 0, PAGE_SIZE, { noLoading: true })
     void markReadActive()
     // 会话列表同步：已有会话仅清未读，不改变排序（置顶与服务器“按最后消息时间倒序”不一致，
     // 会在轮询/事件全量刷新时被服务器排序打回原位，造成点击后列表项上下横跳）；
@@ -269,7 +272,9 @@ export const useChatStore = defineStore('chat', () => {
     activeGroup.value = { conversationId, name, memberCount }
     activePeerId = ''
     peerReadMessageId.value = 0
-    messages.value = await getChatMessages(conversationId)
+    // 先清空旧会话消息，避免慢网络下短暂看到上一个会话的内容
+    messages.value = []
+    messages.value = await getChatMessages(conversationId, 0, PAGE_SIZE, { noLoading: true })
     void markReadActive()
     // 同单聊：点击打开不动排序，仅清未读（置顶会被服务器排序刷新打回，造成列表横跳）
     const conv = conversations.value.find(c => c.conversationId === conversationId)

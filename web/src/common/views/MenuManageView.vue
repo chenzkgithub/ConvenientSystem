@@ -2,7 +2,7 @@
 import { onMounted, ref, computed, nextTick, reactive, provide } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Menu, Plus, Refresh, Search, Folder, Document, Link, ArrowRight } from '@element-plus/icons-vue'
-import { getMenus, saveMenus } from '@/common/api/menu'
+import { getAllMenus, saveMenus } from '@/common/api/menu'
 import { getViews, type ViewDto } from '@/common/api/view'
 import { viewComponentOptions } from '@/common/viewComponents'
 import { useMenuStore } from '@/common/stores/menu'
@@ -167,7 +167,8 @@ async function loadMenus() {
     }
     collectExpanded(rawMenus.value, [])
 
-    rawMenus.value = normalizeMenus(await getMenus())
+    // 用全量接口而非按权限过滤的 getMenus：管理页要看到所有菜单（含新增后尚未授权的），否则保存成功列表里看不到新菜单
+    rawMenus.value = normalizeMenus(await getAllMenus())
 
     // 按原索引路径在新树上恢复展开状态
     const restored = new Set<string>()

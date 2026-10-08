@@ -48,9 +48,9 @@ export function revealMyConfigValue(configKey: string, password: string) {
   })
 }
 
-/** 获取当前用户 UI 偏好键值字典（含默认值） */
+/** 获取当前用户 UI 偏好键值字典（含默认值）；silent：启动加载静默，失败各组件回退 localStorage */
 export function getUIPrefs() {
-  return httpGet<Record<string, string>>('/api/Common/UserConfig/GetUIPrefs')
+  return httpGet<Record<string, string>>('/api/Common/UserConfig/GetUIPrefs', undefined, undefined, { silent: true })
 }
 
 // ========== 启动器条目 ==========

@@ -3,7 +3,7 @@
  * 个人配置页面：当前登录用户的个性化配置（锁屏开关/超时等），仅影响自己。
  * 原系统配置页签中的「个人配置」拆分出来的独立菜单页面。
  */
-import { ref, onActivated } from 'vue'
+import { ref, onActivated, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Lock } from '@element-plus/icons-vue'
 import CommonDataTable, { type DataTableColumn } from '@/common/components/CommonDataTable.vue'
@@ -11,7 +11,11 @@ import CommonDialog from '@/common/components/CommonDialog.vue'
 import { getMyConfig, updateMyConfig, getLauncherItems, saveLauncherItems, revealMyConfigValue } from '@/common/api/userConfig'
 import { getApifoxAccessTokenStatus, saveApifoxAccessToken, revealApifoxAccessToken } from '@/common/api/apiSpec'
 import type { UserConfigGroup, LauncherEntry } from '@/common/api/userConfig'
-import { useLockStore } from '@/common/stores/lock'
+import { useLockStore, postToHost } from '@/common/stores/lock'
+import {
+  saveLocalImage, loadLocalImage, removeLocalImage, compressImageFile,
+  type LocalImageKey,
+} from '@/common/utils/localImage'
 
 const lock = useLockStore()
 
@@ -29,8 +33,6 @@ const apifoxTokenConfigured = ref(false)
 const apifoxAccessToken = ref('')
 const apifoxTokenLoading = ref(false)
 const apifoxTokenSaving = ref(false)
-/** Apifox 令牌明文（验证登录密码通过后展示，仅存内存） */
-const apifoxRevealedToken = ref('')
 
 /** 编辑副本：configKey → 当前值 */
 const myEditMap = ref<Record<string, string>>({})
@@ -93,9 +95,14 @@ async function doReveal() {
     if (revealMode.value === 'apifox') {
       const res = await revealApifoxAccessToken(revealPassword.value)
       if (res?.ok && res.value != null) {
-        apifoxRevealedToken.value = res.value
+        // 验证通过：明文回填到令牌输入框（与系统设置密码项一致的单行交互）
+        apifoxAccessToken.value = res.value
         revealDialog.value = false
         ElMessage.success('验证通过')
+      } else if (res?.stale) {
+        // 服务端密钥环轮换导致旧密文失效：关闭弹窗并引导清除后重新保存
+        revealDialog.value = false
+        ElMessage.warning('已保存的令牌已失效，请清除后重新保存')
       } else {
         ElMessage.error('密码错误')
       }
@@ -162,7 +169,6 @@ async function saveApifoxToken() {
   try {
     await saveApifoxAccessToken({ accessToken, clearAccessToken: false })
     apifoxAccessToken.value = ''
-    apifoxRevealedToken.value = ''
     apifoxTokenConfigured.value = true
     ElMessage.success('Apifox Access Token 已保存')
   } catch {
@@ -183,7 +189,6 @@ async function clearApifoxToken() {
   try {
     await saveApifoxAccessToken({ clearAccessToken: true })
     apifoxAccessToken.value = ''
-    apifoxRevealedToken.value = ''
     apifoxTokenConfigured.value = false
     ElMessage.success('Apifox Access Token 已清除')
   } catch {
@@ -315,6 +320,80 @@ async function deleteLauncherEntry(row: LauncherEntry, index: number) {
 }
 
 onActivated(loadLauncherItems)
+
+// ========== 界面外观（登录页/锁屏背景图，纯本地存储不走后端） ==========
+/** 两类背景的当前自定义图预览（object URL；null = 使用内置默认背景） */
+const loginBgUrl = ref<string | null>(null)
+const lockBgUrl = ref<string | null>(null)
+/** 每行处理中状态（压缩+存储），按钮转圈用 */
+const bgBusy = ref<Set<string>>(new Set())
+
+/** 隐藏 file input：两个槽位共用，选择前记录目标槽位 */
+const bgFileInput = ref<HTMLInputElement>()
+const bgPickSlot = ref<LocalImageKey>('loginBg')
+
+/** 更新预览：object URL 用完要释放，防内存泄漏 */
+function setPreviewUrl(slot: LocalImageKey, blob: Blob | null) {
+  const target = slot === 'loginBg' ? loginBgUrl : lockBgUrl
+  if (target.value) URL.revokeObjectURL(target.value)
+  target.value = blob ? URL.createObjectURL(blob) : null
+}
+
+async function loadLocalBgs() {
+  try { setPreviewUrl('loginBg', await loadLocalImage('loginBg')) } catch { /* 读取失败按未设置处理 */ }
+  try { setPreviewUrl('lockBg', await loadLocalImage('lockBg')) } catch { /* 同上 */ }
+}
+
+function pickBgImage(slot: LocalImageKey) {
+  bgPickSlot.value = slot
+  bgFileInput.value?.click()
+}
+
+async function onBgFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 清空以便下次选择同一文件也能触发 change
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    ElMessage.warning('请选择图片文件')
+    return
+  }
+  const slot = bgPickSlot.value
+  bgBusy.value.add(slot)
+  try {
+    const { blob, dataUrl } = await compressImageFile(file)
+    await saveLocalImage(slot, blob)
+    setPreviewUrl(slot, blob)
+    // 锁屏背景同步落盘给桌面壳：桌面端空闲锁定走原生锁屏控件，读不到浏览器 IndexedDB
+    if (slot === 'lockBg') postToHost('bg:save', { dataUrl })
+    ElMessage.success('背景图已更新，立即生效')
+  } catch {
+    ElMessage.error('背景图保存失败')
+  } finally {
+    bgBusy.value.delete(slot)
+  }
+}
+
+async function clearBgImage(slot: LocalImageKey) {
+  try {
+    await ElMessageBox.confirm('恢复为系统默认背景？', '恢复默认', {
+      confirmButtonText: '恢复默认', cancelButtonText: '取消', type: 'warning',
+    })
+  } catch { return }
+  bgBusy.value.add(slot)
+  try {
+    await removeLocalImage(slot)
+    setPreviewUrl(slot, null)
+    if (slot === 'lockBg') postToHost('bg:clear')
+    ElMessage.success('已恢复默认背景')
+  } catch {
+    ElMessage.error('操作失败')
+  } finally {
+    bgBusy.value.delete(slot)
+  }
+}
+
+onMounted(loadLocalBgs)
 </script>
 
 <template>
@@ -433,6 +512,15 @@ onActivated(loadLauncherItems)
               Apifox Access Token
             </span>
             <el-button
+              type="primary"
+              size="small"
+              :loading="apifoxTokenSaving"
+              :disabled="!apifoxAccessToken.trim()"
+              @click="saveApifoxToken"
+            >
+              保存令牌
+            </el-button>
+            <el-button
               v-if="apifoxTokenConfigured"
               link
               type="danger"
@@ -456,20 +544,23 @@ onActivated(loadLauncherItems)
               </el-tag>
             </div>
           </div>
-          <div v-if="apifoxTokenConfigured" class="config-item">
+          <div class="config-item">
             <div class="config-label">
-              <span class="config-name">当前令牌</span>
-              <span class="config-desc">已保存的令牌内容，仅显示在本次页面会话中。</span>
+              <span class="config-name">Access Token</span>
+              <span class="config-desc">从 Apifox 个人设置创建并复制；服务端加密保存，查看明文需验证登录密码。</span>
             </div>
             <div class="config-control">
+              <!-- 未配置或已验证：同一输入框直接输入/编辑新令牌 -->
               <el-input
-                v-if="apifoxRevealedToken"
-                :model-value="apifoxRevealedToken"
+                v-if="apifoxAccessToken || !apifoxTokenConfigured"
+                v-model="apifoxAccessToken"
                 type="password"
                 show-password
-                readonly
+                autocomplete="off"
                 class="config-input"
+                :placeholder="apifoxTokenConfigured ? '已配置，输入新令牌可更新' : '请输入 Access Token'"
               />
+              <!-- 已配置未验证：掩码 + 锁图标，点击弹身份验证，通过后回填明文到上方输入框（与系统设置密码项一致） -->
               <el-input
                 v-else
                 :model-value="MASKED"
@@ -486,32 +577,68 @@ onActivated(loadLauncherItems)
               </el-input>
             </div>
           </div>
-          <div class="config-item">
-            <div class="config-label">
-              <span class="config-name">Access Token</span>
-              <span class="config-desc">从 Apifox 个人设置创建并复制。填写后保存即可用于接口文档导入。</span>
-            </div>
-            <div class="config-control">
-              <el-input
-                v-model="apifoxAccessToken"
-                class="config-input"
-                type="password"
-                show-password
-                autocomplete="off"
-                placeholder="请输入新的 Access Token"
-              />
-            </div>
-          </div>
-          <div class="token-actions">
-            <el-button type="primary" :loading="apifoxTokenSaving" @click="saveApifoxToken">
-              {{ apifoxTokenConfigured ? '更新令牌' : '保存令牌' }}
-            </el-button>
-          </div>
         </div>
       </el-card>
     </div>
 
     <el-empty v-if="myGroups.length === 0 && !myLoading" description="暂无个人配置" />
+
+    <!-- 界面外观（背景图纯本地存储，仅对本机当前浏览器生效） -->
+    <div class="config-card-wrapper">
+      <el-card shadow="hover" class="config-card">
+        <template #header>
+          <div class="card-header">
+            <span class="card-title">
+              <span class="card-icon">🖼️</span>
+              界面外观
+            </span>
+          </div>
+        </template>
+        <div class="config-form">
+          <div class="config-item">
+            <div class="config-label">
+              <span class="config-name">登录页背景图</span>
+              <span class="config-desc">仅保存在本机，未设置时显示白色背景；图片会压缩为 JPEG 后存储。</span>
+            </div>
+            <div class="config-control">
+              <div class="bg-thumb" :class="{ 'bg-thumb-empty': !loginBgUrl }">
+                <img v-if="loginBgUrl" :src="loginBgUrl" alt="登录页背景" />
+                <span v-else>默认</span>
+              </div>
+              <el-button size="small" :loading="bgBusy.has('loginBg')" @click="pickBgImage('loginBg')">选择图片</el-button>
+              <el-button
+                v-if="loginBgUrl"
+                link type="danger" size="small"
+                :loading="bgBusy.has('loginBg')"
+                @click="clearBgImage('loginBg')"
+              >恢复默认</el-button>
+            </div>
+          </div>
+          <div class="config-item">
+            <div class="config-label">
+              <span class="config-name">锁屏背景图</span>
+              <span class="config-desc">仅保存在本机，未设置时显示白色背景；桌面端与网页端各自独立生效。</span>
+            </div>
+            <div class="config-control">
+              <div class="bg-thumb" :class="{ 'bg-thumb-empty': !lockBgUrl }">
+                <img v-if="lockBgUrl" :src="lockBgUrl" alt="锁屏背景" />
+                <span v-else>默认</span>
+              </div>
+              <el-button size="small" :loading="bgBusy.has('lockBg')" @click="pickBgImage('lockBg')">选择图片</el-button>
+              <el-button
+                v-if="lockBgUrl"
+                link type="danger" size="small"
+                :loading="bgBusy.has('lockBg')"
+                @click="clearBgImage('lockBg')"
+              >恢复默认</el-button>
+            </div>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
+    <!-- 背景图选择（隐藏 input，两个槽位共用） -->
+    <input ref="bgFileInput" type="file" accept="image/*" class="bg-file-input" @change="onBgFileChange" />
 
     <!-- 启动器条目管理 -->
     <div class="config-card-wrapper">
@@ -718,6 +845,36 @@ onActivated(loadLauncherItems)
   width: 160px;
 }
 
+/* 背景图缩略图预览（48×32 圆角，空态显示"默认"占位） */
+.bg-thumb {
+  width: 64px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #e4e7ed;
+  flex-shrink: 0;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+}
+
+.bg-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #909399;
+  background: #f5f7fa;
+}
+
+.bg-file-input {
+  display: none;
+}
+
 /* 密码验证弹窗 */
 .reveal-dialog-body {
   display: flex;
@@ -737,12 +894,6 @@ onActivated(loadLauncherItems)
   color: #606266;
   margin: 0;
   text-align: center;
-}
-
-.token-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: 16px 0 20px;
 }
 
 /* 卡片头部背景优化 */

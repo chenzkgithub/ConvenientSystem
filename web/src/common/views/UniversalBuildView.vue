@@ -145,6 +145,7 @@ interface BuildCard {
 const typeOptions: { label: string; value: UniversalBuildType; icon?: string }[] = [
   { label: 'Web 前端', value: 'Web' },
   { label: 'Node 项目', value: 'Node' },
+  { label: 'H5 移动端', value: 'MobileH5' },
   { label: 'C# (.NET)', value: 'DotNet' },
   { label: 'Java Maven', value: 'JavaMaven' },
   { label: 'Java Gradle', value: 'JavaGradle' },
@@ -163,6 +164,7 @@ function gotoPipeline() {
 const typeColorMap: Record<UniversalBuildType, string> = {
   Web: '#42b883',
   Node: '#0ea5e9',
+  MobileH5: '#06b6d4',
   DotNet: '#8b5cf6',
   JavaMaven: '#f97316',
   JavaGradle: '#f59e0b',
@@ -177,7 +179,7 @@ function typeColor(type: UniversalBuildType) {
 /** 构建类型短标签（用于任务名称前缀） */
 const typeShortLabelMap: Record<UniversalBuildType, string> = {
   Web: 'Web', Node: 'Node', DotNet: 'DotNet',
-  JavaMaven: 'Maven', JavaGradle: 'Gradle', Installer: 'Installer',
+  JavaMaven: 'Maven', JavaGradle: 'Gradle', Installer: 'Installer', MobileH5: 'H5',
 }
 
 /** 默认任务名称：类型前缀 + 序号 */
@@ -785,6 +787,8 @@ function defaultServiceName(type: UniversalBuildType, targetOS: DeployTargetOS):
     case 'Web':
     case 'Node':
       return 'web'
+    case 'MobileH5':
+      return 'h5'
     case 'DotNet':
       return 'api'
     default:

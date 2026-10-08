@@ -95,13 +95,28 @@ namespace ConvenientSystem.Service.Common
                 _userConfigService.SetRawValue(TokenKey, _tokenProtector.Protect(newToken));
         }
 
-        /// <summary>查看当前用户已保存的 Access Token 明文：验证登录密码后解密返回；未配置或密码错误返回 null。</summary>
-        public string? RevealMyAccessToken(string password)
+        /// <summary>
+        /// 查看当前用户已保存的 Access Token 明文：验证登录密码后解密返回。
+        /// 未配置或密码错误返回 Ok=false；密文因服务端密钥环轮换/丢失无法解密时返回 Stale=true，
+        /// 由前端引导用户清除后重新保存——这属可预期场景（密钥环修复/容器重建），不再抛异常报 500。
+        /// </summary>
+        public ApifoxAccessTokenRevealResult RevealMyAccessToken(string password)
         {
-            if (!_userConfigService.VerifyLoginPassword(password ?? string.Empty)) return null;
+            var result = new ApifoxAccessTokenRevealResult();
+            if (!_userConfigService.VerifyLoginPassword(password ?? string.Empty)) return result;
             var protectedToken = _userConfigService.GetRawValue(TokenKey);
-            if (string.IsNullOrWhiteSpace(protectedToken)) return null;
-            return UnprotectAccessToken(protectedToken);
+            if (string.IsNullOrWhiteSpace(protectedToken)) return result;
+            try
+            {
+                result.Value = _tokenProtector.Unprotect(protectedToken);
+                result.Ok = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "无法解密当前用户保存的 Apifox Access Token（密钥环已轮换，需重新保存）");
+                result.Stale = true;
+            }
+            return result;
         }
 
         public AsyncTaskDto StartImport(ApifoxImportRequest request, Guid userId)

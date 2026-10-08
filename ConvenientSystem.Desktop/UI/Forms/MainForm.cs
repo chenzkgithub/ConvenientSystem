@@ -66,6 +66,9 @@ public sealed class MainForm : Form
     private readonly QuickLauncherFactory _launcherFactory;
 
     private readonly LauncherStoreFactory _storeFactory;
+    private readonly BrowserAutoLoginCredentialStore _autoLoginCredentialStore;
+    private readonly BrowserAutoLoginCoordinator _autoLoginCoordinator;
+    private BrowserAutoLoginSettingsDialog? _autoLoginSettingsDialog;
 
     private readonly IServiceProvider _services;
 
@@ -77,6 +80,8 @@ public sealed class MainForm : Form
         LauncherStoreFactory storeFactory,
         QuickLauncherFactory launcherFactory,
         SystemHelpDialog helpDialog,
+        BrowserAutoLoginCredentialStore autoLoginCredentialStore,
+        BrowserAutoLoginCoordinator autoLoginCoordinator,
         IServiceProvider services)
     {
         _webHost = webHost;
@@ -86,7 +91,11 @@ public sealed class MainForm : Form
         _storeFactory = storeFactory;
         _launcherFactory = launcherFactory;
         _helpDialog = helpDialog;
+        _autoLoginCredentialStore = autoLoginCredentialStore;
+        _autoLoginCoordinator = autoLoginCoordinator;
         _services = services;
+
+        _autoLoginCoordinator.ConfigureUi(PromptAutoLoginSettings, PromptAutoLoginCaptcha);
 
         Text = "ConvenientSystem";
         StartPosition = FormStartPosition.CenterScreen;
@@ -329,6 +338,27 @@ public sealed class MainForm : Form
                     LockCoordinator.UnlockAll(notifyWeb: false);
                     break;
 
+                case "host:logout":
+                    // 前端退出登录：关闭所有独立浏览器窗口（外部链接与 standalone 内部页），
+                    // 避免登出后残留已打开的页面窗口。
+                    CloseAllBrowserWindows();
+                    break;
+
+                case "bg:save":
+                    // 个人配置设置的锁屏背景图：桌面端空闲锁定走原生锁屏控件（读不到浏览器 IndexedDB），
+                    // 前端把压缩后的图片以 dataURL 发来，落盘 exe 目录供原生锁屏加载。
+                    if (root.TryGetProperty("dataUrl", out var bgDataEl) &&
+                        bgDataEl.GetString() is { Length: > 0 } bgData)
+                    {
+                        SaveLockBackgroundFile(bgData);
+                    }
+                    break;
+
+                case "bg:clear":
+                    // 恢复默认锁屏背景：删除自定义图文件，原生锁屏回退内置背景。
+                    DeleteLockBackgroundFile();
+                    break;
+
                 case "menu:list":
                     // 前端上报"首页所有页面"菜单树：据此重建托盘右键菜单。
                     RebuildTrayMenu(root.TryGetProperty("items", out var itemsEl) ? itemsEl : (JsonElement?)null);
@@ -445,6 +475,7 @@ public sealed class MainForm : Form
                 editor.ShowDialog();
                 _launcher?.RefreshResults();
             },
+            AutoLoginSettingsAction = () => PromptAutoLoginSettings(string.Empty),
             RefreshIndexAction = () => _fileIndex?.ForceRebuild(),
             SystemHelpAction = ShowSystemHelpDialog,
             CloseAllWindowsAction = () =>
@@ -460,6 +491,45 @@ public sealed class MainForm : Form
         };
         _floatingBtn.PositionAtScreenCorner();
         _floatingBtn.Show();
+    }
+
+    private bool PromptAutoLoginSettings(string suggestedAddress)
+    {
+        if (InvokeRequired)
+            return (bool)Invoke(new Func<string, bool>(PromptAutoLoginSettings), suggestedAddress);
+
+        if (_autoLoginSettingsDialog is { IsDisposed: false } existing)
+        {
+            if (existing.WindowState == FormWindowState.Minimized)
+                existing.WindowState = FormWindowState.Normal;
+            if (!existing.Visible) existing.Show();
+            existing.BringToFront();
+            existing.Activate();
+            return false;
+        }
+
+        using var dialog = new BrowserAutoLoginSettingsDialog(
+            _autoLoginCredentialStore,
+            _autoLoginCoordinator.SupportedAdapters,
+            suggestedAddress);
+        _autoLoginSettingsDialog = dialog;
+        try
+        {
+            return dialog.ShowDialog() == DialogResult.OK;
+        }
+        finally
+        {
+            _autoLoginSettingsDialog = null;
+        }
+    }
+
+    private string? PromptAutoLoginCaptcha(string imageBase64)
+    {
+        if (InvokeRequired)
+            return (string?)Invoke(new Func<string, string?>(PromptAutoLoginCaptcha), imageBase64);
+
+        using var dialog = new BrowserAutoLoginCaptchaDialog(imageBase64);
+        return dialog.ShowDialog() == DialogResult.OK ? dialog.VerifyCode : null;
     }
 
     // ===================== 系统托盘图标与右键菜单 =====================
@@ -819,6 +889,51 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
+    /// 关闭当前打开的所有独立浏览器窗口。遍历 OpenForms 而非 _openPageWindows 字典：
+    /// NewWindow 弹出的子窗口不进字典，同为 BrowserForm 实例，一并覆盖。
+    /// </summary>
+    private static void CloseAllBrowserWindows()
+    {
+        foreach (var form in Application.OpenForms.OfType<BrowserForm>().ToArray())
+        {
+            form.Close();
+        }
+    }
+
+    /// <summary>原生锁屏自定义背景文件（exe 目录，程序数据文件统一随程序存放）。</summary>
+    private static string LockBgFilePath => Path.Combine(AppContext.BaseDirectory, "bg-lock.jpg");
+
+    /// <summary>把前端发来的 dataURL（data:image/jpeg;base64,...）解码写入锁屏背景文件。</summary>
+    private static void SaveLockBackgroundFile(string dataUrl)
+    {
+        try
+        {
+            var idx = dataUrl.IndexOf("base64,", StringComparison.Ordinal);
+            if (idx < 0) return;
+            var bytes = Convert.FromBase64String(dataUrl[(idx + "base64,".Length)..]);
+            if (bytes.Length == 0) return;
+            File.WriteAllBytes(LockBgFilePath, bytes);
+        }
+        catch (Exception ex)
+        {
+            LogHost($"BG-SAVE FAIL: {ex.Message}");
+        }
+    }
+
+    /// <summary>删除锁屏背景文件，原生锁屏回退内置背景。</summary>
+    private static void DeleteLockBackgroundFile()
+    {
+        try
+        {
+            if (File.Exists(LockBgFilePath)) File.Delete(LockBgFilePath);
+        }
+        catch (Exception ex)
+        {
+            LogHost($"BG-CLEAR FAIL: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// 退出登录：清空所有浏览数据（Cookie / localStorage / 缓存等）并删除持久化的会话 Cookie，
     /// 随后重新加载到起始页回到登录界面；程序继续运行。
     /// </summary>
@@ -826,6 +941,9 @@ public sealed class MainForm : Form
     {
         var core = _webView.CoreWebView2;
         if (core is null) return;
+
+        // 先关闭所有独立浏览器窗口，再清理登录数据，避免窗口停留在已失效的登录页面上。
+        CloseAllBrowserWindows();
 
         try
         {

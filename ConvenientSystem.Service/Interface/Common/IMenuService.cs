@@ -14,6 +14,13 @@ namespace ConvenientSystem.Service.Common
         /// </summary>
         List<MenuNode> GetMenus(Guid? userId);
 
+        /// <summary>
+        /// 读取全量菜单树（菜单管理页专用）：不受角色授权过滤，
+        /// 新增后尚未授权给任何角色的菜单也能看到，供继续编辑与授权。
+        /// 调用方需自行保证仅管理权限用户使用（Controller 上以 menu-manage:save 权限约束）。
+        /// </summary>
+        List<MenuNode> GetAllMenus();
+
         /// <summary>整体保存菜单树；失败时通过返回值告知，不抛异常</summary>
         MenuSaveResultDto SaveMenus(List<MenuNode> menus);
 

@@ -5,7 +5,7 @@ namespace ConvenientSystem;
 
 /// <summary>
 /// 应用内浏览器窗口使用的原生锁屏遮罩，视觉对齐前端 LockOverlay.vue：
-/// 铺满窗口的背景图（与 Vue 共用同一张 lock-bg.jpg）+ 深色薄遮罩 + 居中毛玻璃密码卡片。
+/// 铺满窗口的背景（自定义图或默认纯白，与 Vue 一致）+ 白雾薄遮罩 + 居中毛玻璃密码卡片。
 /// 输入密码后通过 <see cref="VerifyAsync"/> 校验，通过则触发 <see cref="Unlocked"/>。
 /// 不加载 Vue 应用、不发起额外 API 调用，因此不会影响全局登录态。
 /// </summary>
@@ -26,21 +26,22 @@ public sealed class LockOverlayControl : Panel
     public Action? Unlocked { get; set; }
 
     // ── 颜色（逐项对应 LockOverlay.vue 的 CSS）────────────────────────────
-    // 深色遮罩三段：linear-gradient(135deg, rgba(20,15,10,.18), rgba(30,20,10,.12) 50%, rgba(15,10,5,.2))
-    private static readonly Color ScrimStart = Color.FromArgb(46, 20, 15, 10);
-    private static readonly Color ScrimMid = Color.FromArgb(31, 30, 20, 10);
-    private static readonly Color ScrimEnd = Color.FromArgb(51, 15, 10, 5);
-    private static readonly Color CardBg = Color.FromArgb(10, 255, 255, 255);      // rgba(255,255,255,.04)
-    private static readonly Color CardBorder = Color.FromArgb(31, 255, 255, 255);  // rgba(255,255,255,.12)
-    private static readonly Color CardTopGloss = Color.FromArgb(20, 255, 255, 255);// inset 0 1px 0 rgba(255,255,255,.08)
+    // 白雾遮罩三段：白色背景上无感，自定义图上把画面提亮保证深色文字可读
+    private static readonly Color ScrimStart = Color.FromArgb(115, 255, 255, 255);
+    private static readonly Color ScrimMid = Color.FromArgb(90, 255, 255, 255);
+    private static readonly Color ScrimEnd = Color.FromArgb(140, 255, 255, 255);
+    private static readonly Color CardBg = Color.FromArgb(166, 255, 255, 255);     // rgba(255,255,255,.65)
+    private static readonly Color CardBorder = Color.FromArgb(20, 15, 23, 42);     // rgba(15,23,42,.08)
+    private static readonly Color CardTopGloss = Color.FromArgb(153, 255, 255, 255);// inset 0 1px 0 rgba(255,255,255,.6)
     private static readonly Color LogoFrom = Color.FromArgb(0x63, 0x66, 0xF1);     // #6366f1
     private static readonly Color LogoTo = Color.FromArgb(0x8B, 0x5C, 0xF6);       // #8b5cf6
     private static readonly Color LogoHalo = Color.FromArgb(51, 99, 102, 241);     // rgba(99,102,241,.2)
-    private static readonly Color SubColor = Color.FromArgb(128, 255, 255, 255);   // rgba(255,255,255,.5)
-    private static readonly Color TipColor = Color.FromArgb(140, 255, 255, 255);   // rgba(255,255,255,.55)
-    private static readonly Color ErrorColor = Color.FromArgb(0xFF, 0x87, 0x87);   // #ff8787
+    private static readonly Color TitleColor = Color.FromArgb(0x1E, 0x29, 0x3B);   // #1e293b
+    private static readonly Color SubColor = Color.FromArgb(0x64, 0x74, 0x8B);     // #64748b
+    private static readonly Color TipColor = Color.FromArgb(0x64, 0x74, 0x8B);     // #64748b
+    private static readonly Color ErrorColor = Color.FromArgb(0xEF, 0x44, 0x44);   // #ef4444
     private static readonly Color InputBg = Color.FromArgb(26, 255, 255, 255);     // rgba(255,255,255,.1)
-    private static readonly Color InputBorder = Color.FromArgb(46, 255, 255, 255); // rgba(255,255,255,.18)
+    private static readonly Color InputBorder = Color.FromArgb(31, 15, 23, 42);    // rgba(15,23,42,.12)
     private static readonly Color InputFocusBorder = LogoTo;                       // is-focus: #8b5cf6
 
     // ── 布局基准（逻辑像素 @96dpi，实际用时经 S() 按 DPI 换算）─────────────
@@ -72,7 +73,8 @@ public sealed class LockOverlayControl : Panel
     // 两者只在尺寸变化时重建，OnPaint 里只做贴图，锁屏挂着时没有任何持续开销。
     private Bitmap? _bg;
     private Bitmap? _cardBlur;
-    private readonly Image? _bgImage;
+    private Image? _bgImage;
+    private DateTime _bgFileTime; // 上次加载的自定义背景文件时间戳（bg-lock.jpg），用于判断是否需要重载
 
     private string _tipText = "输入密码解锁页面";
     private bool _tipError;
@@ -82,9 +84,9 @@ public sealed class LockOverlayControl : Panel
     {
         Dock = DockStyle.Fill;
         DoubleBuffered = true;
-        // 背景图加载失败时的兜底底色（深紫），保证锁屏内容始终可读
-        BackColor = Color.FromArgb(46, 33, 74);
-        _bgImage = LoadBackgroundImage();
+        // 兜底底色（白），与默认背景一致，保证锁屏内容始终可读
+        BackColor = Color.White;
+        _bgImage = LoadBackgroundImage(out _bgFileTime);
 
         _card = new Panel { BackColor = Color.Transparent };
         _card.Paint += PaintCard;
@@ -93,7 +95,7 @@ public sealed class LockOverlayControl : Panel
         {
             UseSystemPasswordChar = true,
             BorderStyle = BorderStyle.None,
-            ForeColor = Color.White,
+            ForeColor = TitleColor,
             TextAlign = HorizontalAlignment.Left,
             Font = _inputFont,
         };
@@ -285,16 +287,11 @@ public sealed class LockOverlayControl : Panel
         }
         else
         {
-            // 图片缺失时的兜底：深紫渐变，保证卡片与白色文字仍然可读
-            using var fallback = new LinearGradientBrush(
-                new Rectangle(0, 0, w, h),
-                Color.FromArgb(91, 33, 182),
-                Color.FromArgb(124, 58, 237),
-                LinearGradientMode.ForwardDiagonal);
-            g.FillRectangle(fallback, 0, 0, w, h);
+            // 未设置自定义图时的默认背景：纯白（与前端 LockOverlay.vue 一致）
+            g.Clear(Color.White);
         }
 
-        // 135° 三段深色遮罩
+        // 135° 三段白雾遮罩
         using var scrim = new LinearGradientBrush(
             new Rectangle(0, 0, w, h), ScrimStart, ScrimEnd, 135f)
         {
@@ -351,7 +348,7 @@ public sealed class LockOverlayControl : Panel
 
     /// <summary>
     /// 用输入框所在区域的背景平均色推算 TextBox 底色。
-    /// 背景之上压了卡片的 4% 白与输入框的 10% 白，等效于向白色插值约 13.6%。
+    /// 背景之上压了卡片的 65% 白与输入框的 10% 白，等效于向白色插值约 68.5%。
     /// </summary>
     private void UpdateInputBackColor()
     {
@@ -373,7 +370,7 @@ public sealed class LockOverlayControl : Panel
             avg = one.GetPixel(0, 0);
         }
 
-        const float t = 0.136f;
+        const float t = 0.685f;
         _password.BackColor = Color.FromArgb(
             (int)(avg.R + (255 - avg.R) * t),
             (int)(avg.G + (255 - avg.G) * t),
@@ -438,9 +435,9 @@ public sealed class LockOverlayControl : Panel
         };
 
         // 标题 22px / 副标题 13px / 提示 14px
-        using (var white = new SolidBrush(Color.White))
+        using (var titleBrush = new SolidBrush(TitleColor))
         {
-            g.DrawString("界面已锁定", _titleFont, white, _titleRect, center);
+            g.DrawString("界面已锁定", _titleFont, titleBrush, _titleRect, center);
         }
 
         using (var subBrush = new SolidBrush(SubColor))
@@ -529,10 +526,29 @@ public sealed class LockOverlayControl : Panel
     /// <summary>显示遮罩时重置输入与提示，并聚焦密码框。</summary>
     public void ResetAndFocus()
     {
+        // 用户可能刚在个人配置里换过锁屏背景，上锁时按文件时间戳决定是否重载
+        ReloadBackgroundIfChanged();
         _password.Clear();
         SetTip("输入密码解锁页面", false);
         _unlock.Enabled = true;
         _password.Focus();
+    }
+
+    /// <summary>自定义背景文件（bg-lock.jpg）发生变化时重载背景并作废合成缓存，未变化则跳过 IO。</summary>
+    private void ReloadBackgroundIfChanged()
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "bg-lock.jpg");
+            var t = File.Exists(path) ? File.GetLastWriteTime(path) : DateTime.MinValue;
+            if (t == _bgFileTime) return;
+            _bgFileTime = t;
+            _bgImage?.Dispose();
+            _bgImage = LoadBackgroundImage(out _);
+            InvalidateCache();
+            Invalidate();
+        }
+        catch { /* 检测失败时沿用旧背景 */ }
     }
 
     private void SetTip(string text, bool error)
@@ -571,18 +587,28 @@ public sealed class LockOverlayControl : Panel
         }
     }
 
-    /// <summary>加载与 Vue 锁屏共用的背景图（构建时由 csproj 从 web/src/assets 嵌入）。</summary>
-    private static Image? LoadBackgroundImage()
+    /// <summary>加载锁屏背景图：优先读取用户在个人配置里自定义的 exe目录\bg-lock.jpg（前端上传后由主窗体落盘）。
+    /// 未设置自定义图时返回 null，由 BuildBackground 以主色渐变铺底，与前端 LockOverlay.vue 的默认表现一致。</summary>
+    private static Image? LoadBackgroundImage(out DateTime customFileTime)
     {
+        customFileTime = DateTime.MinValue;
+
+        // 用户自定义背景（个人配置上传，保存于 exe 目录）
         try
         {
-            using var stream = typeof(LockOverlayControl).Assembly.GetManifestResourceStream("lock-bg.jpg");
-            if (stream is null) return null;
-            // 从流直接构造的 Image 会持有流引用，复制一份以便安全释放流
-            using var raw = Image.FromStream(stream);
-            return new Bitmap(raw);
+            var customPath = Path.Combine(AppContext.BaseDirectory, "bg-lock.jpg");
+            if (File.Exists(customPath))
+            {
+                // 从流直接构造的 Image 会持有流引用，复制一份以便安全释放文件句柄
+                using var fs = File.OpenRead(customPath);
+                using var raw = Image.FromStream(fs);
+                customFileTime = File.GetLastWriteTime(customPath);
+                return new Bitmap(raw);
+            }
         }
-        catch { return null; }
+        catch { /* 自定义图损坏时按未设置处理，走渐变背景 */ }
+
+        return null;
     }
 
     protected override void Dispose(bool disposing)

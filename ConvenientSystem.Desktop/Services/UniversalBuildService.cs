@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging;
 
 namespace ConvenientSystem;
 
-/// <summary>通用构建任务类型。</summary>
+/// <summary>通用构建任务类型。MobileH5 只能追加到末尾：历史任务 JSON 按数字序列化枚举，插入中间会错位。</summary>
 public enum UniversalBuildType
 {
     Web,
@@ -22,6 +22,8 @@ public enum UniversalBuildType
     JavaMaven,
     JavaGradle,
     Installer,
+    /// <summary>H5 移动端（uni-app）：npm run build:h5，产物落 dist/build/h5，部署到独立 81 端口容器。</summary>
+    MobileH5,
 }
 
 /// <summary>通用构建任务状态。</summary>
@@ -121,7 +123,7 @@ public sealed class UniversalBuildJob
     public bool PrePull { get; set; }
 }
 
-/// <summary>通用本地构建服务：支持 Web/Node/C#/Java/Maven/Gradle/Installer。</summary>
+/// <summary>通用本地构建服务：支持 Web/Node/C#/Java/Maven/Gradle/Installer/H5 移动端。</summary>
 public sealed class UniversalBuildService
 {
     private readonly ILogger<UniversalBuildService> _logger;
@@ -162,7 +164,7 @@ public sealed class UniversalBuildService
     {
         return type switch
         {
-            UniversalBuildType.Web or UniversalBuildType.Node => new[] { "node", "npm" },
+            UniversalBuildType.Web or UniversalBuildType.Node or UniversalBuildType.MobileH5 => new[] { "node", "npm" },
             UniversalBuildType.DotNet => new[] { "dotnet" },
             UniversalBuildType.JavaMaven => new[] { "java", "mvn" },
             UniversalBuildType.JavaGradle => new[] { "java", "gradle" },
@@ -715,6 +717,11 @@ public sealed class UniversalBuildService
             UniversalBuildType.Web or UniversalBuildType.Node =>
                 BuildWebCommand(job),
 
+            // H5 移动端（uni-app）：脚本名固定 build:h5（项目无 build 脚本）；uni build 不透传 --outDir，
+            // 产物固定落 dist/build/h5，构建后由 CollectArtifacts 归集到输出目录
+            UniversalBuildType.MobileH5 =>
+                ("cmd", "/c chcp 65001 >nul & npm install && npm run build:h5", workingDir),
+
             UniversalBuildType.DotNet =>
                 ("dotnet", $"publish -c Release -o \"{output}\" --self-contained false", workingDir),
 
@@ -752,8 +759,21 @@ public sealed class UniversalBuildService
     {
         try
         {
-            if (Directory.Exists(job.OutputDir) && Directory.EnumerateFileSystemEntries(job.OutputDir).Any())
+            if (job.Type == UniversalBuildType.MobileH5)
+            {
+                // uni-app 产物固定落项目内，每次构建都必须重新归集：先清空输出目录旧产物，防旧文件混入新版本
+                if (Directory.Exists(job.OutputDir))
+                    foreach (var entry in Directory.EnumerateFileSystemEntries(job.OutputDir))
+                    {
+                        if (Directory.Exists(entry)) Directory.Delete(entry, true);
+                        else File.Delete(entry);
+                    }
+            }
+            else if (Directory.Exists(job.OutputDir) && Directory.EnumerateFileSystemEntries(job.OutputDir).Any())
+            {
+                // 输出目录已有产物（DotNet/Installer 直接输出，或 vite --outDir 直接输出）时跳过
                 return;
+            }
 
             if (job.Type is UniversalBuildType.JavaMaven or UniversalBuildType.JavaGradle)
             {
@@ -776,9 +796,9 @@ public sealed class UniversalBuildService
                 return;
             }
 
-            if (job.Type is not (UniversalBuildType.Web or UniversalBuildType.Node)) return;
+            if (job.Type is not (UniversalBuildType.Web or UniversalBuildType.Node or UniversalBuildType.MobileH5)) return;
 
-            // Web/Node：取修改时间最新的产物目录，复制全部内容（排除与输出目录重叠的候选，避免自我复制）
+            // Web/Node/H5：取修改时间最新的产物目录，复制全部内容（排除与输出目录重叠的候选，避免自我复制）
             var latest = GetArtifactCandidates(job)
                 .Where(d => Directory.Exists(d) && !IsPathOverlapping(d, job.OutputDir)
                     && Directory.EnumerateFileSystemEntries(d).Any())
@@ -820,6 +840,12 @@ public sealed class UniversalBuildService
                     yield return Path.Combine(root, "out");
                     yield return Path.Combine(root, ".output");
                     yield return Path.Combine(root, "wwwroot");
+                    break;
+                case UniversalBuildType.MobileH5:
+                    // uni-app：CLI 产物在 dist/build/h5，HBuilderX 产物在 unpackage/dist/build/h5
+                    yield return Path.Combine(root, "dist", "build", "h5");
+                    yield return Path.Combine(root, "dist", "h5");
+                    yield return Path.Combine(root, "unpackage", "dist", "build", "h5");
                     break;
                 case UniversalBuildType.JavaMaven:
                     yield return Path.Combine(root, "target");
@@ -896,7 +922,8 @@ public sealed class UniversalBuildService
         {
             case UniversalBuildType.Web:
             case UniversalBuildType.Node:
-                if (lower.Contains("idealTree") || lower.Contains("resolve")) progress = Math.Max(progress, 10);
+            case UniversalBuildType.MobileH5:
+                if (lower.Contains("idealtree") || lower.Contains("resolve")) progress = Math.Max(progress, 10);
                 else if (lower.Contains("reify") || lower.Contains("fetch")) progress = Math.Max(progress, 30);
                 else if (lower.Contains("build") || lower.Contains("transforming")) progress = Math.Max(progress, 50);
                 else if (lower.Contains("rendering chunks") || lower.Contains("writing")) progress = Math.Max(progress, 80);
@@ -1002,6 +1029,7 @@ public sealed class UniversalBuildService
     {
         [UniversalBuildType.Web] = new[] { (10, 90), (30, 150), (50, 120), (80, 60) },
         [UniversalBuildType.Node] = new[] { (10, 90), (30, 150), (50, 120), (80, 60) },
+        [UniversalBuildType.MobileH5] = new[] { (10, 90), (30, 150), (50, 120), (80, 60) },
         [UniversalBuildType.DotNet] = new[] { (20, 40), (50, 150), (80, 60) },
         [UniversalBuildType.JavaMaven] = new[] { (20, 90), (50, 150), (80, 60) },
         [UniversalBuildType.JavaGradle] = new[] { (20, 60), (50, 150), (80, 60) },

@@ -14,8 +14,8 @@ namespace ConvenientSystem.Service.Common
         /// <summary>保存或清除当前用户的 Access Token。</summary>
         void SaveMyAccessToken(ApifoxAccessTokenSaveRequest request);
 
-        /// <summary>查看当前用户的 Access Token 明文：验证登录密码后解密返回；未配置或密码错误返回 null。</summary>
-        string? RevealMyAccessToken(string password);
+        /// <summary>查看当前用户的 Access Token 明文：验证登录密码后解密返回；未配置或密码错误返回 Ok=false；密文因密钥轮换失效时 Stale=true。</summary>
+        ApifoxAccessTokenRevealResult RevealMyAccessToken(string password);
 
         /// <summary>
         /// 启动 OpenAPI 分批导入任务：按 tag（命名空间/Controller）把文档拆成多个子文档逐批导入，

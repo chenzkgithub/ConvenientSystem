@@ -6,11 +6,14 @@ import { useLockStore } from '@/common/stores/lock'
 import { checkEmailExists, sendRegisterCode, registerAccount } from '@/common/api/register'
 import CommonDialog from '@/common/components/CommonDialog.vue'
 import { useAppVersion } from '@/common/composables/useAppVersion'
-import loginBg from '@/assets/login-bg.jpg'
+import { loadLocalImage } from '@/common/utils/localImage'
 
 const auth = useAuthStore()
 const lock = useLockStore()
 const { data: appVersion, fetch: fetchVersion } = useAppVersion()
+
+// 本机自定义登录背景（IndexedDB；空串用内置默认图）
+const customLoginBg = ref('')
 
 // ===== 账号格式：仅允许字母、数字、中文、_-.@（支持邮箱作为账号） =====
 const ACCOUNT_RE = /^[a-zA-Z0-9\u4e00-\u9fa5_.@-]+$/
@@ -29,6 +32,12 @@ function onAccountInput(val: string) {
 }
 
 onMounted(async () => {
+  // 读取本机自定义登录背景：登录页是匿名页，IndexedDB 同源可读，无需登录态
+  try {
+    const blob = await loadLocalImage('loginBg')
+    if (blob) customLoginBg.value = URL.createObjectURL(blob)
+  } catch { /* 读取失败时使用内置默认背景 */ }
+
   // 恢复记忆的账号
   try {
     const saved = localStorage.getItem(ACCOUNT_KEY)
@@ -263,8 +272,8 @@ async function doRegister() {
       </div>
     </div>
 
-    <!-- ===== 右侧登录表单区（向日葵背景图） ===== -->
-    <div class="login-form-area" :style="{ backgroundImage: `url(${loginBg})` }">
+    <!-- ===== 右侧登录表单区（默认白色，可在个人配置自定义背景图） ===== -->
+    <div class="login-form-area" :style="customLoginBg ? { backgroundImage: `url(${customLoginBg})` } : undefined">
       <div class="login-card">
         <h1 class="form-title">ConvenientSystem</h1>
         <div class="form-tab">用户名登录</div>
@@ -414,13 +423,13 @@ async function doRegister() {
 .brand-footer { position: absolute; bottom: 20px; left: 48px; color: rgba(255,255,255,0.25); font-size: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; }
 .brand-version { opacity: 0.6; }
 
-/* ===== 右侧登录表单区（向日葵背景图） ===== */
+/* ===== 右侧登录表单区（默认白色，有自定义图时被行内样式覆盖） ===== */
 .login-form-area {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-image: url('@/assets/login-bg.jpg');
+  background-color: #fff;
   background-size: cover;
   background-position: center;
   position: relative;
@@ -435,10 +444,10 @@ async function doRegister() {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(15, 23, 42, 0.06);
   box-shadow:
     0 24px 48px rgba(0, 0, 0, 0.15),
-    0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 0 0 1px rgba(15, 23, 42, 0.04),
     0 0 40px rgba(59, 130, 246, 0.18);
   transform: translateY(-6px);
   position: relative;

@@ -18,10 +18,13 @@ function hostGet<T>(url: string, opts?: { silent?: boolean }) {
     : httpGet<T>(url, undefined, undefined, opts)
 }
 
-function hostPost<T>(url: string, body: unknown) {
+/** 请求遮罩选项：noLoading 仅关全局遮罩保留错误提示（页面自带局部 loading 时用）；silent 全静默 */
+type AttendReqOpts = { silent?: boolean; noLoading?: boolean }
+
+function hostPost<T>(url: string, body: unknown, opts?: AttendReqOpts) {
   return IS_DESKTOP_HOST
-    ? localPost<T>(url, body)
-    : httpPost<T>(url, body)
+    ? localPost<T>(url, body, undefined, undefined, opts)
+    : httpPost<T>(url, body, undefined, undefined, opts)
 }
 
 /** 组织架构（snake_case 原始返回）；opts.silent 供本地模式探测（不弹 loading/错误提示） */
@@ -29,9 +32,9 @@ export function getDeptTree(opts?: { silent?: boolean }) {
   return hostGet<DeptViewRaw[]>(`${PREFIX}/GetDeptTree`, opts)
 }
 
-/** 考勤汇总 */
-export function getAttendance(req: RequestDto) {
-  return hostPost<AttendanceRow[]>(`${PREFIX}/GetAttendance`, req)
+/** 考勤汇总；opts.noLoading 供页面局部 v-loading 场景关闭全局遮罩（错误提示保留） */
+export function getAttendance(req: RequestDto, opts?: AttendReqOpts) {
+  return hostPost<AttendanceRow[]>(`${PREFIX}/GetAttendance`, req, opts)
 }
 
 /** 考勤明细 */

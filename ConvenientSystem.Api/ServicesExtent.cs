@@ -353,6 +353,9 @@ namespace ConvenientSystem.Api
             // 好友（搜索/申请/处理/删除；通讯规则校验在 ChatService，实时推送由 Api 层 ChatHub 编排）
             services.AddSingleton<IFriendService, FriendService>();
 
+            // 手机端用户设置（账号级 KV：登录后拉回本地实现聊天背景图/主题/默认彩种跨设备同步）
+            services.AddSingleton<IAppSettingService, AppSettingService>();
+
             // 代码命名转换（百度翻译 API 优先，MyMemory 回退，前端拼音兜底）
             services.AddSingleton<ICodeNamingService, CodeNamingService>();
 

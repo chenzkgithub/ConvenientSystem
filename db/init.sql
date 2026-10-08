@@ -114,6 +114,12 @@ BEGIN
 END
 GO
 
+-- 老库补列：注册来源（新库上方 CREATE TABLE 已含；老库缺列时在此幂等补齐。
+-- 必须放在下方列注释 EXEC 之前——对不存在的列写注释会报错）
+IF COL_LENGTH(N'dbo.SysUser', N'RegisterSource') IS NULL
+    ALTER TABLE dbo.SysUser ADD RegisterSource NVARCHAR(20) NULL;
+GO
+
 EXEC dbo.usp_AddTableComment N'SysUser', N'系统登录用户表';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'Id',          N'主键';
 EXEC dbo.usp_AddColumnComment N'SysUser', N'Account',     N'登录账号';
@@ -1344,6 +1350,7 @@ BEGIN
     (2,  1, N'user-manage:edit',      N'编辑用户',   2),
     (3,  1, N'user-manage:delete',    N'删除用户',   3),
     (4,  1, N'user-manage:reset-pwd', N'重置密码',   4),
+    (89, 1, N'user-manage:restore',   N'恢复用户',   5),
     -- 角色管理
     (5,  2, N'role-manage:add',    N'新增角色',   1),
     (6,  2, N'role-manage:edit',   N'编辑角色',   2),
@@ -2446,7 +2453,16 @@ WHERE r.Code = N'admin' AND m.Name = N'hosts'
   AND NOT EXISTS (SELECT 1 FROM dbo.SysRoleMenu rm WHERE rm.RoleId = r.Id AND rm.MenuId = m.Id);
 GO
 
--- admin 角色自动拥有所有视图权限点（含上方新增的 hosts / hosts:edit）
+-- ========== 老库补齐：用户管理「恢复用户」权限点（行级幂等） ==========
+-- 上方种子段是整表级幂等（表非空则跳过），老库重跑补不进新行；此处按 Name 行级补种。
+-- 补种后由下方「admin 角色自动拥有所有视图权限点」幂等块自动关联 admin，其他角色需在权限设置页手动授权。
+DECLARE @UserManageViewId INT = (SELECT TOP 1 Id FROM dbo.SysView WHERE Name = N'user-manage');
+IF @UserManageViewId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.SysViewPermission WHERE Name = N'user-manage:restore')
+    INSERT INTO dbo.SysViewPermission (ViewId, Name, Title, SortOrder)
+    VALUES (@UserManageViewId, N'user-manage:restore', N'恢复用户', 5);
+GO
+
+-- admin 角色自动拥有所有视图权限点（含上方新增的 hosts / hosts:edit / user-manage:restore）
 INSERT INTO dbo.SysRoleViewPerm (RoleId, ViewPermId)
 SELECT r.Id, vp.Id
 FROM dbo.SysRole r CROSS JOIN dbo.SysViewPermission vp

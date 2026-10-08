@@ -44,7 +44,9 @@ namespace ConvenientSystem.Service.Common
                     Id = u.Id,
                     Account = u.Account,
                     DisplayName = u.DisplayName,
-                    Avatar = u.Avatar,
+                    // 头像为 base64（单用户 10~30KB），列表不返回避免响应体随用户量线性膨胀；
+                    // 编辑弹窗按需经 GetUser 单查。列表头像列前端走首字母回退。
+                    Avatar = null,
                     Phone = u.Phone,
                     Email = u.Email,
                     Remark = u.Remark,
@@ -201,6 +203,48 @@ namespace ConvenientSystem.Service.Common
                 .Where(u => u.Id == id)
                 .ExecuteAffrows();
             _logger.LogInformation("软删除用户 Id={Id} Account={Account}", id, user.Account);
+        }
+
+        public UserManageDto GetUser(Guid id)
+        {
+            var user = _configDb.Select<SysUserEntity>().Where(u => u.Id == id).First()
+                ?? throw new NotFoundException("用户不存在");
+            var myRoleIds = _configDb.Select<SysUserRoleEntity>().Where(ur => ur.UserId == id).ToList()
+                .Select(ur => ur.RoleId).ToList();
+            var roleById = _configDb.Select<SysRoleEntity>().ToDictionary(r => r.Id, r => r.Name);
+            return new UserManageDto
+            {
+                Id = user.Id,
+                Account = user.Account,
+                DisplayName = user.DisplayName,
+                Avatar = user.Avatar,
+                Phone = user.Phone,
+                Email = user.Email,
+                Remark = user.Remark,
+                Enabled = user.Enabled,
+                IsDeleted = user.IsDeleted,
+                CreateTime = user.CreateTime,
+                RegisterSource = user.RegisterSource,
+                RoleIds = myRoleIds,
+                RoleNames = myRoleIds.Where(roleById.ContainsKey).Select(rid => roleById[rid]).ToList(),
+            };
+        }
+
+        public void Restore(Guid id)
+        {
+            var user = _configDb.Select<SysUserEntity>().Where(u => u.Id == id).First()
+                ?? throw new NotFoundException("用户不存在");
+            if (string.Equals(user.Account, BuiltInAdminAccount, StringComparison.OrdinalIgnoreCase))
+                throw new BadRequestException("内置管理员账号无需恢复");
+            if (!user.IsDeleted)
+                return; // 未删除，幂等处理
+
+            _configDb.Update<SysUserEntity>()
+                .Set(u => u.IsDeleted, false)
+                .Set(u => u.Enabled, true)
+                .Where(u => u.Id == id)
+                .ExecuteAffrows();
+            _logger.LogInformation("恢复用户 Id={Id} Account={Account}", id, user.Account);
         }
 
         /// <summary>全量替换用户的角色关联（须在事务内调用）。</summary>
