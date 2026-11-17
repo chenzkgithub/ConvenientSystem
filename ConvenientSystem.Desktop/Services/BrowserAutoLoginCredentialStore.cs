@@ -10,6 +10,8 @@ public sealed class BrowserAutoLoginCredentialStore
 {
     public const string ErpAdapterType = "erp";
     public const string AliyunAdapterType = "aliyun";
+    public const string RabbitMqAdapterType = "rabbitmq";
+    public const string GenericAdapterType = "generic";
 
     private sealed class StoreDocument
     {

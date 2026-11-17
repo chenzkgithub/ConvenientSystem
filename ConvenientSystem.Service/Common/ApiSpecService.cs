@@ -206,7 +206,7 @@ namespace ConvenientSystem.Service.Common
         /// 旧公开 Parse 端点已由后台任务 StartGenerate 取代，本方法仅内部使用。
         /// </summary>
         private ApiSpecDocumentDto ParseCore(string rootDir, string files, string? title, string? baseUrl,
-            string? solutionPath, Action<string, int, int, string>? report)
+            string? solutionPath, Action<string, int, int, string>? report, bool nsEnvPrefix = false)
         {
             var scope = ResolveParseScope(rootDir, solutionPath);
             var dir = scope.RootDir;
@@ -222,6 +222,7 @@ namespace ConvenientSystem.Service.Common
                 Title = string.IsNullOrWhiteSpace(title) ? "ConvenientSystem API" : title.Trim(),
                 Version = "1.0.0",
                 BaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "http://localhost:8030" : baseUrl.Trim().TrimEnd('/'),
+                NamespaceEnvPrefix = nsEnvPrefix,
             };
 
             // 解析每个选中的 Controller（partial 声明按类名合并）
@@ -316,6 +317,7 @@ namespace ConvenientSystem.Service.Common
                 Title = string.IsNullOrWhiteSpace(request.Title) ? doc.Title : request.Title.Trim(),
                 Version = doc.Version,
                 BaseUrl = string.IsNullOrWhiteSpace(request.BaseUrl) ? doc.BaseUrl : request.BaseUrl.Trim().TrimEnd('/'),
+                NamespaceEnvPrefix = request.NamespaceEnvPrefix ?? doc.NamespaceEnvPrefix,
                 Endpoints = FilterEndpoints(doc.Endpoints, keys, null),
                 Types = doc.Types,
                 Warnings = doc.Warnings,
@@ -366,7 +368,7 @@ namespace ConvenientSystem.Service.Common
                             p.Completed = completed;
                             p.Total = total;
                             p.Current = current;
-                        }));
+                        }), req.NamespaceEnvPrefix);
 
                 var exporter = ResolveExporter(req.Format);
                 _center.Update(handle, p =>
@@ -382,6 +384,7 @@ namespace ConvenientSystem.Service.Common
                     Title = doc.Title,
                     Version = doc.Version,
                     BaseUrl = doc.BaseUrl,
+                    NamespaceEnvPrefix = doc.NamespaceEnvPrefix,
                     Endpoints = FilterEndpoints(doc.Endpoints, req.SelectionKeys, null),
                     Types = doc.Types,
                     Warnings = doc.Warnings,

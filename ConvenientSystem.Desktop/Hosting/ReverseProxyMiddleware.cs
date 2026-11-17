@@ -195,6 +195,12 @@ internal sealed class ReverseProxyMiddleware
         foreach (var header in context.Request.Headers)
         {
             if (SkipRequestHeaders.Contains(header.Key)) continue;
+            // 不转发 Sec-WebSocket-* 头：握手参数只属于「浏览器↔本机」这一跳。
+            // ClientWebSocket 连远程时会自动生成自己的 Sec-WebSocket-Key/Version；
+            // 若叠加转发，同名头会被合并成 "key1, key2"，云端校验 Sec-WebSocket-Key
+            // 必须恰好解码为 16 字节 base64 而失败，请求不再被视为 WebSocket 升级，
+            // SignalR 落入长轮询分支直接回 200，客户端报 200 != 101。
+            if (header.Key.StartsWith("Sec-WebSocket", StringComparison.OrdinalIgnoreCase)) continue;
             try { remoteWs.Options.SetRequestHeader(header.Key, header.Value.ToString()); }
             catch { /* 部分头不允许设置（如 Content-Length），忽略 */ }
         }

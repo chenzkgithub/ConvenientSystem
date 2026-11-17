@@ -134,6 +134,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Version { get; set; }
         /// <summary>服务器地址（写进 servers / baseUrl 变量）。</summary>
         public string BaseUrl { get; set; }
+        /// <summary>按命名空间最后一段给路径加 {{变量}} 前缀（如 {{Hangfire}}/api/...，变量前不带斜杠）：Apifox 导入后按环境解析服务地址；为 true 时 OpenAPI 不再输出 servers，避免前置 URL 重复拼接。</summary>
+        public bool NamespaceEnvPrefix { get; set; }
         /// <summary>接口列表（按 Controller 分组排序）。</summary>
         public List<ApiSpecEndpointDto> Endpoints { get; set; } = new();
         /// <summary>引用到的 DTO 类型（键为类型名，含递归依赖）。</summary>
@@ -175,6 +177,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Format { get; set; } = "";
         public string? Title { get; set; }
         public string? BaseUrl { get; set; }
+        /// <summary>按命名空间最后一段给路径加 {{变量}} 环境变量前缀（默认 false）。</summary>
+        public bool NamespaceEnvPrefix { get; set; }
         /// <summary>原始解决方案文件或目录路径，用于保持扫描与解析的项目范围一致。</summary>
         public string? SolutionPath { get; set; }
         /// <summary>扫描期返回的稳定接口选择标识集合（筛选导出范围）。</summary>
@@ -189,6 +193,8 @@ namespace ConvenientSystem.Shared.Model.Common
         public string Format { get; set; } = "";
         public string? Title { get; set; }
         public string? BaseUrl { get; set; }
+        /// <summary>重导出时是否按命名空间加 {{变量}} 前缀；null 保持生成时的设置。</summary>
+        public bool? NamespaceEnvPrefix { get; set; }
     }
 
     /// <summary>扫描任务的完成结果（AsyncTaskDto.Result 载体）。</summary>

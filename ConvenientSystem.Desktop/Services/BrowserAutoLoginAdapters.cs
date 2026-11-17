@@ -46,6 +46,51 @@ public sealed class AliyunBrowserAutoLoginAdapter : IBrowserAutoLoginAdapter
     }
 }
 
+/// <summary>向 RabbitMQ 管理后台发送账号密码填充和登录指令。</summary>
+public sealed class RabbitMqBrowserAutoLoginAdapter : IBrowserAutoLoginAdapter
+{
+    public string AdapterType => BrowserAutoLoginCredentialStore.RabbitMqAdapterType;
+    public string DisplayName => "RabbitMQ管理后台登录";
+
+    public bool CanHandle(Uri target) => true;
+
+    public Task<BrowserAutoLoginAttemptResult> LoginAsync(
+        Uri target,
+        BrowserAutoLoginSiteCredential credential,
+        Func<string, string?>? requestVerifyCode,
+        CancellationToken cancellationToken)
+    {
+        var result = BrowserAutoLoginResult.FillPage(
+            new BrowserAutoLoginPageAction(AdapterType, credential.UserName, credential.Password),
+            "RabbitMQ 登录已提交。");
+        return Task.FromResult(new BrowserAutoLoginAttemptResult(result));
+    }
+}
+
+/// <summary>
+/// 通用账号密码登录：不依赖站点专属选择器，由浏览器端启发式识别页面上的
+/// 用户名/密码输入框并填充提交，覆盖无专属适配器的标准登录表单站点。
+/// </summary>
+public sealed class GenericBrowserAutoLoginAdapter : IBrowserAutoLoginAdapter
+{
+    public string AdapterType => BrowserAutoLoginCredentialStore.GenericAdapterType;
+    public string DisplayName => "通用账号密码登录";
+
+    public bool CanHandle(Uri target) => true;
+
+    public Task<BrowserAutoLoginAttemptResult> LoginAsync(
+        Uri target,
+        BrowserAutoLoginSiteCredential credential,
+        Func<string, string?>? requestVerifyCode,
+        CancellationToken cancellationToken)
+    {
+        var result = BrowserAutoLoginResult.FillPage(
+            new BrowserAutoLoginPageAction(AdapterType, credential.UserName, credential.Password),
+            "已填充账号密码并提交登录，如出现验证请按页面提示完成。");
+        return Task.FromResult(new BrowserAutoLoginAttemptResult(result));
+    }
+}
+
 /// <summary>通过 ERP 验证码及密码加密接口完成登录。</summary>
 public sealed class ErpBrowserAutoLoginAdapter : IBrowserAutoLoginAdapter
 {

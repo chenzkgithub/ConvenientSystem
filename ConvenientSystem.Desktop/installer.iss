@@ -27,6 +27,9 @@ SolidCompression=yes
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 DisableProgramGroupPage=yes
+; Inno Setup 6.3+ 该项默认 auto：检测到已安装过就跳过目录选择页，导致覆盖安装/更新时无法改安装位置。
+; 显式设为 no 始终显示；UsePreviousAppDir 默认 yes 会预填上次安装目录，升级时直接下一步仍装回原处。
+DisableDirPage=no
 PrivilegesRequired=admin
 
 ; 安装到 C:\Program Files\ConvenientSystem 需要管理员权限

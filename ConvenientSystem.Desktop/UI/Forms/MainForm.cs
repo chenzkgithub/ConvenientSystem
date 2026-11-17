@@ -68,6 +68,8 @@ public sealed class MainForm : Form
     private readonly LauncherStoreFactory _storeFactory;
     private readonly BrowserAutoLoginCredentialStore _autoLoginCredentialStore;
     private readonly BrowserAutoLoginCoordinator _autoLoginCoordinator;
+    // 小昀工具箱免扫码启动：悬浮按钮右键菜单触发
+    private readonly XiaoYunToolsAutoLoginService _xiaoyunAutoLogin;
     private BrowserAutoLoginSettingsDialog? _autoLoginSettingsDialog;
 
     private readonly IServiceProvider _services;
@@ -82,6 +84,7 @@ public sealed class MainForm : Form
         SystemHelpDialog helpDialog,
         BrowserAutoLoginCredentialStore autoLoginCredentialStore,
         BrowserAutoLoginCoordinator autoLoginCoordinator,
+        XiaoYunToolsAutoLoginService xiaoyunAutoLogin,
         IServiceProvider services)
     {
         _webHost = webHost;
@@ -93,6 +96,7 @@ public sealed class MainForm : Form
         _helpDialog = helpDialog;
         _autoLoginCredentialStore = autoLoginCredentialStore;
         _autoLoginCoordinator = autoLoginCoordinator;
+        _xiaoyunAutoLogin = xiaoyunAutoLogin;
         _services = services;
 
         _autoLoginCoordinator.ConfigureUi(PromptAutoLoginSettings, PromptAutoLoginCaptcha);
@@ -477,6 +481,8 @@ public sealed class MainForm : Form
             },
             AutoLoginSettingsAction = () => PromptAutoLoginSettings(string.Empty),
             RefreshIndexAction = () => _fileIndex?.ForceRebuild(),
+            // 免扫码启动内部自兜底（任何失败均回退原样启动），此处安全地 fire-and-forget
+            XiaoYunToolsLaunchAction = testMode => _ = _xiaoyunAutoLogin.LaunchAsync(testMode),
             SystemHelpAction = ShowSystemHelpDialog,
             CloseAllWindowsAction = () =>
             {
@@ -515,7 +521,7 @@ public sealed class MainForm : Form
         _autoLoginSettingsDialog = dialog;
         try
         {
-            return dialog.ShowDialog() == DialogResult.OK;
+            return dialog.ShowDialog(this) == DialogResult.OK;
         }
         finally
         {
@@ -856,8 +862,9 @@ public sealed class MainForm : Form
     /// <summary>显示并激活主窗口（若最小化则先还原）。</summary>
     private void ActivateMainWindow()
     {
+        // ShowInTaskbar 恒为 true（构造时设置）：隐藏中没有任务栏按钮，无需再切换；
+        // 来回切换会重建句柄，与 HideToTray 注释中描述的残影问题是同一原因。
         _allowVisible = true;
-        ShowInTaskbar = true;
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         if (!Visible) Show();
         Activate();
@@ -1034,9 +1041,11 @@ public sealed class MainForm : Form
     /// <summary>隐藏主窗口到系统托盘。</summary>
     private void HideToTray()
     {
+        // 不能在这里切换 ShowInTaskbar：运行期修改该属性会销毁并重建窗口句柄，
+        // 窗口处于最大化时重建会以 SW_MAXIMIZE 把新句柄重新显示出来（WinForms 仍认为
+        // Visible=false），留下一个永不消失的白色空窗口。窗口隐藏后本来也没有任务栏按钮。
         _allowVisible = false;
         Hide();
-        ShowInTaskbar = false;
         _tray?.ShowBalloonTip(2000, "ConvenientSystem", "程序已最小化到系统托盘，双击图标可打开主界面。", ToolTipIcon.Info);
     }
 

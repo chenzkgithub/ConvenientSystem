@@ -61,19 +61,18 @@ public sealed class BrowserForm : Form, ILockable
     public CoreWebView2 Core => _webView.CoreWebView2;
 
     /// <summary>
-    /// 居中摆放独立窗口，默认固定尺寸 950×680（用户手动调整后的常用大小）。
-    /// 工作区放不下（小屏/远程桌面分辨率过低）时回退为工作区的 80%，保证窗口始终完整可见。
+    /// 按主窗口的常规尺寸（最大化/最小化时取还原尺寸）居中摆放独立窗口，
+    /// 超出当前屏幕工作区时收缩到工作区内，保证窗口始终完整可见。
     /// </summary>
     public void SizeToWorkingArea()
     {
         var wa = Screen.FromHandle(Handle).WorkingArea;
-        // 默认固定 950×680；仅当工作区小于该尺寸时才退化为 80% 自适应
-        int w = 950, h = 680;
-        if (w > wa.Width || h > wa.Height)
-        {
-            w = (int)(wa.Width * 0.8);
-            h = (int)(wa.Height * 0.8);
-        }
+        var mainForm = Application.OpenForms.OfType<MainForm>().FirstOrDefault();
+        var size = mainForm is null
+            ? new Size(1280, 820)
+            : mainForm.WindowState == FormWindowState.Normal ? mainForm.Size : mainForm.RestoreBounds.Size;
+        int w = Math.Min(size.Width, wa.Width);
+        int h = Math.Min(size.Height, wa.Height);
         StartPosition = FormStartPosition.Manual;
         Bounds = new Rectangle(
             wa.X + (wa.Width - w) / 2,
@@ -180,13 +179,22 @@ public sealed class BrowserForm : Form, ILockable
 
             if (result.PageAction is not null)
             {
-                if (!await FillPageAsync(core, result.PageAction))
+                var outcome = await FillPageAsync(core, result.PageAction);
+                if (outcome == PageFillOutcome.NotFound)
                 {
                     MessageBox.Show(this,
-                        "未找到支持的账号密码登录表单，请切换到账号登录后重试。",
+                        "未找到账号密码登录表单，请确认当前页面为账号密码登录页后重试。",
                         "自动登录",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
+                }
+                else if (outcome == PageFillOutcome.FilledOnly)
+                {
+                    MessageBox.Show(this,
+                        "已填充账号密码，未识别到登录按钮，请手动点击登录。",
+                        "自动登录",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
                 }
                 return;
             }
@@ -225,28 +233,64 @@ public sealed class BrowserForm : Form, ILockable
         frame.Destroyed += (_, _) => _frames.Remove(frame);
     }
 
-    private async Task<bool> FillPageAsync(CoreWebView2 core, BrowserAutoLoginPageAction action)
+    private enum PageFillOutcome { NotFound, FilledOnly, Submitted }
+
+    private async Task<PageFillOutcome> FillPageAsync(CoreWebView2 core, BrowserAutoLoginPageAction action)
     {
-        if (!action.AdapterType.Equals(
+        if (action.AdapterType.Equals(
+                BrowserAutoLoginCredentialStore.GenericAdapterType,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return await FillGenericPageAsync(core, action);
+        }
+
+        string? requiredHost;
+        string userNameSelector;
+        string passwordSelector;
+        string submitSelector;
+        if (action.AdapterType.Equals(
                 BrowserAutoLoginCredentialStore.AliyunAdapterType,
                 StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            requiredHost = "passport.aliyun.com";
+            userNameSelector = "#fm-login-id";
+            passwordSelector = "#fm-login-password";
+            submitSelector = ".fm-button.fm-submit.password-login";
+        }
+        else if (action.AdapterType.Equals(
+                     BrowserAutoLoginCredentialStore.RabbitMqAdapterType,
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            requiredHost = null;
+            userNameSelector = "#login input[name=\"username\"]";
+            passwordSelector = "#login input[name=\"password\"]";
+            submitSelector = "#login input[type=\"submit\"][value=\"Login\"]";
+        }
+        else
+        {
+            return PageFillOutcome.NotFound;
         }
 
-        const string detectScript = """
-            (() => location.hostname === 'passport.aliyun.com' &&
-                Boolean(document.querySelector('#fm-login-id')) &&
-                Boolean(document.querySelector('#fm-login-password')) &&
-                Boolean(document.querySelector('.fm-button.fm-submit.password-login')))()
+        var requiredHostJson = System.Text.Json.JsonSerializer.Serialize(requiredHost);
+        var userNameSelectorJson = System.Text.Json.JsonSerializer.Serialize(userNameSelector);
+        var passwordSelectorJson = System.Text.Json.JsonSerializer.Serialize(passwordSelector);
+        var submitSelectorJson = System.Text.Json.JsonSerializer.Serialize(submitSelector);
+        var detectScript = $$"""
+            (() => {
+              const requiredHost = {{requiredHostJson}};
+              return (!requiredHost || location.hostname === requiredHost) &&
+                Boolean(document.querySelector({{userNameSelectorJson}})) &&
+                Boolean(document.querySelector({{passwordSelectorJson}})) &&
+                Boolean(document.querySelector({{submitSelectorJson}}));
+            })()
             """;
-        var userName = System.Text.Json.JsonSerializer.Serialize(action.UserName);
-        var password = System.Text.Json.JsonSerializer.Serialize(action.Password);
+        var userNameValue = System.Text.Json.JsonSerializer.Serialize(action.UserName);
+        var passwordValue = System.Text.Json.JsonSerializer.Serialize(action.Password);
         var fillScript = $$"""
             (async () => {
-              const userNameInput = document.querySelector('#fm-login-id');
-              const passwordInput = document.querySelector('#fm-login-password');
-              const submitButton = document.querySelector('.fm-button.fm-submit.password-login');
+              const userNameInput = document.querySelector({{userNameSelectorJson}});
+              const passwordInput = document.querySelector({{passwordSelectorJson}});
+              const submitButton = document.querySelector({{submitSelectorJson}});
               if (!userNameInput || !passwordInput || !submitButton) return false;
 
               const setValue = (input, value) => {
@@ -257,8 +301,8 @@ public sealed class BrowserForm : Form, ILockable
                 input.dispatchEvent(new Event('change', { bubbles: true }));
               };
 
-              setValue(userNameInput, {{userName}});
-              setValue(passwordInput, {{password}});
+              setValue(userNameInput, {{userNameValue}});
+              setValue(passwordInput, {{passwordValue}});
               await new Promise(resolve => setTimeout(resolve, 100));
               submitButton.click();
               return true;
@@ -268,7 +312,9 @@ public sealed class BrowserForm : Form, ILockable
         try
         {
             if (IsTrueScriptResult(await core.ExecuteScriptAsync(detectScript)))
-                return IsTrueScriptResult(await core.ExecuteScriptAsync(fillScript));
+                return IsTrueScriptResult(await core.ExecuteScriptAsync(fillScript))
+                    ? PageFillOutcome.Submitted
+                    : PageFillOutcome.NotFound;
         }
         catch
         {
@@ -280,7 +326,9 @@ public sealed class BrowserForm : Form, ILockable
             try
             {
                 if (!IsTrueScriptResult(await frame.ExecuteScriptAsync(detectScript))) continue;
-                return IsTrueScriptResult(await frame.ExecuteScriptAsync(fillScript));
+                return IsTrueScriptResult(await frame.ExecuteScriptAsync(fillScript))
+                    ? PageFillOutcome.Submitted
+                    : PageFillOutcome.NotFound;
             }
             catch
             {
@@ -288,7 +336,117 @@ public sealed class BrowserForm : Form, ILockable
             }
         }
 
-        return false;
+        return PageFillOutcome.NotFound;
+    }
+
+    /// <summary>
+    /// 通用适配器填充：无站点专属选择器，在页面内启发式识别登录表单——
+    /// 可见密码框 → 同 form（或全文档）内按 name/id/placeholder/autocomplete 等线索
+    /// 打分挑出用户名输入框 → form 内 submit 按钮或含“登录/Login”字样的按钮。
+    /// 脚本返回 0=未找到表单、1=已填充未提交、2=已填充并提交。
+    /// </summary>
+    private async Task<PageFillOutcome> FillGenericPageAsync(CoreWebView2 core, BrowserAutoLoginPageAction action)
+    {
+        var userNameValue = System.Text.Json.JsonSerializer.Serialize(action.UserName);
+        var passwordValue = System.Text.Json.JsonSerializer.Serialize(action.Password);
+        var fillScript = $$"""
+            (async () => {
+              const visible = el => !el.disabled && el.getClientRects().length > 0;
+              const findControls = () => {
+                const skipTypes = ['hidden', 'password', 'checkbox', 'radio', 'submit', 'button', 'file', 'image', 'reset'];
+                const hintRe = /(user|account|login|email|phone|mobile|name)/i;
+                const badRe = /(password|passcode|验证码|captcha)/i;
+                const passwords = Array.from(document.querySelectorAll('input[type="password"]')).filter(visible);
+                for (const password of passwords) {
+                  const scope = password.closest('form') || document;
+                  let userName = null;
+                  let bestScore = -1;
+                  for (const el of Array.from(scope.querySelectorAll('input'))) {
+                    if (el === password || !visible(el)) continue;
+                    const type = (el.getAttribute('type') || 'text').toLowerCase();
+                    if (skipTypes.includes(type)) continue;
+                    const text = [el.name, el.id, el.placeholder, el.autocomplete,
+                      el.getAttribute('aria-label'), el.className].filter(Boolean).join(' ');
+                    let score = 0;
+                    if (el.autocomplete === 'username') score += 20;
+                    if (hintRe.test(text)) score += 10;
+                    if (el.compareDocumentPosition(password) & Node.DOCUMENT_POSITION_FOLLOWING) score += 5;
+                    if (badRe.test(text)) score -= 30;
+                    if (score > bestScore) { bestScore = score; userName = el; }
+                  }
+                  if (!userName) continue;
+
+                  const form = password.closest('form');
+                  let submit = null;
+                  if (form) {
+                    submit = form.querySelector('input[type="submit"], button[type="submit"]') ||
+                      Array.from(form.querySelectorAll('button, input[type="button"]'))
+                        .find(b => /登录|登陆|login|sign\s*in/i.test(`${b.textContent || ''}${b.value || ''}`));
+                  }
+                  if (!submit) {
+                    const container = password.closest('div, section, fieldset');
+                    submit = container && container.querySelector('button:not([disabled])');
+                  }
+                  return { userName, password, submit };
+                }
+                return null;
+              };
+
+              const controls = findControls();
+              if (!controls) return 0;
+
+              const setValue = (input, value) => {
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+                if (setter) setter.call(input, value);
+                else input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              };
+
+              setValue(controls.userName, {{userNameValue}});
+              setValue(controls.password, {{passwordValue}});
+              await new Promise(resolve => setTimeout(resolve, 100));
+              if (controls.submit) {
+                controls.submit.click();
+                return 2;
+              }
+              return 1;
+            })()
+            """;
+
+        string RunOutcome(string scriptResult) => scriptResult switch
+        {
+            "2" => "submitted",
+            "1" => "filled",
+            _ => "none",
+        };
+
+        try
+        {
+            var outcome = RunOutcome(await core.ExecuteScriptAsync(fillScript));
+            if (outcome != "none")
+                return outcome == "submitted" ? PageFillOutcome.Submitted : PageFillOutcome.FilledOnly;
+        }
+        catch
+        {
+            // 顶层页面导航过程中可能暂时无法执行脚本，继续检查登录 iframe。
+        }
+
+        foreach (var frame in _frames.ToArray())
+        {
+            try
+            {
+                var outcome = RunOutcome(await frame.ExecuteScriptAsync(fillScript));
+                if (outcome == "none") continue;
+                return outcome == "submitted" ? PageFillOutcome.Submitted : PageFillOutcome.FilledOnly;
+            }
+            catch
+            {
+                // iframe 在页面切换时可能已销毁，忽略并继续检查其余 frame。
+            }
+        }
+
+        return PageFillOutcome.NotFound;
     }
 
     private static bool IsTrueScriptResult(string result)

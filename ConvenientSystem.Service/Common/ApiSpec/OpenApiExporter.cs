@@ -37,8 +37,11 @@ namespace ConvenientSystem.Service.Common.ApiSpec
                     ["version"] = doc.Version,
                     ["description"] = $"由 ConvenientSystem API 文档生成器从 C# Controller 源码生成，共 {doc.Endpoints.Count} 个接口。",
                 },
-                ["servers"] = new JsonArray { new JsonObject { ["url"] = doc.BaseUrl } },
             };
+            // 前缀模式下路径已内嵌 {{命名空间变量}}（Apifox 按环境解析服务地址），
+            // 不再输出 servers，避免导入后又被设置成前置 URL 造成双重拼接。
+            if (!doc.NamespaceEnvPrefix)
+                root["servers"] = new JsonArray { new JsonObject { ["url"] = doc.BaseUrl } };
 
             // tags：命名空间/Controller 两层分组（Apifox 导入时 tag 中的 / 生成嵌套目录：命名空间目录下建 Controller 子目录）
             var tags = new JsonArray();
@@ -50,10 +53,11 @@ namespace ConvenientSystem.Service.Common.ApiSpec
             var paths = new JsonObject();
             foreach (var ep in doc.Endpoints)
             {
-                if (paths[ep.Path] is not JsonObject pathItem)
+                var pathKey = PathOf(doc, ep);
+                if (paths[pathKey] is not JsonObject pathItem)
                 {
                     pathItem = new JsonObject();
-                    paths[ep.Path] = pathItem;
+                    paths[pathKey] = pathItem;
                 }
 
                 var operation = new JsonObject
@@ -166,6 +170,19 @@ namespace ConvenientSystem.Service.Common.ApiSpec
         /// <summary>tag 取名：有命名空间时 "命名空间/Controller"（Apifox 导入生成嵌套目录）；无则退化为 Controller 名。</summary>
         private static string TagOf(ApiSpecEndpointDto ep)
             => string.IsNullOrEmpty(ep.Namespace) ? ep.Group : $"{ep.Namespace}/{ep.Group}";
+
+        /// <summary>
+        /// 前缀模式下的请求路径：{{命名空间最后一段}} + 原路径（如 {{Hangfire}}/api/Hangfire/Jobs/...，变量前不带斜杠），
+        /// Apifox 导入后按当前环境解析变量；命名空间为空的接口保持原路径不加前缀。
+        /// </summary>
+        private static string PathOf(ApiSpecDocumentDto doc, ApiSpecEndpointDto ep)
+        {
+            if (!doc.NamespaceEnvPrefix || string.IsNullOrWhiteSpace(ep.Namespace))
+                return ep.Path;
+            var ns = ep.Namespace;
+            var last = ns[(ns.LastIndexOf('.') + 1)..];
+            return string.IsNullOrEmpty(last) ? ep.Path : $"{{{{{last}}}}}{ep.Path}";
+        }
     }
 
     /// <summary>OpenAPI 3.0 JSON 导出器（缩进 2 空格）。</summary>

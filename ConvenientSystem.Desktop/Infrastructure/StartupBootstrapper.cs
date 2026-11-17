@@ -69,7 +69,10 @@ internal sealed class StartupBootstrapper
                 services.AddSingleton<BrowserAutoLoginOcrService>();
                 services.AddSingleton<IBrowserAutoLoginAdapter, ErpBrowserAutoLoginAdapter>();
                 services.AddSingleton<IBrowserAutoLoginAdapter, AliyunBrowserAutoLoginAdapter>();
+                services.AddSingleton<IBrowserAutoLoginAdapter, RabbitMqBrowserAutoLoginAdapter>();
+                services.AddSingleton<IBrowserAutoLoginAdapter, GenericBrowserAutoLoginAdapter>();
                 services.AddSingleton<BrowserAutoLoginCoordinator>();
+                services.AddSingleton<XiaoYunToolsAutoLoginService>();
                 services.AddSingleton<DesktopUpdateChecker>();
                 services.AddSingleton<WebHostService>();
                 services.AddHostedService(sp => sp.GetRequiredService<WebHostService>());
@@ -94,6 +97,7 @@ internal sealed class StartupBootstrapper
                     sp.GetRequiredService<SystemHelpDialog>(),
                     sp.GetRequiredService<BrowserAutoLoginCredentialStore>(),
                     sp.GetRequiredService<BrowserAutoLoginCoordinator>(),
+                    sp.GetRequiredService<XiaoYunToolsAutoLoginService>(),
                     sp));
                 services.AddSingleton(sp => new SystemHelpDialog(
                     sp.GetRequiredService<IWritableOptions<AppSettings>>()));

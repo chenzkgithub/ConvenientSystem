@@ -57,6 +57,11 @@ public sealed class FloatingButton : Form
     [Browsable(false)]
     public Action? RefreshIndexAction { get; set; }
 
+    /// <summary>小昀工具箱免扫码启动回调（参数：是否以测试模式启动）。</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [Browsable(false)]
+    public Action<bool>? XiaoYunToolsLaunchAction { get; set; }
+
     /// <summary>系统帮助（版本信息 + 检查更新）回调。</summary>
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     [Browsable(false)]
@@ -267,6 +272,16 @@ public sealed class FloatingButton : Form
         var refreshItem = new ToolStripMenuItem("刷新文件索引");
         refreshItem.Click += (_, _) => RefreshIndexAction?.Invoke();
         _selfMenu.Items.Add(refreshItem);
+
+        // 小昀工具箱归为一个类目，放在“关闭悬浮按钮”上方的功能区末尾
+        var xiaoyunItem = new ToolStripMenuItem("小昀工具箱");
+        var xiaoyunNormalItem = new ToolStripMenuItem("免扫码启动");
+        xiaoyunNormalItem.Click += (_, _) => XiaoYunToolsLaunchAction?.Invoke(false);
+        xiaoyunItem.DropDownItems.Add(xiaoyunNormalItem);
+        var xiaoyunTestItem = new ToolStripMenuItem("免扫码启动（测试模式）");
+        xiaoyunTestItem.Click += (_, _) => XiaoYunToolsLaunchAction?.Invoke(true);
+        xiaoyunItem.DropDownItems.Add(xiaoyunTestItem);
+        _selfMenu.Items.Add(xiaoyunItem);
 
         _selfMenu.Items.Add(new ToolStripSeparator());
 
@@ -639,6 +654,8 @@ public sealed class FloatingButton : Form
     /// <summary>使用 Win32 API 强制置顶窗口。</summary>
     private void ForceTopMost()
     {
+        // 模态对话框操作期间不调整 Z 序，否则可能把对话框的下拉列表压到后面，表现为下拉"闪一下就没了"。
+        if (Form.ActiveForm is { Modal: true }) return;
         if (IsHandleCreated && !IsDisposed)
             SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }

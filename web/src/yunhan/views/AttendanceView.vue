@@ -26,6 +26,8 @@ const activeFullCode = ref('')
 const currentNodeId = ref<number>()
 const expandedKeys = ref<number[]>([])
 const treeProps = { label: 'name', children: 'children' }
+// 组织架构局部加载态：桌面端探测请求为 silent 不触发全局遮罩，进入页面时需在树区域就地转圈
+const treeLoading = ref(false)
 
 // ========== 汇总表 ==========
 const detailList = ref<AttendanceRow[]>([]) // 当前部门原始明细
@@ -176,14 +178,18 @@ function groupSum(list: AttendanceRow[]): AttendanceRow[] {
 // ========== 数据加载 ==========
 /** 加载组织架构；返回是否成功。opts.silent 供桌面端本地模式探测（不弹 loading/错误提示） */
 async function loadDeptTree(opts?: { silent?: boolean }): Promise<boolean> {
+  treeLoading.value = true
   try {
-    const json = await getDeptTree(opts)
+    // noLoading：全局遮罩交给树区域局部 v-loading 呈现，避免与表格转圈叠加；错误提示仍由 request.ts 弹出
+    const json = await getDeptTree({ noLoading: true, ...opts })
     treeData.value = Array.isArray(json) ? listToTree(json) : []
     return true
   } catch {
     /* 错误提示由 request.ts 负责（silent 探测时静默，交给引导页兜底说明） */
     treeData.value = []
     return false
+  } finally {
+    treeLoading.value = false
   }
 }
 
@@ -317,13 +323,19 @@ async function bootstrap() {
     localModeDown.value = true
     return
   }
+  // 表格数据依赖组织架构，进入页面即开始转圈，直到首次汇总查询结束
+  tableLoading.value = true
   const ok = await loadDeptTree(IS_DESKTOP_HOST ? { silent: true } : undefined)
   if (!ok) {
+    tableLoading.value = false
     // Web 端失败已由 request.ts 弹错；桌面端静默探测失败 = 未配置内网库 → 引导页
     if (IS_DESKTOP_HOST) localModeDown.value = true
     return
   }
-  if (!treeData.value.length) return
+  if (!treeData.value.length) {
+    tableLoading.value = false
+    return
+  }
   const target = findNodeByName(treeData.value, DEFAULT_DEPT_NAME) ?? treeData.value[0]
   currentNodeId.value = target.id
   expandedKeys.value = [...collectParentIds(treeData.value, target.id), target.id]
@@ -391,7 +403,7 @@ onMounted(() => {
       <!-- 组织架构 -->
       <div class="left-tree">
         <div class="tree-title">组织架构</div>
-        <div class="tree-scroll">
+        <div class="tree-scroll" v-loading="treeLoading">
           <el-tree
             v-if="treeData.length"
             :data="treeData"

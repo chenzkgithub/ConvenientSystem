@@ -3,6 +3,19 @@ namespace ConvenientSystem;
 /// <summary>在单个窗口内维护按网站地址唯一的自动登录配置。</summary>
 internal sealed class BrowserAutoLoginSettingsDialog : Form
 {
+    private const int FormWidth = 900;
+    private const int Gutter = 20;
+    private const int ContentTop = 48;
+    private const int ContentHeight = 400;
+    private const int GridWidth = 420;
+    private const int PanelLeft = Gutter + GridWidth + 16;
+    private const int PanelWidth = FormWidth - Gutter - PanelLeft;
+    private const int ButtonWidth = 88;
+    private const int ButtonGap = 8;
+    private const int FieldLabelLeft = 20;
+    private const int FieldInputLeft = 100;
+    private const int FieldInputWidth = PanelWidth - FieldInputLeft - 20;
+
     private readonly BrowserAutoLoginCredentialStore _store;
     private readonly bool _closeAfterSave;
     private readonly DataGridView _siteGrid;
@@ -30,48 +43,35 @@ internal sealed class BrowserAutoLoginSettingsDialog : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = true;
-        TopMost = true;
-        ClientSize = new Size(940, 525);
+        ClientSize = new Size(FormWidth, 520);
         BackColor = Color.White;
         Font = new Font("Microsoft YaHei UI", 9F);
 
         Controls.Add(new Label
         {
             Text = "每个网站地址仅绑定一个账号。密码使用 Windows DPAPI 加密，仅当前 Windows 用户可解密。",
-            Bounds = new Rectangle(24, 18, 860, 26),
-            ForeColor = Color.FromArgb(80, 80, 80),
+            Bounds = new Rectangle(Gutter, 14, FormWidth - Gutter * 2, 24),
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.FromArgb(100, 100, 100),
         });
 
         _siteGrid = CreateSiteGrid();
         Controls.Add(_siteGrid);
 
-        var addButton = CreateButton("新增", 24, 430, false);
-        addButton.Click += (_, _) => BeginNewSite();
-        Controls.Add(addButton);
-
-        var deleteButton = CreateButton("删除", 118, 430, false);
-        deleteButton.Click += (_, _) => DeleteSelectedSite();
-        Controls.Add(deleteButton);
-
         var editorGroup = new GroupBox
         {
             Text = "网站登录信息",
-            Bounds = new Rectangle(460, 52, 456, 410),
+            Bounds = new Rectangle(PanelLeft, ContentTop, PanelWidth, ContentHeight),
         };
         Controls.Add(editorGroup);
 
-        _nameTextBox = AddTextField(editorGroup, "网站名称", 34);
-        _addressTextBox = AddTextField(editorGroup, "网站地址", 82);
+        _nameTextBox = AddTextField(editorGroup, "网站名称", 0);
+        _addressTextBox = AddTextField(editorGroup, "网站地址", 1);
 
-        editorGroup.Controls.Add(new Label
-        {
-            Text = "登录方式",
-            Bounds = new Rectangle(24, 130, 82, 27),
-            TextAlign = ContentAlignment.MiddleLeft,
-        });
+        AddFieldLabel(editorGroup, "登录方式", 2);
         _adapterComboBox = new ComboBox
         {
-            Bounds = new Rectangle(116, 130, 312, 28),
+            Bounds = new Rectangle(FieldInputLeft, FieldTop(2), FieldInputWidth, 27),
             DropDownStyle = ComboBoxStyle.DropDownList,
             DisplayMember = nameof(BrowserAutoLoginAdapterOption.DisplayName),
             ValueMember = nameof(BrowserAutoLoginAdapterOption.AdapterType),
@@ -79,14 +79,15 @@ internal sealed class BrowserAutoLoginSettingsDialog : Form
         };
         editorGroup.Controls.Add(_adapterComboBox);
 
-        _userNameTextBox = AddTextField(editorGroup, "账号", 178);
-        _passwordTextBox = AddTextField(editorGroup, "密码", 226);
+        _userNameTextBox = AddTextField(editorGroup, "账号", 3);
+        _passwordTextBox = AddTextField(editorGroup, "密码", 4);
         _passwordTextBox.UseSystemPasswordChar = true;
 
+        var optionTop = FieldTop(5) - 6;
         var showPassword = new CheckBox
         {
             Text = "显示密码",
-            Bounds = new Rectangle(116, 262, 100, 26),
+            Bounds = new Rectangle(FieldInputLeft, optionTop, 96, 26),
         };
         showPassword.CheckedChanged += (_, _) => _passwordTextBox.UseSystemPasswordChar = !showPassword.Checked;
         editorGroup.Controls.Add(showPassword);
@@ -94,20 +95,37 @@ internal sealed class BrowserAutoLoginSettingsDialog : Form
         _enabledCheckBox = new CheckBox
         {
             Text = "启用此网站的自动登录",
-            Bounds = new Rectangle(244, 262, 190, 26),
+            Bounds = new Rectangle(FieldInputLeft + 110, optionTop, FieldInputWidth - 110, 26),
             Checked = true,
         };
         editorGroup.Controls.Add(_enabledCheckBox);
 
-        var saveButton = CreateButton("保存配置", 242, 324, true);
+        editorGroup.Controls.Add(new Label
+        {
+            Text = "网站地址不带端口时匹配该主机的任意端口；带端口时仅匹配该端口，且优先于任意端口的配置。",
+            Bounds = new Rectangle(FieldInputLeft, optionTop + 40, FieldInputWidth, 44),
+            ForeColor = Color.FromArgb(130, 130, 130),
+        });
+
+        var buttonTop = ContentTop + ContentHeight + 16;
+
+        var addButton = CreateButton("新增", Gutter, buttonTop, false);
+        addButton.Click += (_, _) => BeginNewSite();
+        Controls.Add(addButton);
+
+        var deleteButton = CreateButton("删除", Gutter + ButtonWidth + ButtonGap, buttonTop, false);
+        deleteButton.Click += (_, _) => DeleteSelectedSite();
+        Controls.Add(deleteButton);
+
+        var saveButton = CreateButton("保存配置", PanelLeft, buttonTop, true);
         saveButton.Click += OnSaveClick;
-        editorGroup.Controls.Add(saveButton);
+        Controls.Add(saveButton);
 
-        var resetButton = CreateButton("取消编辑", 336, 324, false);
+        var resetButton = CreateButton("取消编辑", PanelLeft + ButtonWidth + ButtonGap, buttonTop, false);
         resetButton.Click += (_, _) => LoadSelectedSiteOrNew();
-        editorGroup.Controls.Add(resetButton);
+        Controls.Add(resetButton);
 
-        var closeButton = CreateButton("关闭", 828, 477, true);
+        var closeButton = CreateButton("关闭", FormWidth - Gutter - ButtonWidth, buttonTop, false);
         closeButton.Click += (_, _) =>
         {
             DialogResult = _changed ? DialogResult.OK : DialogResult.Cancel;
@@ -124,36 +142,41 @@ internal sealed class BrowserAutoLoginSettingsDialog : Form
     {
         var grid = new DataGridView
         {
-            Bounds = new Rectangle(24, 52, 412, 360),
+            Bounds = new Rectangle(Gutter, ContentTop + 8, GridWidth, ContentHeight - 8),
             AllowUserToAddRows = false,
             AllowUserToDeleteRows = false,
             AllowUserToResizeRows = false,
             AutoGenerateColumns = false,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
             BackgroundColor = Color.White,
             BorderStyle = BorderStyle.FixedSingle,
+            CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+            ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single,
+            ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+            ColumnHeadersHeight = 32,
+            EnableHeadersVisualStyles = false,
+            GridColor = Color.FromArgb(232, 232, 232),
             MultiSelect = false,
             ReadOnly = true,
             RowHeadersVisible = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "网站名称",
-            Width = 110,
-        });
-        grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "网站地址",
-            Width = 180,
-        });
-        grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "账号",
-            Width = 100,
-        });
+        grid.RowTemplate.Height = 30;
+        grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 247, 250);
+        grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(245, 247, 250);
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(60, 60, 60);
+        grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(222, 242, 237);
+        grid.DefaultCellStyle.SelectionForeColor = Color.FromArgb(30, 30, 30);
+        grid.DefaultCellStyle.Padding = new Padding(4, 0, 4, 0);
+        grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(4, 0, 4, 0);
+
+        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "网站名称", FillWeight = 28 });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "网站地址", FillWeight = 47 });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "账号", FillWeight = 25 });
         grid.SelectionChanged += (_, _) =>
         {
-            if (!_suppressSelection && SelectedSite is not null)
+            // 仅响应用户在列表中的选择，避免程序性选中刷新编辑区打断下拉框等正在进行的输入。
+            if (!_suppressSelection && grid.ContainsFocus && SelectedSite is not null)
                 LoadSite(SelectedSite);
         };
         return grid;
@@ -164,7 +187,7 @@ internal sealed class BrowserAutoLoginSettingsDialog : Form
         var button = new Button
         {
             Text = text,
-            Bounds = new Rectangle(left, top, 88, 34),
+            Bounds = new Rectangle(left, top, ButtonWidth, 34),
             FlatStyle = primary ? FlatStyle.Flat : FlatStyle.Standard,
         };
         if (primary)
@@ -176,20 +199,34 @@ internal sealed class BrowserAutoLoginSettingsDialog : Form
         return button;
     }
 
-    private static TextBox AddTextField(Control parent, string label, int top)
-    {
-        parent.Controls.Add(new Label
+    private static int FieldTop(int row) => 36 + row * 46;
+
+    private static void AddFieldLabel(Control parent, string label, int row)
+        => parent.Controls.Add(new Label
         {
             Text = label,
-            Bounds = new Rectangle(24, top, 82, 27),
+            Bounds = new Rectangle(FieldLabelLeft, FieldTop(row), FieldInputLeft - FieldLabelLeft - 8, 27),
             TextAlign = ContentAlignment.MiddleLeft,
         });
+
+    private static TextBox AddTextField(Control parent, string label, int row)
+    {
+        AddFieldLabel(parent, label, row);
         var textBox = new TextBox
         {
-            Bounds = new Rectangle(116, top, 312, 27),
+            Bounds = new Rectangle(FieldInputLeft, FieldTop(row), FieldInputWidth, 27),
         };
         parent.Controls.Add(textBox);
         return textBox;
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        // 从外部浏览器右键唤起时本程序不在前台，短暂置顶把窗口带到最前，随后取消置顶以免干扰下拉框。
+        TopMost = true;
+        TopMost = false;
+        Activate();
     }
 
     private BrowserAutoLoginSiteCredential? SelectedSite

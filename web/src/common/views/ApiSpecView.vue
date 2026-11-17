@@ -167,6 +167,8 @@
             <el-input v-model="docTitle" placeholder="默认 ConvenientSystem API" />
             <span class="tb-label">服务器地址</span>
             <el-input v-model="baseUrl" placeholder="默认 http://localhost:8030" />
+            <span class="tb-label">地址前缀</span>
+            <el-checkbox v-model="nsEnvPrefix" :label="nsEnvPrefixLabel" />
           </div>
           <div class="cta-row">
             <el-button
@@ -441,6 +443,10 @@ const docTitle = ref('')
 const DEFAULT_BASE_URL = 'http://localhost:8030'
 const storedBaseUrl = localStorage.getItem(BASE_URL_KEY)
 const baseUrl = ref(!storedBaseUrl || storedBaseUrl === 'http://localhost' ? DEFAULT_BASE_URL : storedBaseUrl)
+/** 按命名空间最后一段加 {{变量}} 路径前缀（如 {{Hangfire}}/api/...）；默认勾选，记 localStorage */
+const NS_ENV_PREFIX_KEY = 'api-spec:nsEnvPrefix'
+const nsEnvPrefix = ref(localStorage.getItem(NS_ENV_PREFIX_KEY) !== '0')
+const nsEnvPrefixLabel = '按命名空间加环境变量前缀（路径形如 {{Hangfire}}/api/...，变量前不带斜杠，导入 Apifox 后按环境解析）'
 const generating = ref(false)
 const parsedDoc = shallowRef<ApiSpecDocumentDto | null>(null)
 const preview = shallowRef<ApiSpecExportDto | null>(null)
@@ -468,12 +474,14 @@ const apifoxDialogVisible = ref(false)
 const apifoxAction = ref<'import' | 'delete'>('import')
 const apifoxImporting = ref(false)
 const apifoxDeleting = ref(false)
+/** Apifox 项目 ID 默认值：当前常用项目，需要导入其他项目时手动改 */
+const DEFAULT_APIFOX_PROJECT_ID = '8468398'
 const apifoxImportForm = ref({
-  projectId: '',
+  projectId: DEFAULT_APIFOX_PROJECT_ID,
   targetEndpointFolderId: '',
   targetBranchId: '',
-  // 默认覆盖：以生成内容为准全量更新，重复导入不残留旧定义
-  endpointOverwriteBehavior: 'OVERWRITE_EXISTING',
+  // 默认智能合并：保留 Apifox 里已有的手工配置（中文名、mock、参数说明、返回示例）
+  endpointOverwriteBehavior: 'AUTO_MERGE',
 })
 const apifoxDeleteForm = ref({ projectId: '', folderId: '' })
 /** 当前弹窗跟踪的 Apifox 任务 ID；空串表示表单态（无任务在跑） */
@@ -795,10 +803,10 @@ function openApifoxImport() {
   apifoxAction.value = 'import'
   apifoxTaskId.value = ''
   apifoxImportForm.value = {
-    projectId: '',
+    projectId: DEFAULT_APIFOX_PROJECT_ID,
     targetEndpointFolderId: '',
     targetBranchId: '',
-    endpointOverwriteBehavior: 'OVERWRITE_EXISTING',
+    endpointOverwriteBehavior: 'AUTO_MERGE',
   }
   apifoxDialogVisible.value = true
 }
@@ -874,6 +882,7 @@ async function buildOpenApiForImport(): Promise<ApiSpecExportDto> {
         format: 'openapi3-json',
         title: docTitle.value.trim() || undefined,
         baseUrl: baseUrl.value.trim() || undefined,
+        namespaceEnvPrefix: nsEnvPrefix.value,
       })
     } catch {
       /* 生成任务已过期（服务端仅保留 30 分钟）：回退现场生成 */
@@ -885,6 +894,7 @@ async function buildOpenApiForImport(): Promise<ApiSpecExportDto> {
     format: 'openapi3-json',
     title: docTitle.value.trim() || undefined,
     baseUrl: baseUrl.value.trim() || undefined,
+    namespaceEnvPrefix: nsEnvPrefix.value,
     solutionPath: solutionPath.value.trim() || undefined,
     selectionKeys: selectedSelectionKeys(),
   }))
@@ -1136,6 +1146,7 @@ async function generate() {
       format: selectedFormat.value,
       title: docTitle.value.trim() || undefined,
       baseUrl: baseUrl.value.trim() || undefined,
+      namespaceEnvPrefix: nsEnvPrefix.value,
       solutionPath: solutionPath.value.trim() || undefined,
       selectionKeys: selectedSelectionKeys(),
     }))
@@ -1190,6 +1201,7 @@ watch(solutionPath, () => {
 })
 
 watch(baseUrl, v => localStorage.setItem(BASE_URL_KEY, v))
+watch(nsEnvPrefix, v => localStorage.setItem(NS_ENV_PREFIX_KEY, v ? '1' : '0'))
 
 async function download() {
   if (!preview.value) return

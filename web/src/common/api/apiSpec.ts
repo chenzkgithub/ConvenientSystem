@@ -211,6 +211,8 @@ export function startApiSpecGenerate(request: {
   format: string
   title?: string
   baseUrl?: string
+  /** 按命名空间最后一段给路径加 {{变量}} 前缀（如 {{Hangfire}}/api/...，变量前不带斜杠），Apifox 导入后按环境解析 */
+  namespaceEnvPrefix?: boolean
   solutionPath?: string
   selectionKeys?: string[]
 }) {
@@ -219,7 +221,14 @@ export function startApiSpecGenerate(request: {
 
 /** 复用已完成生成任务的解析结果重新导出（换格式/标题不重新解析源码）。
  * silent：任务过期等失败由调用方静默回退完整生成，不弹错误提示。 */
-export function reExportApiSpec(request: { taskId: string; format: string; title?: string; baseUrl?: string }) {
+export function reExportApiSpec(request: {
+  taskId: string
+  format: string
+  title?: string
+  baseUrl?: string
+  /** 是否按命名空间加 {{变量}} 前缀；不传保持生成时的设置 */
+  namespaceEnvPrefix?: boolean
+}) {
   return localPost<ApiSpecExportDto>('/api/local/api-spec/ReExport', request, undefined, undefined, { silent: true })
 }
 

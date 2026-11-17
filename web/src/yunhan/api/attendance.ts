@@ -12,14 +12,14 @@ const PREFIX = IS_DESKTOP_HOST ? '/api/local/attendance' : '/api/YunHan/Attendan
  * 双宿主请求通道：PREFIX 按宿主切换后，请求函数也必须按宿主切换——
  * local 通道自带非桌面端守卫（直接抛错不发请求），Web 端必须走远程 http 通道。
  */
-function hostGet<T>(url: string, opts?: { silent?: boolean }) {
+/** 请求遮罩选项：noLoading 仅关全局遮罩保留错误提示（页面自带局部 loading 时用）；silent 全静默 */
+type AttendReqOpts = { silent?: boolean; noLoading?: boolean }
+
+function hostGet<T>(url: string, opts?: AttendReqOpts) {
   return IS_DESKTOP_HOST
     ? localGet<T>(url, undefined, undefined, opts)
     : httpGet<T>(url, undefined, undefined, opts)
 }
-
-/** 请求遮罩选项：noLoading 仅关全局遮罩保留错误提示（页面自带局部 loading 时用）；silent 全静默 */
-type AttendReqOpts = { silent?: boolean; noLoading?: boolean }
 
 function hostPost<T>(url: string, body: unknown, opts?: AttendReqOpts) {
   return IS_DESKTOP_HOST
@@ -27,8 +27,8 @@ function hostPost<T>(url: string, body: unknown, opts?: AttendReqOpts) {
     : httpPost<T>(url, body, undefined, undefined, opts)
 }
 
-/** 组织架构（snake_case 原始返回）；opts.silent 供本地模式探测（不弹 loading/错误提示） */
-export function getDeptTree(opts?: { silent?: boolean }) {
+/** 组织架构（snake_case 原始返回）；opts.silent 供本地模式探测，opts.noLoading 供页面局部 v-loading 场景 */
+export function getDeptTree(opts?: AttendReqOpts) {
   return hostGet<DeptViewRaw[]>(`${PREFIX}/GetDeptTree`, opts)
 }
 

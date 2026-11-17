@@ -438,3 +438,6 @@ FodyWeavers.xsd
 exe/
 /api/
 installer-output/
+
+# 浏览器扩展打包私钥（泄露后他人可伪造同 ID 扩展，禁止入库）
+ConvenientSystem.Desktop/BrowserExtension.pem
